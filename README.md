@@ -39,4 +39,4 @@ If you want to contribute a new icon theme, please submit a Pull Request. Ensure
 
 ## License
 
-MIT © BinziiBinzet. See [LICENS](LICENSE) for details.
+MIT © BinziiBinzet. See [LICENSE](LICENSE) for details.
