@@ -15,11 +15,19 @@ Universal Linux icon installer for [Artcraft](https://getartcraft.com/) applicat
 Supports all official Artcraft Crafting Apps.
 
 ## How to Run
+
+### Linux
 - Make the scripts executable (run this first):
    ```bash
    chmod +x install.sh uninstall.sh
 - Run the installer with `./install.sh` and select your preferred theme.
 - Restore original icons or uninstall with `./uninstall.sh`.
+
+### Windows
+- Not available yet.
+
+### MacOS
+- Not available yet.
 
 ## Contributing & Forking
 
