@@ -27,6 +27,9 @@ This project is open source, and you are free to fork it for personal use or cus
 
 However, if you have improvements, bug fixes, or new features, we strongly encourage you to contribute back to the main repository via Pull Requests instead of maintaining separate forks. This helps keep the ecosystem unified and makes it easier for everyone to benefit from updates.
 
+### Adding New Themes
+If you want to contribute a new icon theme, please submit a Pull Request. Ensure that the icon filenames follow the standard naming convention (e.g., `EffectCraft.png`, `PhotoCraft.png`) so the installer can detect and apply them correctly.
+
 ## Important Notes
 
 - Icon files must contain the app name in their filename (case-insensitive matching).
