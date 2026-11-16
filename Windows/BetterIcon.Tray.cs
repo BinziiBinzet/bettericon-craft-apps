@@ -137,6 +137,7 @@ namespace BetterIcon.Tray
 
     public sealed class LauncherForm : Form
     {
+        const int AppIconSize = 48;
         [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr window, int command);
         readonly WorkerClient worker;
         readonly NotifyIcon tray;
@@ -265,13 +266,13 @@ namespace BetterIcon.Tray
             refresh.Text = "Refresh apps"; refresh.Width = 125; refresh.Height = 32; refresh.Click += async delegate { await RefreshCatalog(); };
             open.Text = "Open selected"; open.Width = 135; open.Height = 32; open.Margin = new Padding(10, 0, 0, 0); open.Click += delegate { LaunchSelected(); };
             tools.Controls.Add(search); tools.Controls.Add(refresh); tools.Controls.Add(open); layout.Controls.Add(tools, 0, 3);
-            pictures.ImageSize = new Size(64, 64); pictures.ColorDepth = ColorDepth.Depth32Bit;
+            pictures.ImageSize = new Size(AppIconSize, AppIconSize); pictures.ColorDepth = ColorDepth.Depth32Bit;
             // Hidden startup loads artwork before the ListView has a handle.
             // Create the native image list now so Add copies each bitmap before
             // the temporary thumbnail is disposed, rather than retaining it.
             if (pictures.Handle == IntPtr.Zero) throw new InvalidOperationException("Could not create the app icon list.");
-            apps.Dock = DockStyle.Fill; apps.View = View.Tile; apps.TileSize = new Size(290, 96); apps.LargeImageList = pictures;
-            apps.Columns.Add("App", 240); apps.Columns.Add("Shortcut", 240); apps.MultiSelect = false; apps.HideSelection = false;
+            apps.Dock = DockStyle.Fill; apps.View = View.Tile; apps.TileSize = new Size(260, 64); apps.LargeImageList = pictures;
+            apps.Columns.Add("App", 200); apps.MultiSelect = false; apps.HideSelection = false;
             apps.BorderStyle = BorderStyle.None; apps.BackColor = Color.White; apps.ShowItemToolTips = true; apps.AccessibleName = "Installed ArtCraft apps";
             apps.ItemActivate += delegate { LaunchSelected(); }; layout.Controls.Add(apps, 0, 4);
             Panel footer = new Panel { Dock = DockStyle.Fill, Padding = new Padding(0, 12, 0, 0) };
@@ -343,25 +344,25 @@ namespace BetterIcon.Tray
         }
         static Bitmap Thumbnail(string path, Icon fallback)
         {
-            Bitmap image = new Bitmap(64, 64);
+            Bitmap image = new Bitmap(AppIconSize, AppIconSize);
             try {
                 if (String.IsNullOrEmpty(path) || !File.Exists(path)) throw new IOException();
                 Image loaded;
                 if (Path.GetExtension(path).Equals(".ico", StringComparison.OrdinalIgnoreCase)) {
-                    loaded = new Bitmap(64, 64);
-                    using (Icon icon = new Icon(path, 64, 64))
-                    using (Graphics canvas = Graphics.FromImage(loaded)) { canvas.Clear(Color.Transparent); canvas.DrawIcon(icon, new Rectangle(0, 0, 64, 64)); }
+                    loaded = new Bitmap(AppIconSize, AppIconSize);
+                    using (Icon icon = new Icon(path, AppIconSize, AppIconSize))
+                    using (Graphics canvas = Graphics.FromImage(loaded)) { canvas.Clear(Color.Transparent); canvas.DrawIcon(icon, new Rectangle(0, 0, AppIconSize, AppIconSize)); }
                 }
                 else loaded = Image.FromFile(path);
                 using (Image source = loaded)
                 using (Graphics canvas = Graphics.FromImage(image)) {
                     canvas.Clear(Color.Transparent); canvas.InterpolationMode = InterpolationMode.HighQualityBicubic;
-                    float ratio = Math.Min(64F / source.Width, 64F / source.Height);
+                    float ratio = Math.Min((float)AppIconSize / source.Width, (float)AppIconSize / source.Height);
                     float width = source.Width * ratio, height = source.Height * ratio;
-                    canvas.DrawImage(source, (64-width)/2, (64-height)/2, width, height);
+                    canvas.DrawImage(source, (AppIconSize-width)/2, (AppIconSize-height)/2, width, height);
                 }
             }
-            catch (Exception) { using (Graphics canvas = Graphics.FromImage(image)) canvas.DrawIcon(fallback, new Rectangle(8, 8, 48, 48)); }
+            catch (Exception) { using (Graphics canvas = Graphics.FromImage(image)) canvas.DrawIcon(fallback, new Rectangle(0, 0, AppIconSize, AppIconSize)); }
             return image;
         }
         void RenderApps()
@@ -374,8 +375,8 @@ namespace BetterIcon.Tray
                 foreach (AppEntry entry in catalog.Apps.Where(a => a.Name.IndexOf(search.Text, StringComparison.OrdinalIgnoreCase) >= 0)) {
                     ThemeIcon artwork = theme == null ? null : theme.Icons.FirstOrDefault(i => i.Application == entry.Application);
                     using (Bitmap picture = Thumbnail(artwork == null ? null : artwork.Path, Icon)) pictures.Images.Add(picture);
-                    ListViewItem item = new ListViewItem(entry.Name, pictures.Images.Count-1) { Tag = entry, ToolTipText = entry.Shortcut };
-                    item.SubItems.Add(entry.Scope == "AllUsers" ? "Shared shortcut" : "My shortcut"); apps.Items.Add(item);
+                    ListViewItem item = new ListViewItem(entry.Name, pictures.Images.Count-1) { Tag = entry, ToolTipText = entry.Name + Environment.NewLine + entry.Shortcut };
+                    apps.Items.Add(item);
                 }
             }
             finally { apps.EndUpdate(); }

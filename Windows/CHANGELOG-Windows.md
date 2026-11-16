@@ -1,5 +1,10 @@
 # Windows installer changelog
 
+## 1.1.1 - 2026-11-16
+
+- Fit more apps in the default tray popup with three columns, 48-pixel icons, and tighter tile spacing.
+- Remove the repeated shared/my-shortcut labels. Keep the app name visible and the shortcut path in its tooltip.
+
 ## 1.1.0 - 2026-11-16
 
 - Add a native Windows tray launcher for installed ArtCraft apps, with a searchable app list, theme previews, review-before-apply, and original-icon restoration.

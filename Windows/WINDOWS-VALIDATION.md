@@ -1,4 +1,12 @@
-# Windows 1.1.0 validation
+# Windows validation
+
+## 1.1.1 compact layout - 2026-11-16
+
+The locally compiled 1.1.1 launcher passed all 15 existing native startup, tray-event, placement, and worker checks. Visual inspection at the unchanged default popup size showed all 14 current launch shortcuts in three columns and five rows without a scrollbar. The long custom PhotoCraft launcher name remained readable. Tiles use 48-pixel icons and omit shared/my-shortcut subtitles; the full name and shortcut path remain in the tooltip. No shortcut icons were changed for this layout check.
+
+The installer and bridge logic are unchanged from the baseline below; their tests were not repeated for this layout-only update.
+
+## 1.1.0 baseline
 
 Validated locally on **2026-11-16**, on Windows 11 build **26300**, with a non-administrator token. No GitHub-hosted builds, tests, packaging, or validation jobs were used.
 
