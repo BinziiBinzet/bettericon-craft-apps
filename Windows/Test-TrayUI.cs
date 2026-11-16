@@ -143,12 +143,55 @@ static class TrayTests
                     ListView launcher = (ListView)typeof(LauncherForm).GetField("apps", instance).GetValue(form), preview = (ListView)typeof(LauncherForm).GetField("packPreview", instance).GetValue(form);
                     using (Bitmap app = GridImage(launcher, 0)) using (Bitmap pack = GridImage(preview, 0))
                         Check(!form.Visible && slider.Value == 512 && slider.Maximum == 1024 && app.Width == 512 && pack.Width == 512, "Hidden startup restores large saved icons in both native grids without a 256-pixel initialization error");
+                    Check(!((IconGridView)launcher).ShowAppNames && !((IconGridView)preview).ShowAppNames && !((CheckBox)typeof(LauncherForm).GetField("showAppNames", instance).GetValue(form)).Checked && HiddenLabels(launcher) && HiddenLabels(preview), "A fresh message-loop startup restores icon-only mode in both large-image grids and Settings");
                     stop.Set();
                 }
                 catch (Exception error) { failure = error; timer.Stop(); context.ExitThread(); }
             };
             timer.Start(); Application.Run(context); if (failure != null) throw failure;
         }
+    }
+    static bool HiddenLabels(ListView list) { return (SendMessage(list.Handle, 0x1037, IntPtr.Zero, IntPtr.Zero).ToInt64() & 0x00020000) != 0; }
+    static void CheckAppNames(LauncherForm form, string preferencesPath, JavaScriptSerializer json)
+    {
+        BindingFlags instance = BindingFlags.Instance | BindingFlags.NonPublic;
+        Func<string, object> field = name => typeof(LauncherForm).GetField(name, instance).GetValue(form);
+        CheckBox names = (CheckBox)field("showAppNames");
+        IconGridView launcher = (IconGridView)field("apps"), preview = (IconGridView)field("packPreview");
+        TrackBar slider = (TrackBar)field("iconSizeSlider"); int previousSize = slider.Value;
+        TabControl pages = (TabControl)field("pages");
+        ThemeEntry previousTheme = (ThemeEntry)((ComboBox)field("themes")).SelectedItem;
+        Check(json.Deserialize<Preferences>("{\"Theme\":\"Satin\"}").ShowAppNames && names.Checked && launcher.ShowAppNames && preview.ShowAppNames, "Existing preferences retain visible app names by default");
+        slider.Value = 48;
+        Size namedCell = launcher.GridCellSize;
+        string[] titles = launcher.Items.Cast<ListViewItem>().Select(item => item.Text).ToArray();
+        Bitmap[] artwork = ((List<Bitmap>)field("appArtwork")).ToArray();
+        names.Checked = false;
+        Check(!launcher.ShowAppNames && !preview.ShowAppNames && HiddenLabels(launcher) && HiddenLabels(preview), "Show app names switches native visual labels off in both grids");
+        Check(launcher.GridCellSize.Width < namedCell.Width && launcher.GridCellSize.Height < namedCell.Height && launcher.GridCellSize == preview.GridCellSize, "Icon-only mode removes unused name space and packs both grids more tightly");
+        Check(launcher.Items.Cast<ListViewItem>().Select(item => item.Text).SequenceEqual(titles) && launcher.Items.Cast<ListViewItem>().All(item => !String.IsNullOrWhiteSpace(item.ToolTipText)) && ((List<Bitmap>)field("appArtwork")).SequenceEqual(artwork), "Hiding labels retains accessible item names, hover tooltips and the existing artwork cache");
+        Check(!json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).ShowAppNames, "The icon-only choice is saved for subsequent launches");
+        form.ShowManager(); pages.SelectedIndex = 0;
+        string query = titles[0].Substring(0, Math.Min(2, titles[0].Length));
+        foreach (char character in query) typeof(LauncherForm).GetMethod("OnKeyPress", instance).Invoke(form, new object[] { new KeyPressEventArgs(character) });
+        Check(launcher.Items.Count > 0 && launcher.Items.Cast<ListViewItem>().All(item => item.Text.StartsWith(query, StringComparison.OrdinalIgnoreCase)), "Typing still filters real app names when their visual labels are hidden");
+        typeof(LauncherForm).GetMethod("OnKeyDown", instance).Invoke(form, new object[] { new KeyEventArgs(Keys.Escape) });
+        ListViewItem first = launcher.Items[0];
+        RequestIconMenu(launcher, first);
+        Check(((ContextMenuStrip)field("iconMenu")).Visible && ((AppEntry)field("iconMenuTarget")).Shortcut == ((AppEntry)first.Tag).Shortcut, "An icon-only tile retains the correct per-app context-menu target");
+        ((ContextMenuStrip)field("iconMenu")).Close();
+        foreach (IconGridView grid in new[] { launcher, preview }) typeof(Control).GetMethod("RecreateHandle", instance).Invoke(grid, null);
+        Check(HiddenLabels(launcher) && HiddenLabels(preview), "Native handle recreation preserves hidden labels and native image-list ownership");
+        names.Checked = true;
+        Check(!HiddenLabels(launcher) && !HiddenLabels(preview) && launcher.GridCellSize == namedCell && json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).ShowAppNames, "Re-enabling names restores native labels, spacing and the saved preference");
+        names.Checked = false;
+        ComboBox themes = (ComboBox)field("themes");
+        themes.SelectedItem = themes.Items.Cast<ThemeEntry>().First(theme => theme.Id != previousTheme.Id && !theme.IsDefault);
+        LoadingTests.Wait(form);
+        Check(HiddenLabels(launcher) && HiddenLabels(preview) && !json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).ShowAppNames, "Background pack switching preserves icon-only mode");
+        typeof(LauncherForm).GetMethod("ReloadLibrary", instance).Invoke(form, new object[] { previousTheme.Id });
+        slider.Value = previousSize;
+        // Leave the fixture saved without names so CheckLargeStartup verifies a real restart.
     }
     static void CheckExistingLauncherDefault(LauncherForm form, string root, JavaScriptSerializer json)
     {
@@ -618,9 +661,9 @@ static class TrayTests
                         Check(slider.Value == 72 && launcherImages.ImageSize == new Size(72, 72) && previewImages.ImageSize == launcherImages.ImageSize, "Hidden startup restores the same saved icon size in both grids and the Settings slider");
                         Rectangle firstIcon = list.GetItemRect(0, ItemBoundsPortion.Icon), firstLabel = list.GetItemRect(0, ItemBoundsPortion.Label);
                         Check(list.View == View.LargeIcon && firstLabel.Top >= firstIcon.Bottom && list.Items[1].Bounds.Left > list.Items[0].Bounds.Left && list.Items[1].Bounds.Top == list.Items[0].Bounds.Top, "Native launcher lays out a compact row of icons with names underneath");
-                        pages.Focus();
+                        form.ShowManager(); pages.Focus();
                         type("f");
-                        Check(list.Items.Count == 2 && list.ContainsFocus && list.SelectedItems.Count == 1, "Typing from the launcher tab filters and focuses the highlighted result");
+                        Check(list.Items.Count == 2 && list.ContainsFocus && list.SelectedItems.Count == 1, "Typing from the launcher tab filters and focuses the highlighted result (matches=" + list.Items.Count + ", focused=" + list.ContainsFocus + ", visible=" + form.Visible + ")");
                         int artworkCount = ((ImageList)typeof(LauncherForm).GetField("pictures", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form)).Images.Count;
                         type("iL");
                         Check(list.Items.Count == 1 && list.Items[0].Text == "FilmCraft" && list.AccessibleDescription.Contains("fiL"), "Successive characters narrow results and expose the query accessibly");
@@ -733,6 +776,7 @@ static class TrayTests
                         CheckExistingLauncherDefault(form, root, json);
                         AppearanceTests.Run(form, preferencesPath, args[1], Check);
                         LoadingTests.Run(form, preferencesPath, Check);
+                        CheckAppNames(form, preferencesPath, json);
                         stop.Set(); // Exercise normal shutdown through the same message loop.
                     }
                     catch (Exception error) { eventFailure = error; timer.Stop(); context.ExitThread(); }

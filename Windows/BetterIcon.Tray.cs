@@ -96,12 +96,13 @@ namespace BetterIcon.Tray
         public string Scope { get; set; }
         public HotkeySettings Hotkey { get; set; }
         public string[] DefaultShortcuts { get; set; }
+        public bool ShowAppNames { get; set; }
         string appearanceMode = "System", appIconStyle = "sage", appIconVariant = "Auto";
         public string AppearanceMode { get { return appearanceMode; } set { appearanceMode = value == "Dark" || value == "Light" ? value : "System"; } }
         public string AppIconStyle { get { return appIconStyle; } set { appIconStyle = AppBranding.Styles.Contains(value) ? value : "sage"; } }
         public string AppIconVariant { get { return appIconVariant; } set { appIconVariant = value == "Dark" || value == "Light" ? value : "Auto"; } }
         public int IconSize { get { return iconSize; } set { iconSize = Math.Max(MinimumIconSize, Math.Min(MaximumIconSize, value)); } }
-        public Preferences() { Hotkey = new HotkeySettings(); DefaultShortcuts = new string[0]; }
+        public Preferences() { Hotkey = new HotkeySettings(); DefaultShortcuts = new string[0]; ShowAppNames = true; }
     }
 
     public sealed class WorkerClient
@@ -187,9 +188,11 @@ namespace BetterIcon.Tray
         [DllImport("user32.dll")] static extern bool DestroyIcon(IntPtr icon);
         IntPtr largeArtwork;
         int iconSize = Preferences.DefaultIconSize;
+        bool showAppNames = true;
         public event Action<int> IconSizeWheel;
         public event Action<Point?> IconMenuRequested;
-        public Size GridCellSize { get { return new Size(Math.Max(112, iconSize + 24), iconSize + Font.Height * 2 + 16); } }
+        public bool ShowAppNames { get { return showAppNames; } set { if (showAppNames == value) return; showAppNames = value; UpdateSpacing(); Invalidate(); } }
+        public Size GridCellSize { get { return new Size(showAppNames ? Math.Max(112, iconSize + 24) : iconSize + 24, iconSize + (showAppNames ? Font.Height * 2 : 0) + 16); } }
         public IconGridView() { View = View.LargeIcon; AutoArrange = true; Alignment = ListViewAlignment.Top; LabelWrap = true; DoubleBuffered = true; }
         public void SetIconSize(int size) { iconSize = size; UpdateSpacing(); }
         protected override CreateParams CreateParams { get { CreateParams value = base.CreateParams; value.Style |= 0x0040; return value; } }
@@ -247,6 +250,9 @@ namespace BetterIcon.Tray
         void UpdateSpacing()
         {
             if (!IsHandleCreated) return;
+            // Preserve native item text for filtering, tooltips and accessibility.
+            // LVS_EX_HIDELABELS hides only its visual label in icon view.
+            SendMessage(Handle, 0x1036, new IntPtr(0x00020000), new IntPtr(showAppNames ? 0 : 0x00020000));
             Size cell = GridCellSize;
             // LVM_SETICONSPACING includes the image itself plus room for two lines of text.
             SendMessage(Handle, 0x1035, IntPtr.Zero, new IntPtr((cell.Height << 16) | cell.Width));
@@ -380,7 +386,7 @@ namespace BetterIcon.Tray
             pictures.ImageSize = new Size(Math.Min(256, preferences.IconSize), Math.Min(256, preferences.IconSize)); pictures.ColorDepth = ColorDepth.Depth32Bit;
             // Force native copies before temporary thumbnails are disposed at hidden startup.
             if (pictures.Handle == IntPtr.Zero) throw new InvalidOperationException("Could not create the app icon list.");
-            apps.Dock = DockStyle.Fill; apps.SetIconSize(preferences.IconSize); apps.LargeImageList = pictures;
+            apps.Dock = DockStyle.Fill; apps.ShowAppNames = preferences.ShowAppNames; apps.SetIconSize(preferences.IconSize); apps.LargeImageList = pictures;
             apps.MultiSelect = false; apps.HideSelection = false;
             apps.BorderStyle = BorderStyle.None; apps.BackColor = Color.White; apps.ShowItemToolTips = true; apps.AccessibleName = "Installed ArtCraft apps";
             apps.ItemActivate += delegate { LaunchSelected(); };
@@ -407,6 +413,7 @@ namespace BetterIcon.Tray
             busy = value; apply.Enabled = restore.Enabled = themes.Enabled = scopes.Enabled = exit.Enabled = settings.Enabled = !value;
             if (value) { iconMenu.Close(); iconMenuTarget = null; restoreIconDefault.Enabled = false; }
             iconSizeSlider.Enabled = resetIconSize.Enabled = !value;
+            showAppNames.Enabled = !value;
             appearanceModePicker.Enabled = appIconStylePicker.Enabled = appIconVariantPicker.Enabled = !value;
             UpdatePackButtons();
             if (!String.IsNullOrEmpty(message)) status.Text = message;

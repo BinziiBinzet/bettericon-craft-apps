@@ -80,6 +80,7 @@ namespace BetterIcon.Tray
         readonly TrackBar iconSizeSlider = new TrackBar();
         readonly Label iconSizeValue = new Label();
         readonly Button resetIconSize = new Button();
+        readonly CheckBox showAppNames = new CheckBox();
         readonly List<Button> packButtons = new List<Button>();
         readonly ComboBox restoreAppPicker = new AppearanceComboBox();
         readonly Button restoreApp = new Button();
@@ -121,6 +122,15 @@ namespace BetterIcon.Tray
             try { WritePreferences(); status.Text = "Icon size saved."; }
             catch (IOException) { status.Text = "Icon size changed for this session, but could not be saved."; }
             catch (UnauthorizedAccessException) { status.Text = "Icon size changed for this session, but could not be saved."; }
+        }
+        void ChangeAppNames()
+        {
+            preferences.ShowAppNames = showAppNames.Checked;
+            apps.ShowAppNames = packPreview.ShowAppNames = preferences.ShowAppNames;
+            packPreview.Height = Math.Max(128, packPreview.GridCellSize.Height + 12);
+            try { WritePreferences(); status.Text = "App name visibility saved."; }
+            catch (IOException) { status.Text = "App name visibility changed for this session, but could not be saved."; }
+            catch (UnauthorizedAccessException) { status.Text = "App name visibility changed for this session, but could not be saved."; }
         }
         void ChangeIconSizeFromWheel(int delta)
         {
@@ -188,7 +198,7 @@ namespace BetterIcon.Tray
             packPictures.ImageSize = new Size(Math.Min(256, preferences.IconSize), Math.Min(256, preferences.IconSize)); packPictures.ColorDepth = ColorDepth.Depth32Bit;
             if (packPictures.Handle == IntPtr.Zero) throw new InvalidOperationException("Could not create pack previews.");
             packPreview.Dock = DockStyle.Top; packPreview.Height = 128; packPreview.Margin = Padding.Empty;
-            packPreview.SetIconSize(preferences.IconSize); packPreview.LargeImageList = packPictures;
+            packPreview.ShowAppNames = preferences.ShowAppNames; packPreview.SetIconSize(preferences.IconSize); packPreview.LargeImageList = packPictures;
             packPreview.MultiSelect = false; packPreview.HideSelection = false; packPreview.ShowItemToolTips = true;
             packPreview.BorderStyle = BorderStyle.None; packPreview.BackColor = Color.White; packPreview.AccessibleName = "Icon pack preview";
             SettingsRow(packs, packPreview);
@@ -209,6 +219,11 @@ namespace BetterIcon.Tray
             iconSizeSlider.ValueChanged += delegate { ChangeIconSize(); };
             sizing.Controls.Add(iconSizeSlider, 1, 0); sizing.Controls.Add(iconSizeValue, 2, 0); sizing.Controls.Add(resetIconSize, 3, 0);
             SettingsRow(launcher, sizing);
+            showAppNames.Text = "Show app names"; showAppNames.AccessibleName = "Show app names";
+            showAppNames.AutoSize = true; showAppNames.Dock = DockStyle.Top;
+            showAppNames.Margin = new Padding(0, 0, 0, 10); showAppNames.Checked = preferences.ShowAppNames;
+            showAppNames.CheckedChanged += delegate { ChangeAppNames(); };
+            SettingsRow(launcher, showAppNames);
             TableLayoutPanel keyboard = SettingsTable(2);
             keyboard.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); keyboard.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             subtitle.AutoSize = true; subtitle.Dock = DockStyle.Fill; subtitle.TextAlign = ContentAlignment.MiddleLeft; subtitle.Margin = new Padding(0, 0, 12, 0);

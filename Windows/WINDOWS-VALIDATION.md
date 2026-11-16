@@ -1,5 +1,11 @@
 # Windows validation
 
+## 1.14.0 optional app names - 2026-11-16
+
+All 239 local native checks passed from source. Eleven new checks cover older-preference defaults, the Show app names control updating both native grids, tighter cells, retained item names/tooltips/artwork caches, saved choice, typing with names hidden, the correct context-menu target, handle recreation, re-enabling names, asynchronous pack changes, and a fresh message-loop startup with names disabled and 512-pixel images. Existing loading, layout, appearance, keyboard, sharing, and restoration checks remain passing.
+
+Visual labels use the native hidden-label style; item text and metadata stay intact. No custom item rendering or artwork conversion is involved. No Computer Use was performed. Installer and bridge behavior is unchanged apart from version; prior baselines remain applicable. All builds, tests, and package validation run locally.
+
 ## 1.13.0 loading feedback - 2026-11-16
 
 All 228 local native checks passed from source. Ten new checks exercise the real pack selector: immediate named loading feedback, an active marquee bar, disabled conflicting actions, retained old artwork and preferences, separate indicator layout, prevention of overlapping loads, UI heartbeat messages during decoding, successful completion and persistence, preservation of other settings, and failure cleanup restoring the last successful pack. Cross-thread control checks are enabled during these tests. The failure fixture changes only in-memory metadata and dismisses its test error dialog; it does not change installed packs or shortcuts.

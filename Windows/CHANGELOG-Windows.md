@@ -1,5 +1,10 @@
 # Windows installer changelog
 
+## 1.14.0 - 2026-11-16
+
+- Add Show app names in Settings > Launcher. Turn it off for tighter icon-only grids in Launcher and the Settings preview.
+- Retain full hover/accessibility names, typing, keyboard selection, and per-app context actions. Remember the choice across restarts, native handle recreation and pack changes, with names on by default.
+
 ## 1.13.0 - 2026-11-16
 
 - Show the current operation and an animated loading bar below both tabs while BetterIcon is busy.
