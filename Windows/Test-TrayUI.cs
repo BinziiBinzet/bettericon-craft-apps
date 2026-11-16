@@ -1,4 +1,4 @@
-// Local native event tests. No installed shortcuts are opened or changed.
+// Local native event tests. Launches only a disposable probe through its fixture shortcut.
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -118,6 +118,53 @@ static class TrayTests
                         Point edge = Screen.PrimaryScreen.WorkingArea.Location;
                         form.ShowAtCursor(edge);
                         Check(Screen.PrimaryScreen.WorkingArea.Contains(form.Bounds), "Reopening by hotkey moves the existing popup and clamps it on screen");
+                        // Exercise the actual form keyboard handlers and ListView with
+                        // distinct app names; the only launch target is our local probe.
+                        FieldInfo catalogField = typeof(LauncherForm).GetField("catalog", BindingFlags.Instance | BindingFlags.NonPublic);
+                        Catalog fixtureCatalog = (Catalog)catalogField.GetValue(form);
+                        AppEntry photo = fixtureCatalog.Apps[0];
+                        fixtureCatalog.Apps = new[] { new AppEntry { Application = "FigCraft", Name = "FigCraft", Shortcut = photo.Shortcut }, new AppEntry { Application = "FilmCraft", Name = "FilmCraft", Shortcut = photo.Shortcut }, photo };
+                        typeof(LauncherForm).GetMethod("RenderApps", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(form, null);
+                        ListView list = (ListView)typeof(LauncherForm).GetField("apps", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
+                        Label filter = (Label)typeof(LauncherForm).GetField("filterHint", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
+                        MethodInfo character = typeof(LauncherForm).GetMethod("OnKeyPress", BindingFlags.Instance | BindingFlags.NonPublic);
+                        MethodInfo keyDown = typeof(LauncherForm).GetMethod("OnKeyDown", BindingFlags.Instance | BindingFlags.NonPublic);
+                        Action<string> type = delegate(string value) { foreach (char c in value) character.Invoke(form, new object[] { new KeyPressEventArgs(c) }); };
+                        Action<Keys> key = delegate(Keys value) { keyDown.Invoke(form, new object[] { new KeyEventArgs(value) }); };
+                        ((Button)typeof(LauncherForm).GetField("settings", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form)).Focus();
+                        type("f");
+                        Check(list.Items.Count == 2 && list.ContainsFocus && list.SelectedItems.Count == 1, "Typing from a button filters by app-name prefix and focuses the highlighted result");
+                        int artworkCount = ((ImageList)typeof(LauncherForm).GetField("pictures", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form)).Images.Count;
+                        type("iL");
+                        Check(list.Items.Count == 1 && list.Items[0].Text == "FilmCraft" && filter.Text.Contains("fiL"), "Successive characters narrow results case-insensitively and show the query");
+                        key(Keys.Back);
+                        Check(list.Items.Count == 2 && filter.Text.Contains("Filter: fi "), "Backspace broadens the list by removing one character");
+                        type("zzz");
+                        Check(list.Items.Count == 0 && filter.Text.Contains("0 matches"), "Unmatched text produces an explicit empty result state");
+                        key(Keys.Enter);
+                        Check(Directory.GetFiles(root, "launches.txt.*.launched").Length == 0, "Enter with no results launches nothing");
+                        key(Keys.Escape);
+                        Check(form.Visible && list.Items.Count == 3, "First Escape clears the active filter without closing the popup");
+                        type("PH");
+                        Check(list.Items.Count == 1 && list.SelectedItems[0].Text == "PhotoCraft", "Typing a new query highlights its matching app");
+                        key(Keys.Enter);
+                        string[] launchReceipts = new string[0];
+                        for (int retry = 0; retry < 100 && launchReceipts.Length == 0; retry++) { Thread.Sleep(20); launchReceipts = Directory.GetFiles(root, "launches.txt.*.launched"); }
+                        Check(launchReceipts.Length == 1 && File.ReadAllText(launchReceipts[0]) == "PhotoCraft", "Enter launches the highlighted original fixture shortcut exactly once");
+                        Check(((ImageList)typeof(LauncherForm).GetField("pictures", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form)).Images.Count == artworkCount, "Typing reuses the loaded artwork instead of rebuilding image lists");
+                        form.Hide(); form.ShowManager();
+                        Check(list.Items.Count == 3 && !filter.Text.StartsWith("Filter:"), "Reopening starts with all apps and no stale filter");
+                        ComboBox themePicker = (ComboBox)typeof(LauncherForm).GetField("themes", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
+                        themePicker.DroppedDown = true;
+                        KeyPressEventArgs dropdownKey = new KeyPressEventArgs('p'); character.Invoke(form, new object[] { dropdownKey });
+                        Check(!dropdownKey.Handled && list.Items.Count == 3, "An open theme dropdown keeps its own typing behavior");
+                        themePicker.DroppedDown = false;
+                        form.Enabled = false; type("p"); form.Enabled = true;
+                        Check(list.Items.Count == 3, "Modal dialog input cannot alter the app filter");
+                        type("pho"); key(Keys.Control | Keys.Back);
+                        Check(list.Items.Count == 3, "Ctrl+Backspace clears the entire filter");
+                        key(Keys.Escape); Check(!form.Visible, "Escape with no filter closes the popup");
+                        form.ShowManager();
                         MethodInfo saveHotkey = typeof(LauncherForm).GetMethod("SaveHotkey", BindingFlags.Instance | BindingFlags.NonPublic);
                         string themeBefore = json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).Theme;
                         Check(saveHotkey.Invoke(form, new object[] { second }) == null, "Settings apply a custom combination without restarting");

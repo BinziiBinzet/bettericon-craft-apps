@@ -1,5 +1,11 @@
 # Windows installer changelog
 
+## 1.3.0 - 2026-11-16
+
+- Type directly in the popup to filter by app-name prefix, with automatic result selection, arrow navigation, and Enter to launch.
+- Replace the search field and launch button with a compact filter hint. Refresh remains in the tray menu.
+- Backspace edits; Ctrl+Backspace or Escape clears the filter. Escape with no filter closes the popup; reopening shows all apps. Reuse loaded artwork while filtering and preserve dropdown/dialog keyboard behavior.
+
 ## 1.2.0 - 2026-11-16
 
 - Open the popup from any app with Ctrl+Alt+Shift+A, centered on the mouse cursor and clamped to the selected monitor's working area.

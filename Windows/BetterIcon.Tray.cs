@@ -158,12 +158,13 @@ namespace BetterIcon.Tray
         readonly ContextMenuStrip trayMenu = new ContextMenuStrip();
         readonly ComboBox themes = new ComboBox();
         readonly ComboBox scopes = new ComboBox();
-        readonly TextBox search = new TextBox();
         readonly ListView apps = new ListView();
+        readonly List<ListViewItem> appTiles = new List<ListViewItem>();
+        readonly Label filterHint = new Label();
         readonly Label status = new Label();
         readonly Label previewLabel = new Label();
         readonly Label subtitle = new Label();
-        readonly Button apply = new Button(), restore = new Button(), refresh = new Button(), open = new Button(), exit = new Button(), settings = new Button();
+        readonly Button apply = new Button(), restore = new Button(), exit = new Button(), settings = new Button();
         readonly ImageList pictures = new ImageList();
         readonly EventWaitHandle showEvent, stopEvent;
         readonly System.Windows.Forms.Timer signalTimer = new System.Windows.Forms.Timer();
@@ -176,6 +177,7 @@ namespace BetterIcon.Tray
         GlobalHotkey hotkey;
         bool busy, exiting, notified;
         Point? trayAnchor;
+        string filterText = "";
         readonly Color ink = Color.FromArgb(26, 39, 58), accent = Color.FromArgb(41, 100, 208);
 
         public LauncherForm(string source, FixtureConfig fixture, bool hidden, EventWaitHandle show, EventWaitHandle stop)
@@ -210,7 +212,6 @@ namespace BetterIcon.Tray
             Deactivate += delegate { TraceFixture("Deactivated"); if (Visible) dismissTimer.Start(); };
             Activated += delegate { dismissTimer.Stop(); TraceFixture("Activated"); };
             VisibleChanged += delegate { if (!Visible) dismissTimer.Stop(); TraceFixture(Visible ? "Shown" : "Hidden"); };
-            KeyDown += delegate(object sender, KeyEventArgs e) { if (e.KeyCode == Keys.Escape && !busy) { Hide(); e.Handled = true; } };
             signalTimer.Interval = 250;
             signalTimer.Tick += delegate { if (showEvent.WaitOne(0)) { TraceFixture("Show signal"); ShowManager(); } if (stopEvent.WaitOne(0)) ExitLauncher(); };
             signalTimer.Start();
@@ -286,13 +287,11 @@ namespace BetterIcon.Tray
             previewLabel.AutoSize = true; previewLabel.Margin = new Padding(4, 8, 0, 0); previewLabel.ForeColor = Color.FromArgb(83, 98, 119);
             previewLabel.Text = "Preview only until you apply.";
             actions.Controls.Add(apply); actions.Controls.Add(restore); actions.Controls.Add(previewLabel); layout.Controls.Add(actions, 0, 2);
-            FlowLayoutPanel tools = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false };
-            tools.Controls.Add(new Label { Text = "Find an app", AutoSize = true, Margin = new Padding(0, 10, 12, 0) });
-            search.Width = 230; search.Margin = new Padding(0, 5, 12, 0); search.TextChanged += delegate { RenderApps(); }; search.AccessibleName = "Find an installed app";
-            refresh.Text = "Refresh apps"; refresh.Width = 125; refresh.Height = 32; refresh.Click += async delegate { await RefreshCatalog(); };
-            open.Text = "Open selected"; open.Width = 135; open.Height = 32; open.Margin = new Padding(10, 0, 0, 0); open.Click += delegate { LaunchSelected(); };
-            settings.Text = "Settings..."; settings.Width = 100; settings.Height = 32; settings.Margin = new Padding(10, 0, 0, 0); settings.Click += delegate { ShowSettings(); };
-            tools.Controls.Add(search); tools.Controls.Add(refresh); tools.Controls.Add(open); tools.Controls.Add(settings); layout.Controls.Add(tools, 0, 3);
+            Panel tools = new Panel { Dock = DockStyle.Fill };
+            filterHint.Text = "Type an app name to filter. Enter opens; Esc closes.";
+            filterHint.Dock = DockStyle.Fill; filterHint.TextAlign = ContentAlignment.MiddleLeft; filterHint.AutoEllipsis = true;
+            settings.Text = "Settings..."; settings.Width = 100; settings.Dock = DockStyle.Right; settings.Click += delegate { ShowSettings(); };
+            tools.Controls.Add(filterHint); tools.Controls.Add(settings); layout.Controls.Add(tools, 0, 3);
             pictures.ImageSize = new Size(AppIconSize, AppIconSize); pictures.ColorDepth = ColorDepth.Depth32Bit;
             // Hidden startup loads artwork before the ListView has a handle.
             // Create the native image list now so Add copies each bitmap before
@@ -316,7 +315,7 @@ namespace BetterIcon.Tray
         static bool IsAdministrator() { return new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator); }
         void SetBusy(bool value, string message)
         {
-            busy = value; apply.Enabled = restore.Enabled = refresh.Enabled = themes.Enabled = scopes.Enabled = exit.Enabled = settings.Enabled = !value;
+            busy = value; apply.Enabled = restore.Enabled = themes.Enabled = scopes.Enabled = exit.Enabled = settings.Enabled = !value;
             if (!String.IsNullOrEmpty(message)) status.Text = message;
             UseWaitCursor = value; BuildTrayMenu();
         }
@@ -339,6 +338,7 @@ namespace BetterIcon.Tray
         void ShowPopup(Point anchor, bool centered)
         {
             if (!Enabled) { ActivateDialog(); return; }
+            if (!Visible) SetFilter("");
             dismissTimer.Stop();
             Rectangle work = Screen.FromPoint(anchor).WorkingArea;
             WindowState = FormWindowState.Normal;
@@ -347,7 +347,7 @@ namespace BetterIcon.Tray
             Bounds = bounds; Show();
             // Also works when launched with STARTUPINFO's initial hidden state.
             ShowWindow(Handle, 1);
-            Bounds = centered ? PopupPlacement.CenteredOnCursor(Size, anchor, work) : PopupPlacement.AboveTray(Size, anchor, work); Activate();
+            Bounds = centered ? PopupPlacement.CenteredOnCursor(Size, anchor, work) : PopupPlacement.AboveTray(Size, anchor, work); Activate(); apps.Focus();
             TraceFixture(centered ? "Hotkey positioned" : "Positioned", anchor);
         }
         void ExitLauncher() { if (busy) { ShowManager(); MessageBox.Show(this, "Please wait for the current operation to finish.", Text); return; } exiting = true; Close(); }
@@ -412,8 +412,8 @@ namespace BetterIcon.Tray
                 ThemeEntry selected = catalog.Themes.FirstOrDefault(t => t.Id == chosen) ?? catalog.Themes.FirstOrDefault(t => t.Name == "Cardboard") ?? catalog.Themes.FirstOrDefault();
                 if (selected != null) themes.SelectedItem = selected;
                 RenderApps();
-                status.Text = catalog.Apps.Select(a => a.Application).Distinct().Count() + " installed apps / " + catalog.Apps.Length + " launch shortcuts. Double-click an app to open it.";
-                if (catalog.Apps.Length == 0) status.Text = "No ArtCraft app shortcuts found. Install an app, then choose Refresh apps.";
+                status.Text = catalog.Apps.Select(a => a.Application).Distinct().Count() + " installed apps / " + catalog.Apps.Length + " launch shortcuts. Enter or double-click to open.";
+                if (catalog.Apps.Length == 0) status.Text = "No ArtCraft shortcuts found. Install an app, then refresh from the tray menu.";
                 Text = "BetterIcon for ArtCraft  " + catalog.Version;
             }
             catch (Exception error) { Report(error); }
@@ -447,22 +447,79 @@ namespace BetterIcon.Tray
             if (catalog == null) return;
             apps.BeginUpdate();
             try {
-                apps.Items.Clear(); pictures.Images.Clear();
+                apps.Items.Clear(); appTiles.Clear(); pictures.Images.Clear();
                 ThemeEntry theme = SelectedTheme;
-                foreach (AppEntry entry in catalog.Apps.Where(a => a.Name.IndexOf(search.Text, StringComparison.OrdinalIgnoreCase) >= 0)) {
+                foreach (AppEntry entry in catalog.Apps) {
                     ThemeIcon artwork = theme == null ? null : theme.Icons.FirstOrDefault(i => i.Application == entry.Application);
                     using (Bitmap picture = Thumbnail(artwork == null ? null : artwork.Path, Icon)) pictures.Images.Add(picture);
                     ListViewItem item = new ListViewItem(entry.Name, pictures.Images.Count-1) { Tag = entry, ToolTipText = entry.Name + Environment.NewLine + entry.Shortcut };
-                    apps.Items.Add(item);
+                    appTiles.Add(item);
                 }
+                FilterApps();
             }
             finally { apps.EndUpdate(); }
+        }
+        // Filter existing tiles, so each keystroke does not reload artwork from disk.
+        void FilterApps()
+        {
+            apps.BeginUpdate();
+            try {
+                apps.Items.Clear();
+                foreach (ListViewItem item in appTiles) {
+                    item.Selected = item.Focused = false;
+                    if (item.Text.StartsWith(filterText, StringComparison.OrdinalIgnoreCase)) apps.Items.Add(item);
+                }
+                if (apps.Items.Count > 0) {
+                    apps.Items[0].Selected = apps.Items[0].Focused = true;
+                    if (apps.IsHandleCreated) apps.Items[0].EnsureVisible();
+                }
+                filterHint.Text = filterText.Length == 0 ? "Type an app name to filter. Enter opens; Esc closes." :
+                    "Filter: " + filterText + "   |   " + apps.Items.Count + (apps.Items.Count == 1 ? " match" : " matches") + "   |   Backspace edits; Esc clears";
+            }
+            finally { apps.EndUpdate(); }
+        }
+        void SetFilter(string value) { filterText = value; FilterApps(); }
+        bool CanFilter { get { return Enabled && !themes.DroppedDown && !scopes.DroppedDown && !trayMenu.Visible; } }
+        bool HandlePopupKey(Keys key)
+        {
+            if (!CanFilter) return false;
+            if (key == Keys.Escape) {
+                if (filterText.Length > 0) { SetFilter(""); apps.Focus(); }
+                else if (!busy) Hide();
+                return true;
+            }
+            if (key == Keys.Back || key == (Keys.Control | Keys.Back)) {
+                if (filterText.Length > 0) {
+                    int[] elements = System.Globalization.StringInfo.ParseCombiningCharacters(filterText);
+                    SetFilter(key == Keys.Back ? filterText.Substring(0, elements[elements.Length - 1]) : "");
+                }
+                apps.Focus(); return true;
+            }
+            if (key == Keys.Enter && apps.ContainsFocus) { LaunchSelected(); return true; }
+            return false;
+        }
+        protected override bool ProcessCmdKey(ref Message message, Keys keyData)
+        {
+            return HandlePopupKey(keyData) || base.ProcessCmdKey(ref message, keyData);
+        }
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            if (HandlePopupKey(e.KeyData)) { e.Handled = e.SuppressKeyPress = true; return; }
+            base.OnKeyDown(e);
+        }
+        protected override void OnKeyPress(KeyPressEventArgs e)
+        {
+            if (CanFilter && (ModifierKeys & (Keys.Control | Keys.Alt)) == Keys.None && !Char.IsControl(e.KeyChar)) {
+                if (filterText.Length < 120 && (filterText.Length > 0 || !Char.IsWhiteSpace(e.KeyChar))) SetFilter(filterText + e.KeyChar);
+                apps.Focus(); e.Handled = true; return;
+            }
+            base.OnKeyPress(e);
         }
         void LaunchSelected() { if (apps.SelectedItems.Count == 1) Launch((AppEntry)apps.SelectedItems[0].Tag); }
         void Launch(AppEntry entry)
         {
             try {
-                if (!File.Exists(entry.Shortcut)) throw new FileNotFoundException("This shortcut is no longer available. Choose Refresh apps.");
+                if (!File.Exists(entry.Shortcut)) throw new FileNotFoundException("This shortcut is no longer available. Choose Refresh installed apps in the tray menu.");
                 Process.Start(new ProcessStartInfo(entry.Shortcut) { UseShellExecute = true });
                 status.Text = "Opened " + entry.Name + ".";
             }

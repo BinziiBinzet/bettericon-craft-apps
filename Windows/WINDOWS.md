@@ -1,13 +1,13 @@
 # BetterIcon-Craft Apps for Windows
 
-Windows version **1.2.0** includes a native tray launcher alongside the existing icon installer. It shares the repository's artwork and leaves Craft executables, app settings, file associations, and the registry unchanged.
+Windows version **1.3.0** includes a native tray launcher alongside the existing icon installer. It shares the repository's artwork and leaves Craft executables, app settings, file associations, and the registry unchanged.
 
 ## Start here
 
 1. Download or clone the repository and extract it to a folder. Keep `Windows/` beside the `Craft-Icons-*` artwork folders.
 2. In a source checkout, double-click **Windows/Start-Tray.cmd**. It compiles the launcher locally on first use. In a built Windows ZIP, open **Windows/BetterIcon-Tray.exe** directly.
-3. Click its notification-area icon to open the popup above the system tray. Click the icon again to hide it. Escape, closing the window, or clicking elsewhere also hides it. The popup stays inside the clicked monitor's working area.
-4. Double-click an app to launch it, or select it and choose **Open selected**. The tray's right-click menu also lists installed apps.
+3. Click its notification-area icon to open the popup above the system tray. Click the icon again to hide it. Closing the window or clicking elsewhere also hides it. The popup stays inside the clicked monitor's working area.
+4. Start typing an app's name to narrow the grid immediately, without a search field. For example, `f` shows FigCraft and FilmCraft; `fiL` leaves FilmCraft. Use arrows to choose a result and **Enter** to launch, or double-click an app. **Backspace** edits the filter; **Ctrl+Backspace** clears it. **Escape** clears a filter first, then closes the popup. Reopening starts with all apps. Open dropdowns and Settings keep their normal keyboard behavior.
 5. Choose an icon theme to preview it. Select **My Desktop and Start menu** or **Shared shortcuts (administrator)**, then choose **Apply theme** and review the exact shortcuts. Shared writes request elevation; normal app launches remain unelevated.
 6. To undo, choose **Restore original icons** with the same scope and review the restoration.
 
@@ -17,7 +17,7 @@ Press **Ctrl+Alt+Shift+A** from any app to open the popup centered on your mouse
 
 Choose **Settings...** in the popup or tray menu to change the combination or uncheck **Enable system-wide hotkey**. Changes take effect when you save and persist across launches. Choose Ctrl and/or Alt, optionally Shift, plus a letter, number, function key (except reserved F12), or Space. If another app owns the combination, an inline error keeps your previous shortcut active. If a saved shortcut is unavailable at startup, the popup reports that and remains accessible from the tray. Exit releases the shortcut; no keyboard hook or permanent Windows hotkey setting is installed.
 
-The tray finds existing shortcuts in both your own and the shared Desktop/Start menu. It includes the ArtCraft Launcher and custom Craft launchers, and skips shortcuts whose installed target is missing. Portable apps without these shortcuts need a shortcut added to one of those locations, followed by **Refresh apps**. Duplicate launch variants are shown separately so their arguments are preserved.
+The tray finds existing shortcuts in both your own and the shared Desktop/Start menu. It includes the ArtCraft Launcher and custom Craft launchers, and skips shortcuts whose installed target is missing. Portable apps without these shortcuts need a shortcut added to one of those locations, followed by **Refresh installed apps** in the tray's right-click menu. That menu also lists apps for direct launching. Duplicate launch variants are shown separately so their arguments are preserved.
 
 The two scopes are independent; apply both separately if you have both kinds of shortcut. No shortcuts are created for missing apps. Launchers whose names start with a supported Craft app name, such as `PhotoCraft with custom launcher`, retain their launch configuration. Uninstall/help shortcuts are excluded.
 

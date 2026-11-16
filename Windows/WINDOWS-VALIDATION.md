@@ -1,5 +1,11 @@
 # Windows validation
 
+## 1.3.0 type-to-filter launcher - 2026-11-16
+
+All 52 local native checks passed, including 14 new keyboard/filter checks. Coverage includes typing from a focused button, case-insensitive prefix narrowing, selection, Backspace, empty results, Escape clearing versus closing, fresh results after reopening, dropdown/modal isolation, and Ctrl+Backspace. Enter launched a disposable probe through its original fixture shortcut exactly once; Enter with no results launched nothing. Filtering reuses the loaded artwork.
+
+The actual native popup displayed 14 fixture app names without scrolling, with no search field or Open selected button. Windows keyboard input narrowed `f` to FigCraft and FilmCraft, then `fil` to FilmCraft. Arrow navigation highlighted the second result; Enter produced exactly one FilmCraft launch receipt from the isolated probe. Backspace restored the two `fi` matches. No installed app or document was opened by these checks. Refresh remains available in the tray menu, and the global hotkey/settings are retained.
+
 ## 1.2.0 configurable global hotkey - 2026-11-16
 
 All 38 local native checks passed on Windows 11, including the existing startup/tray/worker checks plus cursor centering, edge clamps, negative coordinates, small screens, preference migration, native registration and release, conflicts preserving the old binding, stale-message rejection, reserved-key validation, persistence, and rollback after a settings write failure. Registration tests use isolated function-key combinations and do not take the user's default hotkey.
