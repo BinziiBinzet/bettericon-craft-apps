@@ -1,5 +1,10 @@
 # Windows installer changelog
 
+## 1.14.1 - 2026-11-16
+
+- Remove the main popup's title bar, frame, and window buttons so Launcher and Settings begin at the top of the window.
+- Retain tray/hotkey positioning, Escape and focus-loss dismissal, and explicit Exit/Stop controls.
+
 ## 1.14.0 - 2026-11-16
 
 - Add Show app names in Settings > Launcher. Turn it off for tighter icon-only grids in Launcher and the Settings preview.

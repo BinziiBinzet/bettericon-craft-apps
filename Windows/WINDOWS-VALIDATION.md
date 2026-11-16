@@ -1,5 +1,9 @@
 # Windows validation
 
+## 1.14.1 borderless popup - 2026-11-16
+
+All 239 existing local native checks passed from source after removing the main popup frame. Coverage includes tray toggling, hidden startup, cursor/tray placement and screen clamping, Escape handling, Settings layout at both tested sizes, loading feedback, icon-only mode, large images, pack changes, hotkeys, and restoration. The popup keeps its 900x690 content area while its title bar and frame are removed. No new tests were added for this small appearance change; native window-style metadata provides a direct caption/control check after installation. No Computer Use was performed. All builds, tests, and package validation run locally.
+
 ## 1.14.0 optional app names - 2026-11-16
 
 All 239 local native checks passed from source. Eleven new checks cover older-preference defaults, the Show app names control updating both native grids, tighter cells, retained item names/tooltips/artwork caches, saved choice, typing with names hidden, the correct context-menu target, handle recreation, re-enabling names, asynchronous pack changes, and a fresh message-loop startup with names disabled and 512-pixel images. Existing loading, layout, appearance, keyboard, sharing, and restoration checks remain passing.

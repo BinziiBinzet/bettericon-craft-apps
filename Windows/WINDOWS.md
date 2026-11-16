@@ -1,12 +1,12 @@
 # BetterIcon-Craft Apps for Windows
 
-Windows version **1.14.0** includes a native tray launcher alongside the existing icon installer. It shares the repository's artwork and leaves Craft executables, app settings, file associations, and the registry unchanged.
+Windows version **1.14.1** includes a native tray launcher alongside the existing icon installer. It shares the repository's artwork and leaves Craft executables, app settings, file associations, and the registry unchanged.
 
 ## Start here
 
 1. Download or clone the repository and extract it to a folder. Keep `Windows/` beside the `Craft-Icons-*` artwork folders.
 2. In a source checkout, double-click **Windows/Start-Tray.cmd**. It compiles the launcher locally on first use. In a built Windows ZIP, open **Windows/BetterIcon-Tray.exe** directly.
-3. Click its notification-area icon to open the popup above the system tray. Click the icon again to hide it. Closing the window or clicking elsewhere also hides it. The popup stays inside the clicked monitor's working area.
+3. Click its notification-area icon to open the popup above the system tray. Click the icon again to hide it. The popup opens directly to its tabs without a title bar, window buttons, or draggable frame. Click elsewhere or use Escape to hide it. It stays inside the clicked monitor's working area.
 4. Start typing an app's name to narrow the grid immediately, without a search field. For example, `f` shows FigCraft and FilmCraft; `fiL` leaves FilmCraft. Use arrows to choose a result and **Enter** to launch, or double-click an app. **Backspace** edits the filter; **Ctrl+Backspace** clears it. **Escape** clears a filter first, then closes the popup. Reopening starts with all apps. Open dropdowns and Settings keep their normal keyboard behavior.
 5. The left **Launcher** tab contains only app icons and names. Open the right **Settings** tab to manage icon packs, preview artwork, or configure the launcher. Select **My Desktop and Start menu** or **Shared shortcuts (administrator)**, then choose **Apply icons** and review the exact shortcuts. Shared writes request elevation; normal app launches remain unelevated.
 6. To undo one app, open **Settings > Windows shortcuts > Restore one app**, choose the app and **Restore app default**. To undo all apps, select **ArtCraft default** (the first icon pack) and **Restore ArtCraft defaults**, or use **Restore all defaults** beside Apply icons. Use the same shortcut locations as the original application and review the exact shortcuts.

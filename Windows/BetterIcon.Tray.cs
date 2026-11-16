@@ -308,8 +308,9 @@ namespace BetterIcon.Tray
             if (preferences.Hotkey == null) preferences.Hotkey = new HotkeySettings();
             Text = "BetterIcon for ArtCraft"; Name = "BetterIconLauncher";
             Font = new Font("Segoe UI", 10F); ForeColor = ink; BackColor = Color.FromArgb(244, 247, 251);
-            AutoScaleMode = AutoScaleMode.Font; ClientSize = new Size(900, 690); MinimumSize = new Size(790, 570);
-            StartPosition = FormStartPosition.Manual; MaximizeBox = false; MinimizeBox = false;
+            AutoScaleMode = AutoScaleMode.Font; FormBorderStyle = FormBorderStyle.None;
+            ClientSize = new Size(900, 690); MinimumSize = new Size(790, 570);
+            StartPosition = FormStartPosition.Manual; ControlBox = false; MaximizeBox = false; MinimizeBox = false;
             KeyPreview = true; Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
             BuildWindow(fixture != null);
             tray = new NotifyIcon { Icon = Icon, Text = "BetterIcon for ArtCraft", Visible = true, ContextMenuStrip = trayMenu };
