@@ -7,6 +7,7 @@ using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
 using BetterIcon.Tray;
@@ -14,6 +15,8 @@ using BetterIcon.Tray;
 static class TrayTests
 {
     [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr window, int index);
+    [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(Point point);
     [DllImport("comctl32.dll")] static extern bool ImageList_GetIconSize(IntPtr list, out int width, out int height);
     [DllImport("comctl32.dll")] static extern bool ImageList_Draw(IntPtr list, int index, IntPtr dc, int x, int y, uint flags);
     static readonly List<object> checks = new List<object>();
@@ -22,6 +25,98 @@ static class TrayTests
         checks.Add(new { Test = name, Passed = ok });
         if (!ok) throw new Exception(name);
         Console.WriteLine("PASS: " + name);
+    }
+    static void CheckWindowResizing(LauncherForm form)
+    {
+        int style = GetWindowLong(form.Handle, -16);
+        Check((style & 0x00040000) != 0 && (style & (0x00C00000 | 0x00080000)) == 0,
+            "The popup supports native resizing without a caption or window buttons");
+        Check(form.ClientSize == form.Size, "The resize frame adds no nonclient inset or title bar");
+        int lastX = form.ClientSize.Width - 2, lastY = form.ClientSize.Height - 2;
+        Point[] points = { new Point(1, lastY / 2), new Point(lastX, lastY / 2), new Point(lastX / 2, 1), new Point(lastX / 2, lastY),
+            new Point(1, 1), new Point(lastX, 1), new Point(1, lastY), new Point(lastX, lastY) };
+        int[] expected = { 10, 11, 12, 15, 13, 14, 16, 17 };
+        for (int i = 0; i < points.Length; i++) {
+            Point screen = form.PointToScreen(points[i]);
+            IntPtr position = new IntPtr(unchecked((screen.X & 0xFFFF) | ((screen.Y & 0xFFFF) << 16)));
+            Check(SendMessage(form.Handle, 0x0084, IntPtr.Zero, position).ToInt32() == expected[i] && WindowFromPoint(screen) == form.Handle,
+                "Native resize direction " + expected[i] + " remains reachable outside child controls");
+        }
+        Point center = form.PointToScreen(new Point(form.ClientSize.Width / 2, form.ClientSize.Height / 2));
+        Check(SendMessage(form.Handle, 0x0084, IntPtr.Zero, new IntPtr(unchecked((center.X & 0xFFFF) | ((center.Y & 0xFFFF) << 16)))).ToInt32() == 1,
+            "The popup interior stays client content rather than a draggable title bar");
+    }
+    static IEnumerable<Control> Descendants(Control parent)
+    {
+        foreach (Control child in parent.Controls) { yield return child; foreach (Control nested in Descendants(child)) yield return nested; }
+    }
+    static void CheckAppIconEditing(LauncherForm form, string root, string preferencesPath, JavaScriptSerializer json)
+    {
+        BindingFlags instance = BindingFlags.Instance | BindingFlags.NonPublic;
+        Func<string, object> field = name => typeof(LauncherForm).GetField(name, instance).GetValue(form);
+        ComboBox themes = (ComboBox)field("themes"); Catalog catalog = (Catalog)field("catalog");
+        Preferences preferences = (Preferences)field("preferences"); PackLibrary library = (PackLibrary)field("library");
+        ThemeEntry basis = themes.Items.Cast<ThemeEntry>().First(theme => theme.Id == "Craft-Icons-Zach/Satin");
+        string previousTheme = preferences.Theme; string[] previousDefaults = preferences.DefaultShortcuts;
+        MethodInfo reload = typeof(LauncherForm).GetMethod("ReloadLibrary", instance), change = typeof(LauncherForm).GetMethod("ChangeAppIcon", instance);
+        string png = Path.Combine(root, "context-choice.png"), other = Path.Combine(root, "context-other.png");
+        using (Bitmap bitmap = new Bitmap(128, 128)) {
+            using (Graphics canvas = Graphics.FromImage(bitmap)) canvas.Clear(Color.Lime);
+            bitmap.Save(png, System.Drawing.Imaging.ImageFormat.Png);
+            using (Graphics canvas = Graphics.FromImage(bitmap)) canvas.Clear(Color.Magenta);
+            bitmap.Save(other, System.Drawing.Imaging.ImageFormat.Png);
+        }
+        AppEntry photo = catalog.Apps.First(app => app.Application == "PhotoCraft"), film = catalog.Apps.First(app => app.Application == "FilmCraft");
+        Dictionary<string, byte[]> bundled = basis.Icons.ToDictionary(icon => icon.Application, icon => File.ReadAllBytes(String.IsNullOrEmpty(icon.PreviewPath) ? icon.Path : icon.PreviewPath));
+        byte[] shortcut = File.ReadAllBytes(Path.Combine(root, "PhotoCraft.lnk"));
+        try {
+            Check(!Descendants(form).Any(control => control.Text == "Restore one app" || control.Text == "Restore app default..." || control.AccessibleName == "App to restore"),
+                "Settings removes the redundant individual restore section");
+            reload.Invoke(form, new object[] { basis.Id });
+            preferences.DefaultShortcuts = new[] { photo.Shortcut, film.Shortcut };
+            string unchangedPreferences = json.Serialize(new { preferences.Scope, preferences.IconSize, preferences.Hotkey, preferences.ShowAppNames, preferences.AppearanceMode, preferences.AppIconStyle, preferences.AppIconVariant });
+            int count = library.VisibleThemes(new ThemeEntry[0]).Length;
+            Task saving = (Task)change.Invoke(form, new object[] { photo, png });
+            Check((bool)field("busy") && ((Control)field("loadingPanel")).Visible && !((ToolStripMenuItem)field("chooseAppIcon")).Enabled,
+                "Choosing artwork shows loading and disables further icon edits while saving");
+            LoadingTests.Wait(saving);
+            ThemeEntry saved = (ThemeEntry)themes.SelectedItem;
+            Check(saved.Managed && saved.Author == basis.Author && saved.IconCount == basis.IconCount && library.VisibleThemes(new ThemeEntry[0]).Length == count + 1,
+                "Editing a built-in icon creates one complete personal pack with the existing author credit");
+            Check(saved.Icons.All(icon => File.ReadAllBytes(icon.Path).SequenceEqual(icon.Application == photo.Application ? File.ReadAllBytes(png) : bundled[icon.Application]))
+                && basis.Icons.All(icon => File.ReadAllBytes(String.IsNullOrEmpty(icon.PreviewPath) ? icon.Path : icon.PreviewPath).SequenceEqual(bundled[icon.Application])),
+                "A context edit replaces only the chosen assignment and leaves bundled source artwork intact");
+            List<Bitmap> appImages = (List<Bitmap>)field("appArtwork"), packImages = (List<Bitmap>)field("packArtwork");
+            int appIndex = Array.IndexOf(catalog.Apps, photo), packIndex = saved.Icons.OrderBy(icon => icon.Application).ToList().FindIndex(icon => icon.Application == photo.Application);
+            Check(appImages[appIndex].GetPixel(64, 64).ToArgb() == Color.Lime.ToArgb() && packImages[packIndex].GetPixel(64, 64).ToArgb() == Color.Lime.ToArgb(),
+                "The selected image immediately appears in both launcher and Settings grids");
+            Preferences written = json.Deserialize<Preferences>(File.ReadAllText(preferencesPath));
+            Check(written.Theme == saved.Id && written.DefaultShortcuts.SequenceEqual(new[] { film.Shortcut }) && unchangedPreferences == json.Serialize(new { preferences.Scope, preferences.IconSize, preferences.Hotkey, preferences.ShowAppNames, preferences.AppearanceMode, preferences.AppIconStyle, preferences.AppIconVariant }),
+                "The edited pack persists, replaces only the edited app's remembered defaults and retains other settings");
+            Check(File.ReadAllBytes(Path.Combine(root, "PhotoCraft.lnk")).SequenceEqual(shortcut) && ((Label)field("status")).Text.Contains("Apply icons"),
+                "Choosing artwork leaves Windows shortcuts unchanged and explains the separate Apply action");
+            LoadingTests.Wait((Task)change.Invoke(form, new object[] { film, other }));
+            ThemeEntry edited = (ThemeEntry)themes.SelectedItem;
+            Check(edited.LibraryId == saved.LibraryId && edited.Id != saved.Id && edited.Name == saved.Name && library.VisibleThemes(new ThemeEntry[0]).Length == count + 1
+                && File.ReadAllBytes(edited.Icons.Single(icon => icon.Application == photo.Application).Path).SequenceEqual(File.ReadAllBytes(png))
+                && File.ReadAllBytes(saved.Icons.Single(icon => icon.Application == film.Application).Path).SequenceEqual(bundled[film.Application]),
+                "A second edit updates the same personal pack while retaining other choices and immutable earlier revisions");
+            string manifest = Path.Combine(library.Root, "library.json"), invalid = Path.Combine(root, "bad-context-icon.png");
+            byte[] beforeManifest = File.ReadAllBytes(manifest), beforePreferences = File.ReadAllBytes(preferencesPath);
+            File.WriteAllText(invalid, "Invalid image"); bool rejected = false;
+            try { LoadingTests.Wait((Task)change.Invoke(form, new object[] { photo, invalid })); } catch (IOException) { rejected = true; }
+            Check(rejected && File.ReadAllBytes(manifest).SequenceEqual(beforeManifest) && File.ReadAllBytes(preferencesPath).SequenceEqual(beforePreferences)
+                && ((ThemeEntry)themes.SelectedItem).Id == edited.Id && !(bool)field("busy") && !((Control)field("loadingPanel")).Visible,
+                "Invalid artwork leaves the pack and preferences intact and clears loading");
+            ThemeEntry duplicate = library.ReplaceAppIcon(basis, photo.Application, png);
+            Check(duplicate.LibraryId != saved.LibraryId && duplicate.Name != saved.Name && library.VisibleThemes(new ThemeEntry[0]).Any(theme => theme.Id == edited.Id),
+                "Another edit from the same built-in gets a unique name without overwriting a personal pack");
+            ThemeEntry defaults = themes.Items.Cast<ThemeEntry>().First(theme => theme.IsDefault);
+            ThemeEntry fromDefault = library.ReplaceAppIcon(defaults, photo.Application, png);
+            Check(fromDefault.Managed && fromDefault.Icons.Single().Application == photo.Application && defaults.Icons.Length == 0,
+                "Choosing artwork from ArtCraft default creates a personal pack without modifying the virtual default");
+        }
+        finally { preferences.DefaultShortcuts = previousDefaults; reload.Invoke(form, new object[] { previousTheme }); }
     }
     static string SettingsLayoutProblem(Control parent)
     {
@@ -221,7 +316,8 @@ static class TrayTests
             restore.PerformClick(); ((ContextMenuStrip)field("iconMenu")).Close();
             Check(artwork[0].GetPixel(64, 64).ToArgb() == Color.Red.ToArgb() && preferences.DefaultShortcuts.Contains(shortcut) && File.ReadAllBytes(shortcut).SequenceEqual(bytes) && ((Label)field("status")).Text.Contains("already at the default"), "Restoring an already-default launcher resets its preview and reports success without rewriting the shortcut");
             pages.SelectedIndex = 1; scopes.SelectedIndex = 0;
-            Check(((Button)field("restoreApp")).Enabled, "Settings also allows selecting a launcher's existing default without a backup");
+            ListView preview = (ListView)field("packPreview"); RequestIconMenu(preview, preview.Items[0]);
+            Check(restore.Enabled, "The Settings context menu also allows selecting a launcher's existing default without a backup");
         }
         finally {
             ((ContextMenuStrip)field("iconMenu")).Close(); catalog.Apps = previousApps; preferences.DefaultShortcuts = defaults; scopes.SelectedIndex = previousScope;
@@ -243,6 +339,7 @@ static class TrayTests
         ComboBox scopes = (ComboBox)field("scopes"), themes = (ComboBox)field("themes");
         ContextMenuStrip menu = (ContextMenuStrip)field("iconMenu");
         ToolStripMenuItem restore = (ToolStripMenuItem)field("restoreIconDefault");
+        ToolStripMenuItem choose = (ToolStripMenuItem)field("chooseAppIcon");
         TabControl pages = (TabControl)field("pages");
         pages.SelectedIndex = 0; scopes.SelectedIndex = 0;
         launcher.Items[0].Selected = true;
@@ -259,10 +356,10 @@ static class TrayTests
         menu.Close();
         Point blank = launcher.PointToScreen(new Point(launcher.ClientSize.Width - 5, launcher.ClientSize.Height - 5));
         SendMessage(launcher.Handle, 0x007B, launcher.Handle, new IntPtr(unchecked((blank.Y << 16) | (blank.X & 0xffff))));
-        Check(!menu.Visible && field("iconMenuTarget") == null, "Right-clicking empty launcher space cannot restore a stale selected app");
+        Check(!menu.Visible && !choose.Enabled && field("iconMenuTarget") == null, "Right-clicking empty launcher space cannot edit or restore a stale selected app");
         RequestIconMenu(launcher, launcher.Items[2]);
-        Check(menu.Visible && !restore.Enabled && ((AppEntry)field("iconMenuTarget")).Application == "FilmCraft",
-            "The icon menu disables restoration for an app with no verified backup");
+        Check(menu.Visible && choose.Enabled && !restore.Enabled && ((AppEntry)field("iconMenuTarget")).Application == "FilmCraft",
+            "An app without a restore backup still offers Choose icon in its context menu");
         menu.Close();
         RequestIconMenu(launcher, launcher.Items[0]);
         menu.Close();
@@ -270,7 +367,7 @@ static class TrayTests
         Check(menu.Visible && restore.Enabled && ((AppEntry)field("iconMenuTarget")).Application == "PhotoCraft",
             "The keyboard context-menu request targets the selected app");
         typeof(LauncherForm).GetMethod("SetBusy", instance).Invoke(form, new object[] { true, null });
-        Check(!menu.Visible && !restore.Enabled && field("iconMenuTarget") == null, "Starting an operation closes the icon menu and clears its restore target");
+        Check(!menu.Visible && !choose.Enabled && !restore.Enabled && field("iconMenuTarget") == null, "Starting an operation closes the icon menu and clears both icon actions");
         RequestIconMenu(launcher, launcher.Items[0]);
         Check(!menu.Visible && field("iconMenuTarget") == null, "Busy operations cannot open a new icon restoration menu");
         typeof(LauncherForm).GetMethod("SetBusy", instance).Invoke(form, new object[] { false, null });
@@ -301,8 +398,8 @@ static class TrayTests
         BindingFlags instance = BindingFlags.Instance | BindingFlags.NonPublic;
         Func<string, object> field = name => typeof(LauncherForm).GetField(name, instance).GetValue(form);
         Action<string, object[]> call = (name, arguments) => typeof(LauncherForm).GetMethod(name, instance).Invoke(form, arguments);
-        ComboBox themes = (ComboBox)field("themes"), scopes = (ComboBox)field("scopes"), picker = (ComboBox)field("restoreAppPicker");
-        Button restoreApp = (Button)field("restoreApp"), apply = (Button)field("apply");
+        ComboBox themes = (ComboBox)field("themes"), scopes = (ComboBox)field("scopes");
+        Button apply = (Button)field("apply");
         TabControl pages = (TabControl)field("pages");
         Catalog catalog = (Catalog)field("catalog");
         Preferences preferences = (Preferences)field("preferences");
@@ -407,37 +504,6 @@ static class TrayTests
                 call("RenderApps", null); call("RenderPack", null);
             }
         }
-
-        Check(picker.Items.Cast<string>().SequenceEqual(new[] { "FilmCraft", "PhotoCraft" }),
-            "Individual restore lists unique canonical app names in the chosen shortcut scope");
-        try {
-            picker.DroppedDown = true;
-            bool dropdownOpened = picker.DroppedDown;
-            KeyEventArgs escape = new KeyEventArgs(Keys.Escape);
-            call("OnKeyDown", new object[] { escape });
-            Check(dropdownOpened && pages.SelectedIndex == 1 && !escape.Handled,
-                "Escape in the open individual restore dropdown stays in Settings and belongs to the dropdown");
-        }
-        finally { picker.DroppedDown = false; }
-        picker.SelectedItem = "FilmCraft";
-        Check(picker.Enabled && !restoreApp.Enabled, "Individual restore is disabled when the selected app has no verified backup");
-        picker.SelectedItem = "PhotoCraft";
-        call("UpdateRestoreApps", null);
-        Check((string)picker.SelectedItem == "PhotoCraft" && restoreApp.Enabled,
-            "Refreshing individual restore preserves an eligible app selection");
-        scopes.SelectedIndex = 1;
-        Check(picker.Items.Cast<string>().SequenceEqual(new[] { "FigCraft" }) && restoreApp.Enabled,
-            "Changing shortcut scope replaces the individual restore choices and availability");
-        call("SetBusy", new object[] { true, null });
-        Check(!picker.Enabled && !restoreApp.Enabled, "Busy operations disable both individual restore controls");
-        call("SetBusy", new object[] { false, null });
-        Check(picker.Enabled && restoreApp.Enabled, "Individual restore controls recover after a busy operation");
-        AppEntry[] installed = catalog.Apps;
-        catalog.Apps = installed.Where(app => app.Scope == "CurrentUser").ToArray();
-        call("UpdateRestoreApps", null);
-        Check(picker.Items.Count == 0 && !picker.Enabled && !restoreApp.Enabled,
-            "An empty shortcut scope cannot restore a stale app selection");
-        catalog.Apps = installed; scopes.SelectedIndex = 0;
 
         Check(json.Deserialize<Preferences>("{\"Theme\":\"Craft-Icons-Zach/Satin\"}").DefaultShortcuts.Length == 0,
             "Older preferences migrate without inventing per-shortcut default overrides");
@@ -629,6 +695,7 @@ static class TrayTests
                         mouseUp.Invoke(tray, new object[] { new MouseEventArgs(MouseButtons.Right, 1, 0, 0, 0) });
                         Check(!form.Visible, "Right tray release does not toggle the popup");
                         form.ShowManager(); Check(form.Visible, "Explicit open reopens the existing popup");
+                        CheckWindowResizing(form);
                         form.Hide(); Check(!form.Visible, "Hide retains the launcher for another tray click");
                         Point center = new Point(Screen.PrimaryScreen.WorkingArea.Left + Screen.PrimaryScreen.WorkingArea.Width / 2, Screen.PrimaryScreen.WorkingArea.Top + Screen.PrimaryScreen.WorkingArea.Height / 2);
                         form.ShowAtCursor(center);
@@ -772,6 +839,7 @@ static class TrayTests
                         HotkeySettings off = second.Copy(); off.Enabled = false;
                         Check(saveHotkey.Invoke(form, new object[] { off }) == null && !json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).Hotkey.Enabled, "Disabled hotkey is saved for subsequent launches");
                         CheckDefaultAndIndividualRestore(form, root, preferencesPath, json);
+                        CheckAppIconEditing(form, root, preferencesPath, json);
                         CheckLargeArtwork(form, root, preferencesPath, json);
                         CheckExistingLauncherDefault(form, root, json);
                         AppearanceTests.Run(form, preferencesPath, args[1], Check);

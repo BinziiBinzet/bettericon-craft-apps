@@ -16,7 +16,11 @@ static class LoadingTests
     static object Field(LauncherForm form, string name) { return typeof(LauncherForm).GetField(name, instance).GetValue(form); }
     public static void Wait(LauncherForm form)
     {
-        Task task = (Task)Field(form, "packLoadTask"); Stopwatch timeout = Stopwatch.StartNew();
+        Wait((Task)Field(form, "packLoadTask"));
+    }
+    public static void Wait(Task task)
+    {
+        Stopwatch timeout = Stopwatch.StartNew();
         while (!task.IsCompleted) {
             if (timeout.ElapsedMilliseconds > 30000) throw new Exception("Icon pack loading did not complete within 30 seconds.");
             Application.DoEvents(); Thread.Sleep(5);
