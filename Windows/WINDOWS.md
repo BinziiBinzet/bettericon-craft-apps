@@ -1,6 +1,6 @@
 # BetterIcon-Craft Apps for Windows
 
-Windows version **1.12.0** includes a native tray launcher alongside the existing icon installer. It shares the repository's artwork and leaves Craft executables, app settings, file associations, and the registry unchanged.
+Windows version **1.12.1** includes a native tray launcher alongside the existing icon installer. It shares the repository's artwork and leaves Craft executables, app settings, file associations, and the registry unchanged.
 
 ## Start here
 
@@ -14,6 +14,10 @@ Windows version **1.12.0** includes a native tray launcher alongside the existin
 You can also **right-click an app icon > Restore ArtCraft default** in either tab. In Launcher, this targets the clicked app in that shortcut's own locations; in the Settings preview, it uses the selected shortcut locations. Only that app's shortcuts are included in the review. If the shortcut already uses its executable's default icon, the action selects that default in Launcher and reports that no shortcut change was needed. Otherwise a verified BetterIcon backup is required. **Shift+F10** or the keyboard menu key opens the same menu for the selected icon.
 
 Choose **Exit** in Settings or the tray menu, or use **Windows/Stop-Tray.cmd** to stop this user's launcher. Starting it again reopens the existing instance. `Start-Tray.ps1 -TrayOnly` starts without opening the popup. No login/startup entry is created.
+
+To add BetterIcon to the Start menu, double-click **Windows/Create-StartMenuShortcut.cmd** once. Then search for **BetterIcon** in Start, or pin that entry to Start or the taskbar. The per-user shortcut opens the native app directly with its Sage Dark icon and no terminal window. It opens the existing tray instance when already running. No administrator access or start-at-login setting is needed.
+
+Keep the extracted app or source folder in place: BetterIcon still uses its helper scripts and artwork there. Rerun the shortcut creator after moving that folder. Starting an updated version with **Start-Tray.cmd** refreshes an existing BetterIcon shortcut for that folder; unrelated shortcuts are left alone. You can remove the Start menu shortcut normally without affecting icon packs or backups. PowerShell users can run `Start-Tray.ps1 -CreateStartMenuShortcut` instead.
 
 Press **Ctrl+Alt+Shift+A** from any app to open the popup centered on your mouse cursor. Near an edge it moves just enough to stay within that monitor's working area, clear of the taskbar. Pressing the hotkey again repositions the existing popup at the current cursor. Tray clicks still open it above the tray and toggle it closed.
 

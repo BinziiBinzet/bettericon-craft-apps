@@ -1,5 +1,11 @@
 # Windows validation
 
+## 1.12.1 Start menu shortcut - 2026-11-16
+
+Local shortcut validation uses the real per-user Start menu entry and Windows Shell metadata. The shortcut targets the native executable directly, supplies the source/helper folder explicitly, and uses its embedded icon. Launching it while BetterIcon runs reuses that process; cold-launch and managed-shortcut refresh checks use the same entry. Creation does not enable start at login or change ArtCraft shortcuts, preferences, packs, or backups. No Computer Use is needed for these checks.
+
+The native UI and installer implementation are unchanged; the 1.12.0 native and 1.11.1 installer/bridge baselines below remain applicable. The version, launch script, shortcut command, package contents, and documentation changed. Build and package validation run locally.
+
 ## 1.12.0 appearance and app identity - 2026-11-16
 
 All 218 local native checks passed from source. Appearance checks cover migration from old preferences, invalid-value fallback, System/Dark/Light resolution, the current Windows app theme and its notification callback, high contrast colors, and normal-text contrast. They select all 16 app icons through Settings and verify the window, small tray frame, preview, and saved choices. They also verify automatic pairing, an independently pinned variant, unchanged existing preferences, busy controls, and Dark/Light hotkey and pack-editor dialogs. Existing launcher, restore, sharing, large-icon, keyboard, and nonoverlapping Settings checks remain passing.

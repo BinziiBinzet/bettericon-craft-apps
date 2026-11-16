@@ -1,5 +1,10 @@
 # Windows installer changelog
 
+## 1.12.1 - 2026-11-16
+
+- Add a per-user Start menu shortcut creator. Launch the native app directly with its own icon, reopen an existing tray instance, and support normal Windows pinning.
+- Refresh the managed shortcut on subsequent launches from the same source folder. Explicit creation can repair it after moving the folder; preserve unrelated shortcuts.
+
 ## 1.12.0 - 2026-11-16
 
 - Add System, Dark, and Light appearance across the launcher, Settings, menus, and dialogs, with live Windows app-theme updates and high contrast colors.
