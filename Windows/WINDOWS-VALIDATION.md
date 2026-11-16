@@ -1,5 +1,13 @@
 # Windows validation
 
+## 1.7.0 compact grids and wheel resizing - 2026-11-16
+
+All 102 local native checks passed. Native item rectangles confirm that launcher labels sit below the icons and items form compact rows. The Settings pack preview uses the same saved image size, updates immediately from cached artwork, retains its selection, and resets with the launcher. Existing filtering, keyboard launch, tray, hotkey, pack-management, sharing, and worker regressions also pass.
+
+Native WM_MOUSEWHEEL checks cover Ctrl+wheel enlarging and shrinking both grids through the shared slider, persistence, retaining the active filter/selection, fine-resolution partial steps, 24/128-pixel bounds, and refusing size changes while busy. Ordinary wheel input leaves the size unchanged. These exercise actual native window-message dispatch; physical mouse-wheel input and final visual inspection of this version remain unverified.
+
+The installer/bridge implementation changed only its version number; their 1.5.0 validation below remains the baseline. All builds and validation ran locally.
+
 ## 1.6.0 adjustable launcher icons - 2026-11-16
 
 All 96 local native checks passed, including saved-size startup, migration from older preferences, bounds enforcement, resizing native image lists from cached artwork, preserving the active filter and selection, and resetting to the original compact layout. Theme, shortcut scope, and hotkey preferences remain intact when saving the size; saving a hotkey also retains the chosen icon size.

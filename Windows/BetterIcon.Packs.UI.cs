@@ -69,13 +69,16 @@ namespace BetterIcon.Tray
     {
         readonly TabControl pages = new TabControl();
         readonly TabPage launcherPage = new TabPage("Launcher"), settingsPage = new TabPage("Settings");
-        readonly ListView packPreview = new ListView();
+        readonly IconGridView packPreview = new IconGridView();
         readonly ImageList packPictures = new ImageList();
+        readonly List<Bitmap> packArtwork = new List<Bitmap>();
+        RowStyle packPreviewRow;
         readonly Label packDetails = new Label();
         readonly TrackBar iconSizeSlider = new TrackBar();
         readonly Label iconSizeValue = new Label();
         readonly Button resetIconSize = new Button();
         readonly List<Button> packButtons = new List<Button>();
+        int iconWheelDelta;
         PackLibrary library;
         ThemeEntry[] bundledThemes = new ThemeEntry[0];
         bool fillingThemes;
@@ -100,15 +103,24 @@ namespace BetterIcon.Tray
         {
             preferences.IconSize = iconSizeSlider.Value;
             iconSizeValue.Text = preferences.IconSize + " px";
-            ResizeAppIcons();
-            try { WritePreferences(); status.Text = "Launcher icon size saved."; }
+            ResizeAppIcons(); ResizePackIcons();
+            try { WritePreferences(); status.Text = "Icon size saved."; }
             catch (IOException) { status.Text = "Icon size changed for this session, but could not be saved."; }
             catch (UnauthorizedAccessException) { status.Text = "Icon size changed for this session, but could not be saved."; }
+        }
+        void ChangeIconSizeFromWheel(int delta)
+        {
+            if (busy || !CanFilter) { iconWheelDelta = 0; return; }
+            // Fine-resolution wheels may send partial notches; retain the remainder until 120 units accumulate.
+            iconWheelDelta += delta;
+            int steps = iconWheelDelta / 120; iconWheelDelta %= 120;
+            if (steps != 0) iconSizeSlider.Value = Math.Max(iconSizeSlider.Minimum, Math.Min(iconSizeSlider.Maximum, iconSizeSlider.Value + steps * iconSizeSlider.SmallChange));
         }
         void BuildSettingsPage(bool testing)
         {
             TableLayoutPanel layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(18), ColumnCount = 1, RowCount = 10, AutoScroll = true };
             foreach (int height in new[] { 32, 42, 84, 170, 44, 44, 36, 48, 50, 60 }) layout.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
+            packPreviewRow = layout.RowStyles[3];
             settingsPage.Controls.Add(layout);
             layout.Controls.Add(new Label { Text = "Icon packs", Font = new Font(Font, FontStyle.Bold), Dock = DockStyle.Fill }, 0, 0);
             TableLayoutPanel choice = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2 };
@@ -127,9 +139,11 @@ namespace BetterIcon.Tray
             actions.Controls.Add(PackButton("Remove pack", 125, RemovePack));
             actions.Controls.Add(PackButton("Restore built-in packs", 190, delegate { try { library.RestoreBundled(); ReloadLibrary(null); } catch (Exception error) { Report(error); } }));
             layout.Controls.Add(actions, 0, 2);
-            packPictures.ImageSize = new Size(40, 40); packPictures.ColorDepth = ColorDepth.Depth32Bit;
+            packPictures.ImageSize = new Size(preferences.IconSize, preferences.IconSize); packPictures.ColorDepth = ColorDepth.Depth32Bit;
             if (packPictures.Handle == IntPtr.Zero) throw new InvalidOperationException("Could not create pack previews.");
-            packPreview.Dock = DockStyle.Fill; packPreview.View = View.Tile; packPreview.TileSize = new Size(155, 48); packPreview.LargeImageList = packPictures; packPreview.Columns.Add("App"); packPreview.BorderStyle = BorderStyle.None; packPreview.BackColor = Color.White; packPreview.AccessibleName = "Icon pack preview";
+            packPreview.Dock = DockStyle.Fill; packPreview.SetIconSize(preferences.IconSize); packPreview.LargeImageList = packPictures;
+            packPreview.MultiSelect = false; packPreview.HideSelection = false; packPreview.ShowItemToolTips = true;
+            packPreview.BorderStyle = BorderStyle.None; packPreview.BackColor = Color.White; packPreview.AccessibleName = "Icon pack preview";
             layout.Controls.Add(packPreview, 0, 3);
             FlowLayoutPanel locations = new FlowLayoutPanel { Dock = DockStyle.Fill };
             locations.Controls.Add(new Label { Text = "Apply icons to", AutoSize = true, Margin = new Padding(0, 9, 12, 0) });
@@ -148,9 +162,9 @@ namespace BetterIcon.Tray
             sizing.Controls.Add(new Label { Text = "Icon size", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, 0);
             iconSizeSlider.Minimum = Preferences.MinimumIconSize; iconSizeSlider.Maximum = Preferences.MaximumIconSize;
             iconSizeSlider.Value = preferences.IconSize; iconSizeSlider.SmallChange = 8; iconSizeSlider.LargeChange = 16; iconSizeSlider.TickStyle = TickStyle.None;
-            iconSizeSlider.Dock = DockStyle.Fill; iconSizeSlider.AccessibleName = "Launcher icon size"; iconSizeSlider.AccessibleDescription = "Size in pixels, from 24 to 128. Updates the Launcher immediately.";
+            iconSizeSlider.Dock = DockStyle.Fill; iconSizeSlider.AccessibleName = "Icon size"; iconSizeSlider.AccessibleDescription = "Size in pixels, from 24 to 128. Updates the Launcher and Settings preview immediately.";
             iconSizeValue.Text = preferences.IconSize + " px"; iconSizeValue.Dock = DockStyle.Fill; iconSizeValue.TextAlign = ContentAlignment.MiddleCenter;
-            resetIconSize.Text = "Reset"; resetIconSize.Dock = DockStyle.Fill; resetIconSize.AccessibleName = "Reset launcher icon size";
+            resetIconSize.Text = "Reset"; resetIconSize.Dock = DockStyle.Fill; resetIconSize.AccessibleName = "Reset icon size";
             resetIconSize.Click += delegate { iconSizeSlider.Value = Preferences.DefaultIconSize; };
             iconSizeSlider.ValueChanged += delegate { ChangeIconSize(); };
             sizing.Controls.Add(iconSizeSlider, 1, 0); sizing.Controls.Add(iconSizeValue, 2, 0); sizing.Controls.Add(resetIconSize, 3, 0); layout.Controls.Add(sizing, 0, 7);
@@ -182,14 +196,27 @@ namespace BetterIcon.Tray
             packDetails.Text = theme == null ? "No packs. Import or create one." : theme.IconCount + " icons / " + (theme.Managed ? "Personal pack" : "Built-in pack");
             packPreview.BeginUpdate();
             try {
-                packPreview.Items.Clear(); packPictures.Images.Clear();
+                packPreview.Items.Clear(); packPictures.Images.Clear(); ClearPackArtwork();
                 if (theme != null) foreach (ThemeIcon icon in theme.Icons.OrderBy(i => i.Application)) {
-                    using (Bitmap picture = Thumbnail(icon.Path, Icon)) packPictures.Images.Add(picture);
-                    packPreview.Items.Add(new ListViewItem(icon.Application, packPictures.Images.Count - 1));
+                    packArtwork.Add(Thumbnail(icon.Path, Icon, Preferences.MaximumIconSize));
+                    packPreview.Items.Add(new ListViewItem(icon.Application, packArtwork.Count - 1) { ToolTipText = icon.Application });
                 }
+                ResizePackIcons();
             }
             finally { packPreview.EndUpdate(); }
             UpdatePackButtons();
+        }
+        void ClearPackArtwork() { foreach (Bitmap image in packArtwork) image.Dispose(); packArtwork.Clear(); }
+        void ResizePackIcons()
+        {
+            packPreview.BeginUpdate();
+            try {
+                ResizeArtwork(packPictures, packArtwork, preferences.IconSize); packPreview.SetIconSize(preferences.IconSize);
+                // Leave room for at least one complete row, including names, at the largest size.
+                packPreviewRow.Height = Math.Max(170, packPreview.GridCellSize.Height + 12);
+                if (packPreview.SelectedItems.Count == 1) packPreview.SelectedItems[0].EnsureVisible();
+            }
+            finally { packPreview.EndUpdate(); }
         }
         void UpdatePackButtons()
         {

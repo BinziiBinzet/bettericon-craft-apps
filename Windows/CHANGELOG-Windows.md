@@ -1,5 +1,12 @@
 # Windows installer changelog
 
+## 1.7.0 - 2026-11-16
+
+- Arrange launcher icons in a compact grid with centered app names underneath, retaining native selection, keyboard navigation, filtering, and launch behavior.
+- Make the icon-size slider update both the Launcher and the Settings pack preview, including saved-size startup and Reset.
+- Add Ctrl+mouse wheel resizing in the Launcher, with 8-pixel steps, support for fine-resolution wheels, and the same saved size and limits as the slider.
+- Cache Settings artwork at full preview resolution for smooth resizing and keep room for a complete icon/name row at large sizes.
+
 ## 1.6.0 - 2026-11-16
 
 - Add a 24–128 pixel Launcher icon-size slider in Settings, with a live size label and Reset to the compact 48-pixel default.

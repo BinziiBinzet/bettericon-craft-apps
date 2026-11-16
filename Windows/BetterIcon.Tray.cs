@@ -162,6 +162,36 @@ namespace BetterIcon.Tray
         }
     }
 
+    // Keep native list selection, accessibility and keyboard navigation, with labels below the artwork.
+    public sealed class IconGridView : ListView
+    {
+        [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
+        int iconSize = Preferences.DefaultIconSize;
+        public event Action<int> IconSizeWheel;
+        public Size GridCellSize { get { return new Size(Math.Max(112, iconSize + 24), iconSize + Font.Height * 2 + 16); } }
+        public IconGridView() { View = View.LargeIcon; AutoArrange = true; Alignment = ListViewAlignment.Top; LabelWrap = true; DoubleBuffered = true; }
+        public void SetIconSize(int size) { iconSize = size; UpdateSpacing(); }
+        protected override void OnHandleCreated(EventArgs e) { base.OnHandleCreated(e); UpdateSpacing(); }
+        protected override void OnFontChanged(EventArgs e) { base.OnFontChanged(e); UpdateSpacing(); }
+        protected override void WndProc(ref Message message)
+        {
+            // Consume Ctrl+wheel before the native list scrolls; ordinary wheel input still scrolls normally.
+            if (message.Msg == 0x020A && (message.WParam.ToInt64() & 0x0008) != 0 && IconSizeWheel != null) {
+                IconSizeWheel(unchecked((short)(message.WParam.ToInt64() >> 16)));
+                message.Result = IntPtr.Zero; return;
+            }
+            base.WndProc(ref message);
+        }
+        void UpdateSpacing()
+        {
+            if (!IsHandleCreated) return;
+            Size cell = GridCellSize;
+            // LVM_SETICONSPACING includes the image itself plus room for two lines of text.
+            SendMessage(Handle, 0x1035, IntPtr.Zero, new IntPtr((cell.Height << 16) | cell.Width));
+            ArrangeIcons(ListViewAlignment.Top);
+        }
+    }
+
     public sealed partial class LauncherForm : Form
     {
         [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr window, int command);
@@ -170,7 +200,7 @@ namespace BetterIcon.Tray
         readonly ContextMenuStrip trayMenu = new ContextMenuStrip();
         readonly ComboBox themes = new ComboBox();
         readonly ComboBox scopes = new ComboBox();
-        readonly ListView apps = new ListView();
+        readonly IconGridView apps = new IconGridView();
         readonly List<ListViewItem> appTiles = new List<ListViewItem>();
         readonly List<Bitmap> appArtwork = new List<Bitmap>();
         readonly Label filterHint = new Label();
@@ -253,7 +283,7 @@ namespace BetterIcon.Tray
 
         protected override void Dispose(bool disposing)
         {
-            if (disposing) { if (hotkey != null) hotkey.Dispose(); ClearAppArtwork(); }
+            if (disposing) { if (hotkey != null) hotkey.Dispose(); ClearAppArtwork(); ClearPackArtwork(); }
             base.Dispose(disposing);
         }
 
@@ -282,10 +312,11 @@ namespace BetterIcon.Tray
             pictures.ImageSize = new Size(preferences.IconSize, preferences.IconSize); pictures.ColorDepth = ColorDepth.Depth32Bit;
             // Force native copies before temporary thumbnails are disposed at hidden startup.
             if (pictures.Handle == IntPtr.Zero) throw new InvalidOperationException("Could not create the app icon list.");
-            apps.Dock = DockStyle.Fill; apps.View = View.Tile; apps.TileSize = new Size(preferences.IconSize + 212, preferences.IconSize + 16); apps.LargeImageList = pictures;
-            apps.Columns.Add("App", 200); apps.MultiSelect = false; apps.HideSelection = false;
+            apps.Dock = DockStyle.Fill; apps.SetIconSize(preferences.IconSize); apps.LargeImageList = pictures;
+            apps.MultiSelect = false; apps.HideSelection = false;
             apps.BorderStyle = BorderStyle.None; apps.BackColor = Color.White; apps.ShowItemToolTips = true; apps.AccessibleName = "Installed ArtCraft apps";
             apps.ItemActivate += delegate { LaunchSelected(); };
+            apps.IconSizeWheel += ChangeIconSizeFromWheel;
             filterHint.Dock = DockStyle.Top; filterHint.Height = 42; filterHint.Text = "Finding installed apps...";
             filterHint.TextAlign = ContentAlignment.MiddleLeft;
             launcherPage.Controls.Add(apps); launcherPage.Controls.Add(filterHint);
@@ -425,6 +456,19 @@ namespace BetterIcon.Tray
             return image;
         }
         void ClearAppArtwork() { foreach (Bitmap image in appArtwork) image.Dispose(); appArtwork.Clear(); }
+        static void ResizeArtwork(ImageList images, IEnumerable<Bitmap> artwork, int size)
+        {
+            images.Images.Clear(); images.ImageSize = new Size(size, size);
+            // ImageSize recreates the native list; materialize it before temporary bitmaps are disposed.
+            if (images.Handle == IntPtr.Zero) throw new InvalidOperationException("Could not resize icons.");
+            foreach (Bitmap source in artwork) using (Bitmap scaled = new Bitmap(size, size)) {
+                using (Graphics canvas = Graphics.FromImage(scaled)) {
+                    canvas.Clear(Color.Transparent); canvas.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                    canvas.DrawImage(source, new Rectangle(0, 0, size, size));
+                }
+                images.Images.Add(scaled);
+            }
+        }
         void RenderApps()
         {
             if (catalog == null) return;
@@ -450,17 +494,7 @@ namespace BetterIcon.Tray
             int size = preferences.IconSize;
             apps.BeginUpdate();
             try {
-                pictures.Images.Clear(); pictures.ImageSize = new Size(size, size);
-                // ImageSize recreates the native list; materialize it before temporary bitmaps are disposed.
-                if (pictures.Handle == IntPtr.Zero) throw new InvalidOperationException("Could not resize launcher icons.");
-                apps.TileSize = new Size(size + 212, size + 16);
-                foreach (Bitmap source in appArtwork) using (Bitmap scaled = new Bitmap(size, size)) {
-                    using (Graphics canvas = Graphics.FromImage(scaled)) {
-                        canvas.Clear(Color.Transparent); canvas.InterpolationMode = InterpolationMode.HighQualityBicubic;
-                        canvas.DrawImage(source, new Rectangle(0, 0, size, size));
-                    }
-                    pictures.Images.Add(scaled);
-                }
+                ResizeArtwork(pictures, appArtwork, size); apps.SetIconSize(size);
                 FilterApps();
                 if (selected != null && apps.Items.Contains(selected)) {
                     foreach (ListViewItem item in appTiles) item.Selected = item.Focused = false;
@@ -485,7 +519,7 @@ namespace BetterIcon.Tray
                 }
                 filterHint.Text = catalog == null ? "Finding installed apps..." : filterText.Length == 0 ? "No ArtCraft apps found. Open Settings to refresh." : "No apps match '" + filterText + "'. Backspace edits; Esc clears.";
                 filterHint.Visible = apps.Items.Count == 0;
-                apps.AccessibleDescription = filterText.Length == 0 ? "Type an app name to filter. Enter opens. Escape closes." : "Filter: " + filterText + ". " + apps.Items.Count + " matches. Escape clears.";
+                apps.AccessibleDescription = (filterText.Length == 0 ? "Type an app name to filter. Enter opens. Escape closes." : "Filter: " + filterText + ". " + apps.Items.Count + " matches. Escape clears.") + " Ctrl+mouse wheel changes icon size.";
             }
             finally { apps.EndUpdate(); }
         }

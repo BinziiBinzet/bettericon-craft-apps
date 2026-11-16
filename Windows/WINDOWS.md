@@ -1,6 +1,6 @@
 # BetterIcon-Craft Apps for Windows
 
-Windows version **1.6.0** includes a native tray launcher alongside the existing icon installer. It shares the repository's artwork and leaves Craft executables, app settings, file associations, and the registry unchanged.
+Windows version **1.7.0** includes a native tray launcher alongside the existing icon installer. It shares the repository's artwork and leaves Craft executables, app settings, file associations, and the registry unchanged.
 
 ## Start here
 
@@ -15,7 +15,9 @@ Choose **Exit** in Settings or the tray menu, or use **Windows/Stop-Tray.cmd** t
 
 Press **Ctrl+Alt+Shift+A** from any app to open the popup centered on your mouse cursor. Near an edge it moves just enough to stay within that monitor's working area, clear of the taskbar. Pressing the hotkey again repositions the existing popup at the current cursor. Tray clicks still open it above the tray and toggle it closed.
 
-In **Settings > Launcher**, move **Icon size** to choose 24–128 pixels. The Launcher updates immediately and remembers the size after restarting. **Reset** restores the compact 48-pixel default. Tiles make room for larger artwork and keep app names visible; larger sizes can require scrolling. This changes only the launcher's display, leaving shortcut icons and pack artwork unchanged. The pack preview in Settings keeps its compact size.
+The Launcher uses a compact grid with app names centered underneath their icons. In **Settings > Launcher**, move **Icon size** to choose 24–128 pixels. Both the Launcher and the icon pack preview in Settings update immediately and remember the size after restarting. **Reset** restores the 48-pixel default in both grids. Names wrap below the artwork, with full names available in tooltips; larger sizes can require scrolling. This changes only the app's display, leaving shortcut icons and pack artwork unchanged.
+
+You can also hold **Ctrl** and turn the **mouse wheel** over the Launcher to resize icons: wheel up enlarges them, wheel down makes them smaller, in 8-pixel steps. This updates the same slider and saved size for both tabs. Scrolling without Ctrl scrolls the grid normally.
 
 Open **Settings > Configure hotkey** to change the combination or uncheck **Enable system-wide hotkey**. Changes take effect when you save and persist across launches. Choose Ctrl and/or Alt, optionally Shift, plus a letter, number, function key (except reserved F12), or Space. If another app owns the combination, an inline error keeps your previous shortcut active. If a saved shortcut is unavailable at startup, Settings reports that and the popup remains accessible from the tray. Exit releases the shortcut; no keyboard hook or permanent Windows hotkey setting is installed.
 
