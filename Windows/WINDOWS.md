@@ -1,6 +1,6 @@
 # BetterIcon-Craft Apps for Windows
 
-Windows version **1.11.1** includes a native tray launcher alongside the existing icon installer. It shares the repository's artwork and leaves Craft executables, app settings, file associations, and the registry unchanged.
+Windows version **1.12.0** includes a native tray launcher alongside the existing icon installer. It shares the repository's artwork and leaves Craft executables, app settings, file associations, and the registry unchanged.
 
 ## Start here
 
@@ -20,6 +20,12 @@ Press **Ctrl+Alt+Shift+A** from any app to open the popup centered on your mouse
 The Launcher uses a compact grid with app names centered underneath their icons. In **Settings > Launcher**, move **Icon size** from 24 pixels up to the largest available artwork in the selected pack and installed-app previews. The bundled PNG artwork supports 1024–1254 pixels, and custom PNGs can use the existing 4096-pixel image limit. Both tabs use the original artwork at larger sizes and remember the size after restarting. **Reset** restores 48 pixels. Names wrap below the artwork, with full names in tooltips; larger icons require scrolling. Choosing a pack with smaller artwork adjusts the slider range and size to fit its available resolution. This changes the app's display; applying shortcut icons remains a separate operation.
 
 You can also hold **Ctrl** and turn the **mouse wheel** over the Launcher to resize icons: wheel up enlarges them, wheel down makes them smaller, in 8-pixel steps. This updates the same slider and saved size for both tabs. Scrolling without Ctrl scrolls the grid normally.
+
+In **Settings > Appearance**, choose **System**, **Dark**, or **Light** for BetterIcon's controls, grids, menus, and dialogs. System follows Windows' app theme and updates while BetterIcon is running. Windows high contrast colors take precedence.
+
+BetterIcon's own icons are by **OmegaDarling**. **App icon** offers Clay, Copper, Mauve, Ochre, Sage, Slate, Stone, and Teal. Each has a Dark and Light version: **Match appearance** switches the pair automatically, while **Dark icon** or **Light icon** keeps that variant. These settings update the window and tray immediately and persist after restart. Fresh settings use System, Sage, and Match appearance; the executable's embedded default is `betterIcon_icon_sage_dark.png`. ArtCraft icon packs and installed shortcut icons have their own controls.
+
+The dedicated 32px artwork supplies the 16/24/32-pixel app-icon frames, including the tray. Larger frames and the Settings preview use the original artwork. Both approved source sets are bundled for local rebuilding.
 
 Open **Settings > Launcher > Change hotkey** to change the combination or uncheck **Enable system-wide hotkey**. Changes take effect when you save and persist across launches. Choose Ctrl and/or Alt, optionally Shift, plus a letter, number, function key (except reserved F12), or Space. If another app owns the combination, an inline error keeps your previous shortcut active. If a saved shortcut is unavailable at startup, Settings reports that and the popup remains accessible from the tray. Exit releases the shortcut; no keyboard hook or permanent Windows hotkey setting is installed.
 

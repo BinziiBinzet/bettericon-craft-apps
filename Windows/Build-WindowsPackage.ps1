@@ -17,11 +17,12 @@ $files = @('install.ps1','uninstall.ps1','BetterIcon.Windows.psm1','BetterIcon.S
     'Install-Windows.cmd','Restore-Windows.cmd','Test-Windows.ps1','Build-WindowsPackage.ps1',
     'WINDOWS.md','CHANGELOG-Windows.md','WINDOWS-VALIDATION.md','BetterIcon.Tray.cs',
     'BetterIcon.TrayWorker.ps1','BetterIcon.Tray.manifest','Build-Tray.ps1','Start-Tray.ps1',
-    'Start-Tray.cmd','Stop-Tray.cmd','Test-Tray.ps1','Test-TrayUI.ps1','Test-TrayUI.cs','BetterIcon.Hotkey.cs','BetterIcon.Packs.cs','BetterIcon.Packs.UI.cs','Test-Packs.cs')
+    'Start-Tray.cmd','Stop-Tray.cmd','Test-Tray.ps1','Test-TrayUI.ps1','Test-TrayUI.cs','BetterIcon.Hotkey.cs','BetterIcon.Packs.cs','BetterIcon.Packs.UI.cs','Test-Packs.cs',
+    'BetterIcon.Appearance.cs','Test-Appearance.cs','Build-AppIcon.ps1','Assets/AppIcons/README.md')
 $repository = Get-BetterIconRepository
 $buildDirectory = Join-Path $output ('build-' + [guid]::NewGuid().ToString('N'))
 $build = & (Join-Path $PSScriptRoot 'Build-Tray.ps1') -OutputDirectory $buildDirectory
-$fileCount = 0; $iconCount = 0; $previewCount = 0
+$fileCount = 0; $iconCount = 0; $previewCount = 0; $appIconCount = 0
 $temporary = Join-Path $output ('.bettericon-package-' + [guid]::NewGuid().ToString('N') + '.zip')
 try {
     $archive = [IO.Compression.ZipFile]::Open($temporary, [IO.Compression.ZipArchiveMode]::Create)
@@ -37,6 +38,12 @@ try {
         }
         $null = [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $build.Executable, 'Windows/BetterIcon-Tray.exe', [IO.Compression.CompressionLevel]::Optimal)
         $fileCount++
+        $appIconRoot = Join-Path $PSScriptRoot 'Assets/AppIcons'
+        foreach ($path in @(Get-ChildItem -LiteralPath $appIconRoot -Filter '*.png' -File -Recurse | Sort-Object FullName)) {
+            $relative = $path.FullName.Substring($appIconRoot.Length + 1).Replace('\','/')
+            $null = [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $path.FullName, 'Windows/Assets/AppIcons/' + $relative, [IO.Compression.CompressionLevel]::Optimal)
+            $fileCount++; $appIconCount++
+        }
         foreach ($theme in @(Get-BetterIconTheme)) {
             foreach ($icon in @(Get-BetterIconThemeIcon -Theme $theme.Id)) {
                 $folder = if ($theme.Name -eq 'Root') { $theme.Pack } else { $theme.Id }
@@ -56,6 +63,6 @@ try {
     [IO.File]::Move($temporary, $destination)
     $hash = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()
     [IO.File]::WriteAllText($destination + '.sha256', "$hash  $name" + [Environment]::NewLine)
-    [pscustomobject]@{ Package = $destination; Files = $fileCount; Icons = $iconCount; PreviewImages = $previewCount; SHA256 = $hash; ExecutableSHA256 = $build.SHA256 }
+    [pscustomobject]@{ Package = $destination; Files = $fileCount; Icons = $iconCount; PreviewImages = $previewCount; AppIconImages = $appIconCount; SHA256 = $hash; ExecutableSHA256 = $build.SHA256 }
 }
 finally { if (Test-Path -LiteralPath $temporary) { [IO.File]::Delete($temporary) } }

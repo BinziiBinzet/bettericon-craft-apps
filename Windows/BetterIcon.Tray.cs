@@ -96,6 +96,10 @@ namespace BetterIcon.Tray
         public string Scope { get; set; }
         public HotkeySettings Hotkey { get; set; }
         public string[] DefaultShortcuts { get; set; }
+        string appearanceMode = "System", appIconStyle = "sage", appIconVariant = "Auto";
+        public string AppearanceMode { get { return appearanceMode; } set { appearanceMode = value == "Dark" || value == "Light" ? value : "System"; } }
+        public string AppIconStyle { get { return appIconStyle; } set { appIconStyle = AppBranding.Styles.Contains(value) ? value : "sage"; } }
+        public string AppIconVariant { get { return appIconVariant; } set { appIconVariant = value == "Dark" || value == "Light" ? value : "Auto"; } }
         public int IconSize { get { return iconSize; } set { iconSize = Math.Max(MinimumIconSize, Math.Min(MaximumIconSize, value)); } }
         public Preferences() { Hotkey = new HotkeySettings(); DefaultShortcuts = new string[0]; }
     }
@@ -259,8 +263,8 @@ namespace BetterIcon.Tray
         readonly ContextMenuStrip iconMenu = new ContextMenuStrip();
         readonly ToolStripMenuItem restoreIconDefault = new ToolStripMenuItem("Restore ArtCraft default...");
         AppEntry iconMenuTarget;
-        readonly ComboBox themes = new ComboBox();
-        readonly ComboBox scopes = new ComboBox();
+        readonly ComboBox themes = new AppearanceComboBox();
+        readonly ComboBox scopes = new AppearanceComboBox();
         readonly IconGridView apps = new IconGridView();
         readonly List<ListViewItem> appTiles = new List<ListViewItem>();
         readonly List<Bitmap> appArtwork = new List<Bitmap>();
@@ -314,7 +318,7 @@ namespace BetterIcon.Tray
             dismissTimer.Tick += delegate {
                 if (ContainsFocus) { dismissTimer.Stop(); return; }
                 if (fixture != null && fixture.KeepOpenForAutomation) { dismissTimer.Stop(); return; }
-                if (Control.MouseButtons != MouseButtons.None || trayMenu.Visible || iconMenu.Visible || importPackMenu.Visible || managePackMenu.Visible || busy || !Enabled || themes.DroppedDown || scopes.DroppedDown || restoreAppPicker.DroppedDown) return;
+                if (Control.MouseButtons != MouseButtons.None || trayMenu.Visible || iconMenu.Visible || importPackMenu.Visible || managePackMenu.Visible || busy || !Enabled || themes.DroppedDown || scopes.DroppedDown || restoreAppPicker.DroppedDown || AppearanceMenuOpen) return;
                 dismissTimer.Stop(); Hide();
             };
             Deactivate += delegate { TraceFixture("Deactivated"); if (Visible) dismissTimer.Start(); };
@@ -330,7 +334,7 @@ namespace BetterIcon.Tray
                 }
             };
             FormClosed += delegate { if (hotkey != null) hotkey.Dispose(); signalTimer.Stop(); signalTimer.Dispose(); dismissTimer.Stop(); dismissTimer.Dispose(); tray.Visible = false; tray.Dispose(); trayMenu.Dispose(); iconMenu.Dispose(); importPackMenu.Dispose(); managePackMenu.Dispose(); pictures.Dispose(); packPictures.Dispose(); };
-            BuildTrayMenu();
+            BuildTrayMenu(); InitializeAppearance();
         }
 
         public void Start()
@@ -347,7 +351,7 @@ namespace BetterIcon.Tray
 
         protected override void Dispose(bool disposing)
         {
-            if (disposing) { if (hotkey != null) hotkey.Dispose(); ClearAppArtwork(); ClearPackArtwork(); }
+            if (disposing) { if (hotkey != null) hotkey.Dispose(); DisposeAppearance(); ClearAppArtwork(); ClearPackArtwork(); }
             base.Dispose(disposing);
         }
 
@@ -402,6 +406,7 @@ namespace BetterIcon.Tray
             busy = value; apply.Enabled = restore.Enabled = themes.Enabled = scopes.Enabled = exit.Enabled = settings.Enabled = !value;
             if (value) { iconMenu.Close(); iconMenuTarget = null; restoreIconDefault.Enabled = false; }
             iconSizeSlider.Enabled = resetIconSize.Enabled = !value;
+            appearanceModePicker.Enabled = appIconStylePicker.Enabled = appIconVariantPicker.Enabled = !value;
             UpdatePackButtons();
             if (!String.IsNullOrEmpty(message)) status.Text = message;
             UseWaitCursor = value; BuildTrayMenu();
@@ -438,7 +443,7 @@ namespace BetterIcon.Tray
             Bounds = centered ? PopupPlacement.CenteredOnCursor(Size, anchor, work) : PopupPlacement.AboveTray(Size, anchor, work); SizeTabs(); Activate(); apps.Focus();
             TraceFixture(centered ? "Hotkey positioned" : "Positioned", anchor);
         }
-        void ExitLauncher() { if (busy) { ShowManager(); MessageBox.Show(this, "Please wait for the current operation to finish.", Text); return; } exiting = true; Close(); }
+        void ExitLauncher() { if (busy) { ShowManager(); AppAppearance.Message(this, Text, "Please wait for the current operation to finish.", appearancePalette, false); return; } exiting = true; Close(); }
         void UpdateHotkeyHint()
         {
             string hint = !preferences.Hotkey.Enabled ? "Global hotkey disabled." : hotkey != null && hotkey.IsRegistered ? preferences.Hotkey + " opens at your cursor." : "Hotkey unavailable. Choose another combination.";
@@ -666,10 +671,10 @@ namespace BetterIcon.Tray
             finally { apps.EndUpdate(); }
         }
         void SetFilter(string value) { filterText = value; FilterApps(); }
-        bool CanFilter { get { return Enabled && pages.SelectedTab == launcherPage && !themes.DroppedDown && !scopes.DroppedDown && !restoreAppPicker.DroppedDown && !trayMenu.Visible && !iconMenu.Visible && !importPackMenu.Visible && !managePackMenu.Visible; } }
+        bool CanFilter { get { return Enabled && pages.SelectedTab == launcherPage && !themes.DroppedDown && !scopes.DroppedDown && !restoreAppPicker.DroppedDown && !AppearanceMenuOpen && !trayMenu.Visible && !iconMenu.Visible && !importPackMenu.Visible && !managePackMenu.Visible; } }
         bool HandlePopupKey(Keys key)
         {
-            if (key == Keys.Escape && Enabled && pages.SelectedTab == settingsPage && !themes.DroppedDown && !scopes.DroppedDown && !restoreAppPicker.DroppedDown && !iconMenu.Visible && !busy) { pages.SelectedTab = launcherPage; apps.Focus(); return true; }
+            if (key == Keys.Escape && Enabled && pages.SelectedTab == settingsPage && !themes.DroppedDown && !scopes.DroppedDown && !restoreAppPicker.DroppedDown && !AppearanceMenuOpen && !iconMenu.Visible && !busy) { pages.SelectedTab = launcherPage; apps.Focus(); return true; }
             if (!CanFilter) return false;
             if (key == Keys.Escape) {
                 if (filterText.Length > 0) { SetFilter(""); apps.Focus(); }
@@ -761,6 +766,7 @@ namespace BetterIcon.Tray
             ToolStripMenuItem settingsItem = new ToolStripMenuItem("Settings...") { Enabled = !busy }; settingsItem.Click += delegate { ShowSettings(); }; trayMenu.Items.Add(settingsItem);
             trayMenu.Items.Add(new ToolStripSeparator());
             ToolStripMenuItem quit = new ToolStripMenuItem("Exit BetterIcon") { Enabled = !busy }; quit.Click += delegate { ExitLauncher(); }; trayMenu.Items.Add(quit);
+            if (appearancePalette != null) AppAppearance.ApplyMenu(trayMenu, appearancePalette);
         }
         bool Review(string title, string description, IEnumerable<string[]> rows, bool canApply, string accept)
         {
@@ -773,9 +779,10 @@ namespace BetterIcon.Tray
                 foreach (string[] row in rows) list.Items.Add(new ListViewItem(row)); panel.Controls.Add(list, 0, 1);
                 FlowLayoutPanel buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft };
                 Button cancel = Button("Cancel", 100); cancel.DialogResult = DialogResult.Cancel;
-                Button ok = Button(accept, 220); ok.DialogResult = DialogResult.OK; ok.Enabled = canApply;
+                Button ok = Button(accept, 220); ok.DialogResult = DialogResult.OK; ok.Enabled = canApply; ok.Tag = "PrimaryAction";
                 buttons.Controls.Add(cancel); buttons.Controls.Add(ok); panel.Controls.Add(buttons, 0, 2); dialog.Controls.Add(panel);
                 dialog.CancelButton = cancel; dialog.AcceptButton = ok;
+                ApplyDialogAppearance(dialog);
                 return dialog.ShowDialog(this) == DialogResult.OK;
             }
         }
@@ -859,7 +866,7 @@ namespace BetterIcon.Tray
         {
             System.ComponentModel.Win32Exception native = error as System.ComponentModel.Win32Exception;
             string message = native != null && native.NativeErrorCode == 1223 ? "Administrator request cancelled. No icons changed." : error.Message;
-            status.Text = message; if (!Visible) ShowManager(); pages.SelectedTab = settingsPage; MessageBox.Show(this, message, "BetterIcon", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            status.Text = message; if (!Visible) ShowManager(); pages.SelectedTab = settingsPage; AppAppearance.Message(this, "BetterIcon", message, appearancePalette, false);
         }
     }
 

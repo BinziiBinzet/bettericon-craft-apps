@@ -1,5 +1,12 @@
 # Windows installer changelog
 
+## 1.12.0 - 2026-11-16
+
+- Add System, Dark, and Light appearance across the launcher, Settings, menus, and dialogs, with live Windows app-theme updates and high contrast colors.
+- Use OmegaDarling's approved Sage Dark artwork as the executable icon and embed all 16 approved app icons.
+- Use the dedicated 32px artwork for 16/24/32-pixel frames and tray rendering, retaining the larger originals for larger frames and previews.
+- Add eight app icon colors and automatic or pinned Dark/Light variants in Settings > Appearance. Update window/tray artwork immediately and remember the choices without changing ArtCraft packs or shortcuts.
+
 ## 1.11.1 - 2026-11-16
 
 - Show an app's executable icon when its shortcut has no explicit icon path, fixing ArtCraft Launcher displaying BetterIcon's fallback artwork.

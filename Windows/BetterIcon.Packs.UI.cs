@@ -47,10 +47,10 @@ namespace BetterIcon.Tray
                 if (e.ColumnIndex == 3) { files.Remove(app); grid.Rows[e.RowIndex].Cells[1].Value = "Not assigned"; }
             };
             layout.Controls.Add(grid, 0, 3);
-            Label error = new Label { Dock = DockStyle.Fill, ForeColor = Color.Firebrick }; layout.Controls.Add(error, 0, 4);
+            Label error = new Label { Dock = DockStyle.Fill, ForeColor = Color.Firebrick, Tag = "ErrorText" }; layout.Controls.Add(error, 0, 4);
             FlowLayoutPanel buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft };
             Button cancel = new Button { Text = "Cancel", Width = 100, Height = 32, DialogResult = DialogResult.Cancel };
-            Button save = new Button { Text = "Save pack", Width = 120, Height = 32 };
+            Button save = new Button { Text = "Save pack", Width = 120, Height = 32, Tag = "PrimaryAction" };
             save.Click += async delegate {
                 save.Enabled = cancel.Enabled = grid.Enabled = packName.Enabled = packAuthor.Enabled = ControlBox = false;
                 try {
@@ -81,7 +81,7 @@ namespace BetterIcon.Tray
         readonly Label iconSizeValue = new Label();
         readonly Button resetIconSize = new Button();
         readonly List<Button> packButtons = new List<Button>();
-        readonly ComboBox restoreAppPicker = new ComboBox();
+        readonly ComboBox restoreAppPicker = new AppearanceComboBox();
         readonly Button restoreApp = new Button();
         readonly Label restoreAppHint = new Label();
         int iconWheelDelta;
@@ -92,7 +92,8 @@ namespace BetterIcon.Tray
         void DrawPageTab(object sender, DrawItemEventArgs e)
         {
             bool selected = pages.SelectedIndex == e.Index;
-            Color background = selected ? accent : Color.FromArgb(205, 216, 232), foreground = selected ? Color.White : ink;
+            AppearancePalette palette = appearancePalette ?? AppAppearance.Resolve(preferences.AppearanceMode);
+            Color background = selected ? palette.Accent : palette.InactiveTab, foreground = selected ? Color.White : palette.Text;
             if (SystemInformation.HighContrast) { background = selected ? SystemColors.Highlight : SystemColors.Control; foreground = selected ? SystemColors.HighlightText : SystemColors.ControlText; }
             using (Brush brush = new SolidBrush(background)) e.Graphics.FillRectangle(brush, e.Bounds);
             using (Font font = new Font(Font, selected ? FontStyle.Bold : FontStyle.Regular))
@@ -192,6 +193,8 @@ namespace BetterIcon.Tray
             packPreview.BorderStyle = BorderStyle.None; packPreview.BackColor = Color.White; packPreview.AccessibleName = "Icon pack preview";
             SettingsRow(packs, packPreview);
 
+            BuildAppearanceSettings();
+
             TableLayoutPanel launcher = SettingsSection("LauncherSection", "Launcher");
             TableLayoutPanel sizing = SettingsTable(4); sizing.Margin = new Padding(0, 0, 0, 10);
             sizing.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); sizing.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -210,7 +213,7 @@ namespace BetterIcon.Tray
             keyboard.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); keyboard.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             subtitle.AutoSize = true; subtitle.Dock = DockStyle.Fill; subtitle.TextAlign = ContentAlignment.MiddleLeft; subtitle.Margin = new Padding(0, 0, 12, 0);
             settings.Text = "Change hotkey..."; SettingsButton(settings);
-            settings.Click += delegate { if (hotkey != null) using (HotkeySettingsDialog dialog = new HotkeySettingsDialog(preferences.Hotkey, hotkey.IsRegistered, SaveHotkey)) dialog.ShowDialog(this); };
+            settings.Click += delegate { if (hotkey != null) using (HotkeySettingsDialog dialog = new HotkeySettingsDialog(preferences.Hotkey, hotkey.IsRegistered, SaveHotkey)) { ApplyDialogAppearance(dialog); dialog.ShowDialog(this); } };
             keyboard.Controls.Add(subtitle, 0, 0); keyboard.Controls.Add(settings, 1, 0); SettingsRow(launcher, keyboard);
 
             TableLayoutPanel shortcuts = SettingsSection("ShortcutsSection", "Windows shortcuts");
@@ -219,7 +222,7 @@ namespace BetterIcon.Tray
             SettingsRow(shortcuts, scopes);
             TableLayoutPanel applyRow = SettingsTable(2);
             applyRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50)); applyRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-            apply.Text = "Apply icons..."; SettingsButton(apply); apply.BackColor = accent; apply.ForeColor = Color.White; apply.FlatStyle = FlatStyle.Flat; apply.Click += async delegate { await ApplyTheme(); };
+            apply.Text = "Apply icons..."; apply.Tag = "PrimaryAction"; SettingsButton(apply); apply.BackColor = accent; apply.ForeColor = Color.White; apply.FlatStyle = FlatStyle.Flat; apply.Click += async delegate { await ApplyTheme(); };
             restore.Text = "Restore all defaults..."; SettingsButton(restore); restore.Click += async delegate { await RestoreIcons(); };
             applyRow.Controls.Add(apply, 0, 0); applyRow.Controls.Add(restore, 1, 0); SettingsRow(shortcuts, applyRow);
             SettingsRow(shortcuts, new Label { Text = "Restore one app", AutoSize = true, Margin = new Padding(0, 14, 0, 6) });
@@ -354,7 +357,7 @@ namespace BetterIcon.Tray
         {
             if (busy || (useSelected && (SelectedTheme == null || SelectedTheme.IsDefault)) || (edit && !SelectedTheme.Managed)) return;
             SetBusy(true, "Editing icon pack...");
-            try { using (PackEditor editor = new PackEditor(library, useSelected ? SelectedTheme : null, edit)) if (editor.ShowDialog(this) == DialogResult.OK) { ReloadLibrary(editor.Saved.Id); status.Text = "Saved " + editor.Saved.Name + ". Choose Apply icons to change shortcuts."; } }
+            try { using (PackEditor editor = new PackEditor(library, useSelected ? SelectedTheme : null, edit)) { ApplyDialogAppearance(editor); if (editor.ShowDialog(this) == DialogResult.OK) { ReloadLibrary(editor.Saved.Id); status.Text = "Saved " + editor.Saved.Name + ". Choose Apply icons to change shortcuts."; } } }
             finally { SetBusy(false, null); }
         }
         void RemovePack()
@@ -362,7 +365,7 @@ namespace BetterIcon.Tray
             if (busy || SelectedTheme == null || SelectedTheme.IsDefault) return;
             ThemeEntry selected = SelectedTheme;
             string note = "Remove " + selected + " from your library? Applied shortcut icons will stay as they are." + (selected.Managed ? "" : " You can restore built-in packs later.");
-            if (MessageBox.Show(this, note, "Remove icon pack", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;
+            if (!AppAppearance.Message(this, "Remove icon pack", note, appearancePalette, true)) return;
             try { library.Remove(selected); ReloadLibrary(null); status.Text = "Pack removed from your library."; }
             catch (Exception error) { Report(error); }
         }

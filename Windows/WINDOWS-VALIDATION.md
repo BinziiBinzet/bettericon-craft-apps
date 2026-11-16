@@ -1,5 +1,15 @@
 # Windows validation
 
+## 1.12.0 appearance and app identity - 2026-11-16
+
+All 218 local native checks passed from source. Appearance checks cover migration from old preferences, invalid-value fallback, System/Dark/Light resolution, the current Windows app theme and its notification callback, high contrast colors, and normal-text contrast. They select all 16 app icons through Settings and verify the window, small tray frame, preview, and saved choices. They also verify automatic pairing, an independently pinned variant, unchanged existing preferences, busy controls, and Dark/Light hotkey and pack-editor dialogs. Existing launcher, restore, sharing, large-icon, keyboard, and nonoverlapping Settings checks remain passing.
+
+All 16 embedded 32-pixel icon frames preserve the dedicated 32px sources' opaque pixels exactly. Local package checks compare all 32 approved PNG sources byte for byte, verify the 16 embedded multi-size conversions, and inspect all seven Win32 default-icon frames against Sage Dark. Small frames use the dedicated artwork; larger frames retain the original source detail. Packages retain 218 ArtCraft shortcut ICOs and their original PNG previews, plus both BetterIcon source sets for local rebuilding.
+
+An approved Computer Use inspection briefly displayed the isolated Dark launcher before the user stopped it with physical Escape. No further Computer Use followed. In-process native rendering fixtures subsequently confirmed separate grid positions and corrected dropdown spacing. Full physical inspection of Light/System and a real OS-theme transition remains unverified; automated checks exercise those palette decisions and the notification callback without changing Windows settings.
+
+Installer and worker behavior is unchanged apart from the Windows version; the 1.11.1 baseline below remains applicable. Builds, tests, and packaging run locally. Windows 10, ARM64, per-monitor DPI transitions, and live elevated shared-folder writes remain unverified.
+
 ## 1.11.1 ArtCraft Launcher defaults - 2026-11-16
 
 All 178 local native checks passed. Added checks cover personal Launcher artwork and spaced-name imports, implicit executable icons, reviewed custom-icon restoration through the native worker, correct fallback artwork, and selecting an already-default icon from the right-click menu or Settings without rewriting the shortcut. A preview-only custom icon can return to its original, and other launcher behavior remains passing.

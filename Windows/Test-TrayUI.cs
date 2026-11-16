@@ -672,7 +672,7 @@ static class TrayTests
                         ComboBox themePicker = (ComboBox)typeof(LauncherForm).GetField("themes", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
                         Panel settingsScroll = (Panel)typeof(LauncherForm).GetField("settingsScroll", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
                         TableLayoutPanel settingsContent = (TableLayoutPanel)typeof(LauncherForm).GetField("settingsContent", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
-                        Check(new[] { "IconPackSection", "LauncherSection", "ShortcutsSection" }.All(name => settingsContent.Controls.Find(name, true).Length == 1), "Settings groups pack management, launcher preferences, and Windows shortcuts into separate sections");
+                        Check(new[] { "IconPackSection", "AppearanceSection", "LauncherSection", "ShortcutsSection" }.All(name => settingsContent.Controls.Find(name, true).Length == 1), "Settings groups pack management, appearance, launcher preferences, and Windows shortcuts into separate sections");
                         Size previousSize = form.Size; int previousIconSize = slider.Value;
                         try {
                             foreach (Size windowSize in new[] { new Size(790, 570), new Size(900, 690) }) foreach (int iconSize in new[] { 24, 128 }) {
@@ -730,6 +730,7 @@ static class TrayTests
                         CheckDefaultAndIndividualRestore(form, root, preferencesPath, json);
                         CheckLargeArtwork(form, root, preferencesPath, json);
                         CheckExistingLauncherDefault(form, root, json);
+                        AppearanceTests.Run(form, preferencesPath, args[1], Check);
                         stop.Set(); // Exercise normal shutdown through the same message loop.
                     }
                     catch (Exception error) { eventFailure = error; timer.Stop(); context.ExitThread(); }
