@@ -149,6 +149,41 @@ static class TrayTests
             timer.Start(); Application.Run(context); if (failure != null) throw failure;
         }
     }
+    static void CheckExistingLauncherDefault(LauncherForm form, string root, JavaScriptSerializer json)
+    {
+        BindingFlags instance = BindingFlags.Instance | BindingFlags.NonPublic;
+        Func<string, object> field = name => typeof(LauncherForm).GetField(name, instance).GetValue(form);
+        Action<string, object[]> call = (name, arguments) => typeof(LauncherForm).GetMethod(name, instance).Invoke(form, arguments);
+        Catalog catalog = (Catalog)field("catalog"); AppEntry[] previousApps = catalog.Apps;
+        Preferences preferences = (Preferences)field("preferences"); string[] defaults = preferences.DefaultShortcuts;
+        ComboBox scopes = (ComboBox)field("scopes"); int previousScope = scopes.SelectedIndex;
+        string theme = ((ThemeEntry)((ComboBox)field("themes")).SelectedItem).Id;
+        TrackBar slider = (TrackBar)field("iconSizeSlider"); int previousSize = slider.Value;
+        string shortcut = Path.Combine(root, "PhotoCraft.lnk"); byte[] bytes = File.ReadAllBytes(shortcut);
+        List<Bitmap> artwork = (List<Bitmap>)field("appArtwork");
+        TabControl pages = (TabControl)field("pages");
+        try {
+            catalog.Apps = new[] { new AppEntry { Application = "ArtCraftLauncher", Name = "ArtCraft Launcher", Shortcut = shortcut, Scope = "CurrentUser", IconPath = "", OriginalIconPath = Path.Combine(root, "original-red.png"), UsingDefaultIcon = true } };
+            preferences.DefaultShortcuts = new string[0]; call("RenderSelection", null);
+            Check(artwork[0].GetPixel(64, 64).ToArgb() == Color.Red.ToArgb(), "A launcher without an explicit icon path displays its own original instead of BetterIcon's fallback");
+            PackLibrary library = (PackLibrary)field("library");
+            ThemeEntry custom = library.Save("Launcher preview fixture", new Dictionary<string, string> { { "ArtCraftLauncher", Path.Combine(root, "current-blue.png") } }, null);
+            call("ReloadLibrary", new object[] { custom.Id });
+            Check(artwork[0].GetPixel(64, 64).ToArgb() == Color.Blue.ToArgb(), "A custom launcher pack can preview artwork before any shortcut change");
+            pages.SelectedIndex = 0; scopes.SelectedIndex = 1;
+            ListView grid = (ListView)field("apps"); RequestIconMenu(grid, grid.Items[0]);
+            ToolStripMenuItem restore = (ToolStripMenuItem)field("restoreIconDefault");
+            Check(restore.Enabled && ((AppEntry)field("iconMenuTarget")).Scope == "CurrentUser", "The launcher default action is available without a backup and targets its own locations");
+            restore.PerformClick(); ((ContextMenuStrip)field("iconMenu")).Close();
+            Check(artwork[0].GetPixel(64, 64).ToArgb() == Color.Red.ToArgb() && preferences.DefaultShortcuts.Contains(shortcut) && File.ReadAllBytes(shortcut).SequenceEqual(bytes) && ((Label)field("status")).Text.Contains("already at the default"), "Restoring an already-default launcher resets its preview and reports success without rewriting the shortcut");
+            pages.SelectedIndex = 1; scopes.SelectedIndex = 0;
+            Check(((Button)field("restoreApp")).Enabled, "Settings also allows selecting a launcher's existing default without a backup");
+        }
+        finally {
+            ((ContextMenuStrip)field("iconMenu")).Close(); catalog.Apps = previousApps; preferences.DefaultShortcuts = defaults; scopes.SelectedIndex = previousScope;
+            call("ReloadLibrary", new object[] { theme }); slider.Value = Math.Min(previousSize, slider.Maximum);
+        }
+    }
     static void RequestIconMenu(ListView grid, ListViewItem item)
     {
         item.EnsureVisible();
@@ -531,6 +566,7 @@ static class TrayTests
                 // Exercise the actual NotifyIcon MouseUp subscription. This is an
                 // event-level check, not a claim of a physical taskbar click.
                 NotifyIcon tray = (NotifyIcon)typeof(LauncherForm).GetField("tray", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
+                tray.Icon = SystemIcons.Information; tray.Text = "BetterIcon automated tests";
                 MethodInfo mouseUp = typeof(NotifyIcon).GetMethod("OnMouseUp", BindingFlags.Instance | BindingFlags.NonPublic);
                 Action click = delegate { mouseUp.Invoke(tray, new object[] { new MouseEventArgs(MouseButtons.Left, 1, 0, 0, 0) }); };
                 Exception eventFailure = null;
@@ -540,6 +576,7 @@ static class TrayTests
                         if (++ticks > 600) throw new Exception("Tray startup did not finish within 30 seconds.");
                         if ((bool)typeof(LauncherForm).GetField("busy", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form)) return;
                         timer.Stop();
+                        form.Text = "[TEST] BetterIcon native checks";
                         Check(!form.Visible, "Tray-only startup stays hidden after the real message loop initializes");
                         click();
                         Check(form.Visible && Screen.FromPoint(Cursor.Position).WorkingArea.Contains(form.Bounds), "First tray release shows the popup on the clicked screen");
@@ -668,6 +705,9 @@ static class TrayTests
                         KeyPressEventArgs dropdownKey = new KeyPressEventArgs('p'); character.Invoke(form, new object[] { dropdownKey });
                         Check(!dropdownKey.Handled && list.Items.Count == 3, "An open theme dropdown keeps its own typing behavior");
                         themePicker.DroppedDown = false;
+                        // A tray click during the preceding DoEvents layout checks can hide
+                        // the fixture. Establish this keyboard test's own starting state.
+                        form.ShowManager(); pages.SelectedIndex = 1;
                         key(Keys.Escape); Check(pages.SelectedIndex == 0 && form.Visible, "Escape from Settings returns to the launcher");
                         form.Enabled = false; type("p"); form.Enabled = true;
                         Check(list.Items.Count == 3, "Modal dialog input cannot alter the app filter");
@@ -689,6 +729,7 @@ static class TrayTests
                         Check(saveHotkey.Invoke(form, new object[] { off }) == null && !json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).Hotkey.Enabled, "Disabled hotkey is saved for subsequent launches");
                         CheckDefaultAndIndividualRestore(form, root, preferencesPath, json);
                         CheckLargeArtwork(form, root, preferencesPath, json);
+                        CheckExistingLauncherDefault(form, root, json);
                         stop.Set(); // Exercise normal shutdown through the same message loop.
                     }
                     catch (Exception error) { eventFailure = error; timer.Stop(); context.ExitThread(); }

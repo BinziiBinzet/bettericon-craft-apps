@@ -71,6 +71,25 @@ static class PackTests
         byte[] oversized = (byte[])originalPng.Clone(); oversized[16] = 0; oversized[17] = 0; oversized[18] = 16; oversized[19] = 1; File.WriteAllBytes(invalid, oversized);
         check(Rejects(() => library.Save("Oversized", new Dictionary<string, string> { { "PhotoCraft", invalid } }, null)), "Oversized PNG dimensions are rejected before decoding");
         Sharing(state, png, catalog.Themes[0], check);
+        // Keep this link outside root so the main launcher fixtures remain unchanged.
+        string launcherLinks = Path.Combine(Path.GetDirectoryName(root), "bettericon-launcher-pack-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(launcherLinks);
+        string launcherPath = Path.Combine(launcherLinks, "ArtCraft Launcher.lnk");
+        File.Copy(Path.Combine(root, "PhotoCraft.lnk"), launcherPath);
+        byte[] launcherOriginal = File.ReadAllBytes(launcherPath);
+        ThemeEntry launcherPack = library.Save("Launcher custom", new Dictionary<string, string> { { "ArtCraftLauncher", png } }, null);
+        check(launcherPack.Icons.Single().Application == "ArtCraftLauncher", "Personal packs accept ArtCraft Launcher artwork");
+        WorkerClient launcherWorker = new WorkerClient(source, new FixtureConfig { ShortcutDirectory = new[] { launcherLinks }, StateDirectory = state });
+        WorkerReply launcherCatalog = launcherWorker.Run(new WorkerRequest { Action = "Catalog" }, false).GetAwaiter().GetResult();
+        AppEntry launcher = launcherCatalog.Catalog.Apps.Single();
+        check(launcher.Application == "ArtCraftLauncher" && launcher.UsingDefaultIcon && launcher.CanRestoreDefault && !launcher.RestoreAvailable && !String.IsNullOrEmpty(launcher.IconPath), "The native worker resolves a launcher's implicit default without claiming a backup");
+        WorkerReply launcherPlan = launcherWorker.Run(new WorkerRequest { Action = "Preview", Theme = launcherPack.Id, Scope = "CurrentUser" }, false).GetAwaiter().GetResult();
+        WorkerReply launcherApply = launcherWorker.Run(new WorkerRequest { Action = "Apply", Theme = launcherPack.Id, Scope = "CurrentUser", ExpectedPlan = launcherPlan.Plan }, false).GetAwaiter().GetResult();
+        check(launcherApply.Results.Length == 1 && launcherApply.Results[0].Status == "Applied", "A personal launcher icon applies through the native worker with a recoverable backup");
+        WorkerReply launcherPreview = launcherWorker.Run(new WorkerRequest { Action = "RestorePreview", Application = "ArtCraftLauncher", Scope = "CurrentUser" }, false).GetAwaiter().GetResult();
+        WorkerReply launcherRestore = launcherWorker.Run(new WorkerRequest { Action = "Restore", Application = "ArtCraftLauncher", Scope = "CurrentUser", ExpectedStateHash = launcherPreview.StateHash }, false).GetAwaiter().GetResult();
+        check(launcherPreview.Results.Length == 1 && launcherRestore.Results.Single().Status == "Restored" && File.ReadAllBytes(launcherPath).SequenceEqual(launcherOriginal), "ArtCraft Launcher restores byte-for-byte through the reviewed native worker path");
+        string launcherImport = Path.Combine(state, "Launcher import"); Directory.CreateDirectory(launcherImport); File.Copy(png, Path.Combine(launcherImport, "ArtCraft Launcher.png"));
+        check(library.Import(launcherImport).Icons.Single().Application == "ArtCraftLauncher", "Launcher artwork imports with its spaced official app name");
     }
     static void Sharing(string state, string png, ThemeEntry bundled, Action<bool, string> check)
     {

@@ -1,11 +1,11 @@
-# BetterIcon-Craft Apps Windows support, version 1.11.0.
+# BetterIcon-Craft Apps Windows support, version 1.11.1.
 # No network access, executable patching, registry changes, or Explorer restart.
 Set-StrictMode -Version Latest
-$script:Version = '1.11.0'
+$script:Version = '1.11.1'
 $script:RepositoryRoot = Split-Path -Parent $PSScriptRoot
 $script:Applications = @('PhotoCraft','VectorCraft','FilmCraft','LightCraft','PdfCraft',
     'EffectCraft','AniCraft','DesignCraft','FigCraft','TextureCraft','MaterialCraft',
-    'SoundCraft','WordCraft','DeckCraft','CADCraft','GridCraft','CraftAnything','SolidCraft','MailCraft')
+    'SoundCraft','WordCraft','DeckCraft','CADCraft','GridCraft','CraftAnything','SolidCraft','MailCraft','ArtCraftLauncher')
 
 function Get-BetterIconVersion { $script:Version }
 function Get-BetterIconRepository { $script:RepositoryRoot }
@@ -105,7 +105,7 @@ function Get-AppName([string]$Name, [switch]$Icon) {
     # Known spelling variants include "Craft Anything" and "SolidCraft CAD".
     if ($Name -match '(?i)(^|[\W_])(uninstall|uninstaller|remove|setup|help|documentation)([\W_]|$)') { return }
     foreach ($app in $script:Applications) {
-        $pattern = if ($app -eq 'CraftAnything') { 'Craft[\s_-]*Anything' } else { [regex]::Escape($app) }
+        $pattern = if ($app -eq 'CraftAnything') { 'Craft[\s_-]*Anything' } elseif ($app -eq 'ArtCraftLauncher') { 'ArtCraft[\s_-]*Launcher' } else { [regex]::Escape($app) }
         if ($Icon) {
             if ($Name -match "(?i)^$pattern(?:[\s_.-].*)?`$") { return $app }
         }
@@ -261,7 +261,6 @@ function Get-BetterIconApplication {
     foreach ($root in $roots) {
         foreach ($file in @(Get-RegularFiles (Get-FullPath $root) '.lnk' | Sort-Object FullName)) {
             $app = Get-AppName $file.BaseName
-            if (-not $app -and $file.BaseName -ieq 'ArtCraft Launcher') { $app = 'ArtCraftLauncher' }
             if (-not $app -or $seen.ContainsKey($file.FullName)) { continue }
             $seen[$file.FullName] = $true
             try {
@@ -312,9 +311,11 @@ function Get-BetterIconApplication {
                         $originalPath = $candidate; $originalIndex = $original.IconIndex
                     }
                 }
+                $implicitIcon = [string]::IsNullOrWhiteSpace($info.IconPath)
+                $usingDefault = -not $entry -and ($implicitIcon -or ($candidate -ieq $target -and $info.IconIndex -eq 0))
                 [pscustomobject]@{ Application = $app; Name = $file.BaseName; Shortcut = $file.FullName;
-                    Scope = $scope; IconPath = $info.IconPath; IconIndex = $info.IconIndex;
-                    OriginalIconPath = $originalPath; OriginalIconIndex = $originalIndex; RestoreAvailable = $verifiedBackup }
+                    Scope = $scope; IconPath = $(if ($implicitIcon) { $target } else { $info.IconPath }); IconIndex = $(if ($implicitIcon) { 0 } else { $info.IconIndex });
+                    OriginalIconPath = $originalPath; OriginalIconIndex = $originalIndex; RestoreAvailable = $verifiedBackup; UsingDefaultIcon = [bool]$usingDefault }
             }
             catch { Write-Verbose "Cannot inspect $($file.FullName): $($_.Exception.Message)" }
         }
@@ -519,7 +520,7 @@ function Restore-BetterIcon {
     param([ValidateSet('CurrentUser','AllUsers')][string]$Scope = 'CurrentUser', [string]$StateDirectory, [string]$ExpectedStateHash,
         [ValidateNotNullOrEmpty()][ValidateSet('PhotoCraft','VectorCraft','FilmCraft','LightCraft','PdfCraft',
             'EffectCraft','AniCraft','DesignCraft','FigCraft','TextureCraft','MaterialCraft',
-            'SoundCraft','WordCraft','DeckCraft','CADCraft','GridCraft','CraftAnything','SolidCraft','MailCraft')][string]$Application)
+            'SoundCraft','WordCraft','DeckCraft','CADCraft','GridCraft','CraftAnything','SolidCraft','MailCraft','ArtCraftLauncher')][string]$Application)
     Initialize-BetterIcon
     $directory = if ($StateDirectory) { Get-FullPath $StateDirectory } else { Get-BetterIconStateDirectory $Scope }
     Assert-RegularPath $directory

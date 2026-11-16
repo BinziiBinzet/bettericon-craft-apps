@@ -1,6 +1,6 @@
 # BetterIcon-Craft Apps for Windows
 
-Windows version **1.11.0** includes a native tray launcher alongside the existing icon installer. It shares the repository's artwork and leaves Craft executables, app settings, file associations, and the registry unchanged.
+Windows version **1.11.1** includes a native tray launcher alongside the existing icon installer. It shares the repository's artwork and leaves Craft executables, app settings, file associations, and the registry unchanged.
 
 ## Start here
 
@@ -11,7 +11,7 @@ Windows version **1.11.0** includes a native tray launcher alongside the existin
 5. The left **Launcher** tab contains only app icons and names. Open the right **Settings** tab to manage icon packs, preview artwork, or configure the launcher. Select **My Desktop and Start menu** or **Shared shortcuts (administrator)**, then choose **Apply icons** and review the exact shortcuts. Shared writes request elevation; normal app launches remain unelevated.
 6. To undo one app, open **Settings > Windows shortcuts > Restore one app**, choose the app and **Restore app default**. To undo all apps, select **ArtCraft default** (the first icon pack) and **Restore ArtCraft defaults**, or use **Restore all defaults** beside Apply icons. Use the same shortcut locations as the original application and review the exact shortcuts.
 
-You can also **right-click an app icon > Restore ArtCraft default** in either tab. In Launcher, this targets the clicked app in that shortcut's own locations; in the Settings preview, it uses the selected shortcut locations. Only that app's shortcuts are included in the review. The action is disabled when there is no verified BetterIcon backup to restore. **Shift+F10** or the keyboard menu key opens the same menu for the selected icon.
+You can also **right-click an app icon > Restore ArtCraft default** in either tab. In Launcher, this targets the clicked app in that shortcut's own locations; in the Settings preview, it uses the selected shortcut locations. Only that app's shortcuts are included in the review. If the shortcut already uses its executable's default icon, the action selects that default in Launcher and reports that no shortcut change was needed. Otherwise a verified BetterIcon backup is required. **Shift+F10** or the keyboard menu key opens the same menu for the selected icon.
 
 Choose **Exit** in Settings or the tray menu, or use **Windows/Stop-Tray.cmd** to stop this user's launcher. Starting it again reopens the existing instance. `Start-Tray.ps1 -TrayOnly` starts without opening the popup. No login/startup entry is created.
 
@@ -85,7 +85,7 @@ OmegaDarling's themes retain the legacy `Craft-Icons-Zach` folder and IDs so sav
 
 PNG artwork is converted locally to transparent Windows ICOs containing 16, 24, 32, 48, 64, 128, and 256-pixel frames for Windows shortcuts. The Windows ZIP also retains each original PNG for high-resolution Launcher and Settings previews. Aspect ratio is preserved and source images are never rewritten. An existing ICO is preferred for shortcut application; its matching PNG supplies the larger preview when available. Duplicate ICOs or duplicate PNGs remain ambiguous. ICNS/SVG-only artwork is not selectable.
 
-Theme discovery understands flat PNG folders, root-level pack artwork, and nested `ico/` folders. Use recognized app names such as `PhotoCraft.png`. A full `Pack/Theme` ID disambiguates identical theme names; the circleb theme uses `Craft-Icons-circleb/Root`. Overview sheets are ignored. Missing artwork is skipped when applying; the tray tries the shortcut's existing icon before its own fallback. ArtCraft Launcher is launch-only because the shared themes do not supply artwork for it. The command-line theme list covers repository artwork; the tray's Settings manages the personal library.
+Theme discovery understands flat PNG folders, root-level pack artwork, and nested `ico/` folders. Use recognized app names such as `PhotoCraft.png`. A full `Pack/Theme` ID disambiguates identical theme names; the circleb theme uses `Craft-Icons-circleb/Root`. Overview sheets are ignored. Missing artwork is skipped when applying; shortcuts without an explicit icon use their executable's icon. ArtCraft Launcher can use personal artwork named `ArtCraftLauncher.png` or `ArtCraft Launcher.png`; bundled packs currently leave its default unchanged. Its custom icons use the same backup and selective restoration protections as other apps. The command-line theme list covers repository artwork; the tray's Settings manages the personal library.
 
 ## Backups and restoration
 
@@ -100,7 +100,7 @@ The installer saves the complete original `.lnk` file before replacing it. Theme
 
 Restoration checks file hashes and restores original bytes. If a shortcut has been edited, replaced by an app update, or deleted since installation, it is left untouched and its backup is retained. A corrupt/missing backup or invalid manifest also stops that restoration. Close another installer instance if the state directory is locked.
 
-**Restore one app** restores only that app's backed-up shortcuts in the selected locations, including aliases for the same app. Other apps and their backups stay unchanged. The button is disabled when there is no verified BetterIcon backup for that app. Restoration returns the shortcut to its state before BetterIcon first changed it; it does not manufacture a replacement shortcut or reset earlier customizations. Successful individual restorations also show the original icon in the Launcher across restarts. Applying a pack again replaces these defaults only for shortcuts successfully updated by that application.
+**Restore one app** restores only that app's backed-up shortcuts in the selected locations, including aliases for the same app. Other apps and their backups stay unchanged. A shortcut already using its executable's default can also select that default in Launcher without a backup or file write. Otherwise the button requires a verified BetterIcon backup. Restoration returns the shortcut to its state before BetterIcon first changed it; it does not manufacture a replacement shortcut or reset earlier customizations. Successful individual defaults also persist in Launcher across restarts. Applying a pack again replaces these defaults only for shortcuts successfully updated by that application.
 
 Backups and copied icons are deliberately retained after restoration because pinned/copied shortcuts may still reference them. Once all shortcuts and pins are restored and no pending entries remain in the manifest, you can remove the state directory yourself. Do not remove it while custom icons are still in use.
 

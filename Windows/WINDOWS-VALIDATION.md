@@ -1,5 +1,13 @@
 # Windows validation
 
+## 1.11.1 ArtCraft Launcher defaults - 2026-11-16
+
+All 178 local native checks passed. Added checks cover personal Launcher artwork and spaced-name imports, implicit executable icons, reviewed custom-icon restoration through the native worker, correct fallback artwork, and selecting an already-default icon from the right-click menu or Settings without rewriting the shortcut. A preview-only custom icon can return to its original, and other launcher behavior remains passing.
+
+All 126 installer checks passed on Windows PowerShell 5.1 and PowerShell 7, including the Launcher identity, read-only discovery, missing bundled artwork, metadata-preserving custom icon application, no-write selective preview, and byte-for-byte restoration of an implicit-icon shortcut. Installed-copy checks preserved their originals. All 20 JSON bridge checks passed, including the existing-default flag and accepting the Launcher selector.
+
+Read-only inspection of the installed ArtCraft Launcher showed an empty icon location and an existing executable target, with no BetterIcon backup. Its shortcut already used the executable's default icon; the popup's fallback and backup-only availability checks caused the reported issue. The fix resolves implicit icons and distinguishes an existing default from an unavailable backup. No Computer Use or new visual inspection was performed. Builds, packaging, and validation ran locally.
+
 ## 1.11.0 larger artwork - 2026-11-16
 
 All 168 local native checks passed. New checks verify source-dependent slider limits, original PNG availability, native 512/1024-pixel images in both grids, complete icon bounds with labels underneath, exact one-pixel source detail and transparency, cache reuse, native handle recreation, right-click targeting above 256 pixels, clean scrolling Settings, range reduction when changing packs, and hidden startup with a saved 512-pixel size. Existing native wheel checks reach the actual bundled-artwork maximum instead of the former 128-pixel ceiling.

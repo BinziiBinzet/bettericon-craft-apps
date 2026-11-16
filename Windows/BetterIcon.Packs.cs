@@ -37,7 +37,7 @@ namespace BetterIcon.Tray
     // Revisions are immutable: a preview can still apply the exact files it showed.
     public sealed class PackLibrary
     {
-        public static readonly string[] Applications = { "PhotoCraft", "VectorCraft", "FilmCraft", "LightCraft", "PdfCraft", "EffectCraft", "AniCraft", "DesignCraft", "FigCraft", "TextureCraft", "MaterialCraft", "SoundCraft", "WordCraft", "DeckCraft", "CADCraft", "GridCraft", "CraftAnything", "SolidCraft", "MailCraft" };
+        public static readonly string[] Applications = { "PhotoCraft", "VectorCraft", "FilmCraft", "LightCraft", "PdfCraft", "EffectCraft", "AniCraft", "DesignCraft", "FigCraft", "TextureCraft", "MaterialCraft", "SoundCraft", "WordCraft", "DeckCraft", "CADCraft", "GridCraft", "CraftAnything", "SolidCraft", "MailCraft", "ArtCraftLauncher" };
         const int MaxImageBytes = 16 * 1024 * 1024;
         const long MaxPackBytes = 128L * 1024 * 1024;
         const int MaxMetadataBytes = 16 * 1024;
@@ -153,7 +153,7 @@ namespace BetterIcon.Tray
         static string AppForFile(string file)
         {
             string name = Path.GetFileNameWithoutExtension(file);
-            return Applications.FirstOrDefault(app => Regex.IsMatch(name, "^" + (app == "CraftAnything" ? "Craft[ _-]*Anything" : Regex.Escape(app)) + "(?:[ _.-].*)?$", RegexOptions.IgnoreCase));
+            return Applications.FirstOrDefault(app => Regex.IsMatch(name, "^" + (app == "CraftAnything" ? "Craft[ _-]*Anything" : app == "ArtCraftLauncher" ? "ArtCraft[ _-]*Launcher" : Regex.Escape(app)) + "(?:[ _.-].*)?$", RegexOptions.IgnoreCase));
         }
         static void AddImage(Dictionary<string, byte[]> images, Dictionary<string, string> extensions, string file, Func<byte[]> read)
         {

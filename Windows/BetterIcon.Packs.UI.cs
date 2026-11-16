@@ -319,10 +319,11 @@ namespace BetterIcon.Tray
         void UpdateRestoreAppButton()
         {
             string selected = restoreAppPicker.SelectedItem as string;
-            bool available = selected != null && catalog != null && catalog.Apps.Any(a => a.Application == selected && a.Scope == Scope && a.RestoreAvailable);
+            bool available = selected != null && catalog != null && catalog.Apps.Any(a => a.Application == selected && a.Scope == Scope && a.CanRestoreDefault);
+            bool backedUp = selected != null && catalog != null && catalog.Apps.Any(a => a.Application == selected && a.Scope == Scope && a.RestoreAvailable);
             restoreAppPicker.Enabled = !busy && restoreAppPicker.Items.Count != 0;
             restoreApp.Enabled = !busy && available;
-            restoreAppHint.Text = selected == null ? "No installed apps in these shortcut locations." : available ? "Restores only this app in the selected locations. Other apps keep their icons." : "No BetterIcon backup to restore for this app in these locations.";
+            restoreAppHint.Text = selected == null ? "No installed apps in these shortcut locations." : backedUp ? "Restores only this app in the selected locations. Other apps keep their icons." : available ? "The shortcut already uses its default. Restore also shows that icon in Launcher." : "No BetterIcon backup to restore for this app in these locations.";
         }
         async void ImportPack(bool zip)
         {

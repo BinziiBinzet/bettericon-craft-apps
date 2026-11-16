@@ -28,6 +28,8 @@ namespace BetterIcon.Tray
         public string OriginalIconPath { get; set; }
         public int OriginalIconIndex { get; set; }
         public bool RestoreAvailable { get; set; }
+        public bool UsingDefaultIcon { get; set; }
+        public bool CanRestoreDefault { get { return RestoreAvailable || UsingDefaultIcon; } }
     }
     public sealed class ThemeIcon { public string Application { get; set; } public string Path { get; set; } public string PreviewPath { get; set; } }
     public sealed class ThemeEntry
@@ -386,7 +388,7 @@ namespace BetterIcon.Tray
             iconMenu.ShowItemToolTips = true; iconMenu.Items.Add(restoreIconDefault);
             restoreIconDefault.Click += async delegate {
                 AppEntry target = iconMenuTarget;
-                if (!busy && target != null && target.RestoreAvailable) await RestoreIcons(target.Application, target.Scope);
+                if (!busy && target != null && target.CanRestoreDefault) await RestoreIcons(target.Application, target.Scope);
             };
             apps.IconMenuRequested += point => ShowIconMenu(apps, point);
             packPreview.IconMenuRequested += point => ShowIconMenu(packPreview, point);
@@ -618,7 +620,8 @@ namespace BetterIcon.Tray
                 foreach (AppEntry entry in catalog.Apps) {
                     bool original = (theme != null && theme.IsDefault) || (preferences.DefaultShortcuts ?? new string[0]).Contains(entry.Shortcut, StringComparer.OrdinalIgnoreCase);
                     ThemeIcon artwork = original || theme == null ? null : theme.Icons.FirstOrDefault(i => i.Application == entry.Application);
-                    AddArtwork(appArtwork, appSources, artwork == null ? Environment.ExpandEnvironmentVariables((original ? entry.OriginalIconPath : entry.IconPath) ?? "") : PreviewPath(artwork), artwork != null ? 0 : original ? entry.OriginalIconIndex : entry.IconIndex);
+                    bool originalSource = original || String.IsNullOrWhiteSpace(entry.IconPath);
+                    AddArtwork(appArtwork, appSources, artwork == null ? Environment.ExpandEnvironmentVariables((originalSource ? entry.OriginalIconPath : entry.IconPath) ?? "") : PreviewPath(artwork), artwork != null ? 0 : originalSource ? entry.OriginalIconIndex : entry.IconIndex);
                     ListViewItem item = new ListViewItem(entry.Name, appArtwork.Count-1) { Tag = entry, ToolTipText = entry.Name + Environment.NewLine + entry.Shortcut };
                     appTiles.Add(item);
                 }
@@ -712,14 +715,15 @@ namespace BetterIcon.Tray
                 string application = item.Tag as string;
                 if (String.IsNullOrEmpty(application)) return;
                 target = new AppEntry { Application = application, Scope = Scope,
-                    RestoreAvailable = catalog.Apps.Any(app => app.Application == application && app.Scope == Scope && app.RestoreAvailable) };
+                    RestoreAvailable = catalog.Apps.Any(app => app.Application == application && app.Scope == Scope && app.RestoreAvailable),
+                    UsingDefaultIcon = catalog.Apps.Any(app => app.Application == application && app.Scope == Scope && app.UsingDefaultIcon) };
             }
             foreach (ListViewItem selected in grid.SelectedItems.Cast<ListViewItem>().ToArray()) selected.Selected = false;
             item.Selected = item.Focused = true; grid.Focus();
             if (!point.HasValue) item.EnsureVisible();
             iconMenuTarget = target;
-            restoreIconDefault.Enabled = target.RestoreAvailable;
-            restoreIconDefault.ToolTipText = target.RestoreAvailable ? "Restore only " + target.Application + " in " + (target.Scope == "AllUsers" ? "shared shortcut locations (administrator)" : "your shortcut locations") + "." : "No BetterIcon backup to restore for this app in these locations.";
+            restoreIconDefault.Enabled = target.CanRestoreDefault;
+            restoreIconDefault.ToolTipText = target.RestoreAvailable ? "Restore only " + target.Application + " in " + (target.Scope == "AllUsers" ? "shared shortcut locations (administrator)" : "your shortcut locations") + "." : target.UsingDefaultIcon ? "The shortcut already uses its default. Show that icon in Launcher." : "No BetterIcon backup to restore for this app in these locations.";
             Point anchor = point ?? new Point(item.Bounds.Left + item.Bounds.Width / 2, item.Bounds.Bottom);
             iconMenu.Show(grid, anchor);
         }
@@ -819,7 +823,18 @@ namespace BetterIcon.Tray
         {
             if (busy) return;
             bool refresh = false;
-            string scope = scopeOverride ?? Scope; SetBusy(true, "Checking original shortcut backups...");
+            string scope = scopeOverride ?? Scope;
+            if (application != null && catalog != null) {
+                AppEntry[] matches = catalog.Apps.Where(app => app.Application == application && app.Scope == scope).ToArray();
+                if (!matches.Any(app => app.RestoreAvailable) && matches.Any(app => app.UsingDefaultIcon)) {
+                    // Nothing changed on disk: restore the default launcher preview too.
+                    RememberRestoredShortcuts(matches.Where(app => app.UsingDefaultIcon).Select(app => new ResultItem { Shortcut = app.Shortcut, Status = "Restored" }).ToArray(), true);
+                    RenderSelection();
+                    status.Text = (application == "ArtCraftLauncher" ? "ArtCraft Launcher" : application) + " is using its ArtCraft default icon. Its Windows shortcut was already at the default.";
+                    return;
+                }
+            }
+            SetBusy(true, "Checking original shortcut backups...");
             try {
                 WorkerReply preview = await worker.Run(new WorkerRequest { Action = "RestorePreview", Scope = scope, Application = application }, false);
                 if (preview.Results.Length == 0) { status.Text = "No BetterIcon changes to restore" + (application == null ? "" : " for " + application) + " in these locations."; return; }

@@ -1,5 +1,11 @@
 # Windows installer changelog
 
+## 1.11.1 - 2026-11-16
+
+- Show an app's executable icon when its shortcut has no explicit icon path, fixing ArtCraft Launcher displaying BetterIcon's fallback artwork.
+- Allow Restore ArtCraft default to select an already-default icon without a backup or shortcut rewrite, with clear status feedback in Launcher and Settings.
+- Recognize ArtCraft Launcher consistently in personal packs, imports, shortcut plans, and selective restore. Preserve the normal reviewed backup restoration for custom launcher icons.
+
 ## 1.11.0 - 2026-11-16
 
 - Replace the 128-pixel display ceiling with a range based on available artwork, including the bundled 1024–1254-pixel PNGs and larger custom PNGs.

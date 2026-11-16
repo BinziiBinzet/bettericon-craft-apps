@@ -310,6 +310,40 @@ try {
     $targetCatalog = @(Get-BetterIconApplication -ShortcutDirectory $targetLinks -StateDirectory $targetState)
     Assert ($targetCatalog.Count -eq 1 -and $targetCatalog[0].RestoreAvailable -and $targetCatalog[0].OriginalIconPath -ieq (Join-Path $env:WINDIR 'System32\cmd.exe') -and $targetCatalog[0].OriginalIconIndex -eq 0) 'Backup with implicit executable icon uses its original launch target even after a later target edit'
 
+    # ArtCraft Launcher commonly omits IconLocation and inherits its executable icon.
+    $launcherLinks = Join-Path $testRoot 'launcher links'
+    $launcherState = Join-Path $testRoot 'launcher state'
+    $null = [IO.Directory]::CreateDirectory($launcherLinks)
+    $launcherLink = Join-Path $launcherLinks 'ArtCraft Launcher.lnk'
+    $shell = New-Object -ComObject WScript.Shell
+    try {
+        $link = $shell.CreateShortcut($launcherLink)
+        $link.TargetPath = Join-Path $env:WINDIR 'System32\cmd.exe'
+        $link.Arguments = '/c exit 0'; $link.Description = 'Preserve launcher launch settings.'; $link.WorkingDirectory = $launcherLinks; $link.Save()
+        [Runtime.InteropServices.Marshal]::FinalReleaseComObject($link) | Out-Null
+    }
+    finally { [Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell) | Out-Null }
+    $launcherOriginal = Digest $launcherLink
+    $launcherFingerprint = [BetterIcon.Windows.ShellLink]::Read($launcherLink).LaunchFingerprint
+    $launcherCatalog = @(Get-BetterIconApplication -ShortcutDirectory $launcherLinks -StateDirectory $launcherState)
+    Assert ($launcherCatalog.Count -eq 1 -and $launcherCatalog[0].Application -eq 'ArtCraftLauncher' -and $launcherCatalog[0].UsingDefaultIcon -and -not $launcherCatalog[0].RestoreAvailable -and $launcherCatalog[0].IconPath -ieq (Join-Path $env:WINDIR 'System32\cmd.exe')) 'ArtCraft Launcher resolves its implicit executable icon and reports an existing default without inventing a backup'
+    Assert ((Digest $launcherLink) -ceq $launcherOriginal -and -not (Test-Path -LiteralPath $launcherState)) 'Inspecting the default launcher leaves its shortcut and state untouched'
+    $launcherPlan = @(Get-BetterIconPlan -Theme Cardboard -ShortcutDirectory $launcherLinks)
+    Assert ($launcherPlan.Count -eq 1 -and $launcherPlan[0].Status -eq 'Missing icon') 'Bundled themes safely skip ArtCraft Launcher when they have no matching artwork'
+    $launcherRepository = Join-Path $testRoot 'launcher repository'
+    $launcherTheme = Join-Path $launcherRepository 'Craft-Icons-Fixture\Launcher'
+    $null = [IO.Directory]::CreateDirectory($launcherTheme)
+    [IO.File]::WriteAllBytes((Join-Path $launcherTheme 'ArtCraft Launcher.ico'), (Get-BetterIconBytes $sourceIcon))
+    $launcherApplied = @(Install-BetterIconTheme -Theme Launcher -Repository $launcherRepository -ShortcutDirectory $launcherLinks -StateDirectory $launcherState -Confirm:$false)
+    $launcherManaged = @(Get-BetterIconApplication -ShortcutDirectory $launcherLinks -StateDirectory $launcherState)
+    Assert ($launcherApplied.Count -eq 1 -and $launcherApplied[0].Status -eq 'Applied' -and $launcherManaged[0].RestoreAvailable -and -not $launcherManaged[0].UsingDefaultIcon -and [BetterIcon.Windows.ShellLink]::Read($launcherLink).LaunchFingerprint -ceq $launcherFingerprint) 'A custom ArtCraft Launcher icon is backed up while its launch settings remain intact'
+    $launcherThemed = Digest $launcherLink
+    $launcherPreview = @(Restore-BetterIcon -Application ArtCraftLauncher -StateDirectory $launcherState -WhatIf)
+    Assert ($launcherPreview.Count -eq 1 -and (Digest $launcherLink) -ceq $launcherThemed) 'Selective ArtCraft Launcher restoration previews its canonical identity without writes'
+    $launcherRestored = @(Restore-BetterIcon -Application ArtCraftLauncher -StateDirectory $launcherState -Confirm:$false)
+    $launcherDefault = @(Get-BetterIconApplication -ShortcutDirectory $launcherLinks -StateDirectory $launcherState)
+    Assert ($launcherRestored.Count -eq 1 -and $launcherRestored[0].Status -eq 'Restored' -and (Digest $launcherLink) -ceq $launcherOriginal -and $launcherDefault[0].UsingDefaultIcon -and -not $launcherDefault[0].RestoreAvailable) 'ArtCraft Launcher restores exactly to its original implicit icon'
+
     if ($TestInstalledCopies) {
         $copied = Join-Path $testRoot 'installed shortcut copies'
         $copyState = Join-Path $testRoot 'installed copies state'

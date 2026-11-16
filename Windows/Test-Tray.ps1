@@ -80,6 +80,20 @@ try {
     $restored = Run-Worker 'Restore' @() $restorePreview.StateHash
     Assert ($restored.Success -and @($restored.Results | Where-Object Status -eq 'Restored').Count -eq 1) 'Older JSON requests without Application still restore every remaining app'
     foreach ($path in $original.Keys) { Assert ((Get-FileHash -LiteralPath $path).Hash -ceq $original[$path]) 'Tray restore preserves exact original shortcut bytes' }
+    $shell = New-Object -ComObject WScript.Shell
+    $launcherPath = Join-Path $links 'ArtCraft Launcher.lnk'
+    try {
+        $link = $shell.CreateShortcut($launcherPath); $link.TargetPath = Join-Path $env:WINDIR 'System32\cmd.exe'; $link.Save()
+        [Runtime.InteropServices.Marshal]::FinalReleaseComObject($link) | Out-Null
+    }
+    finally { [Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell) | Out-Null }
+    $launcherHash = (Get-FileHash -LiteralPath $launcherPath).Hash
+    $launcherCatalog = Run-Worker 'Catalog'
+    $launcher = @($launcherCatalog.Catalog.Apps | Where-Object Application -eq ArtCraftLauncher)
+    Assert ($launcherCatalog.Success -and $launcher.Count -eq 1 -and $launcher[0].UsingDefaultIcon -and -not $launcher[0].RestoreAvailable -and $launcher[0].IconPath -ieq (Join-Path $env:WINDIR 'System32\cmd.exe')) 'Tray exposes the launcher executable icon and an existing-default state without requiring a backup'
+    $launcherPreview = Run-Worker -Action RestorePreview -Application ArtCraftLauncher
+    $launcherNoop = Run-Worker -Action Restore -Application ArtCraftLauncher -StateHash $launcherPreview.StateHash
+    Assert ($launcherPreview.Success -and $launcherNoop.Success -and $launcherNoop.Results.Count -eq 0 -and (Get-FileHash -LiteralPath $launcherPath).Hash -ceq $launcherHash) 'The worker accepts ArtCraft Launcher and preserves an already-default shortcut'
     $invalid = Run-Worker 'Execute arbitrary command'
     Assert (-not $invalid.Success -and $invalid.Error -eq 'Unknown tray operation.') 'The tray bridge accepts only defined operations'
     [IO.File]::WriteAllText((Join-Path $root 'fixture.json'), (@{ShortcutDirectory=@($links);StateDirectory=$state}|ConvertTo-Json), [Text.UTF8Encoding]::new($false))
