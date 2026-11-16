@@ -1,5 +1,11 @@
 # Windows installer changelog
 
+## 1.6.0 - 2026-11-16
+
+- Add a 24–128 pixel Launcher icon-size slider in Settings, with a live size label and Reset to the compact 48-pixel default.
+- Resize artwork and tiles together, preserving the active filter and selected app. Cache source thumbnails so dragging does not reread icon files.
+- Save the size per user across restarts, preserving theme, scope, and hotkey preferences. Keep pack previews and installed shortcut icons unchanged.
+
 ## 1.5.0 - 2026-11-16
 
 - Export personal icon packs as ZIPs containing portable name/author metadata and original PNG/ICO artwork. Import keeps those details across machines and ZIP renames; existing image-only packs still work.

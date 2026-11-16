@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Threading;
@@ -53,6 +54,7 @@ static class TrayTests
             JavaScriptSerializer json = new JavaScriptSerializer();
             Preferences migrated = json.Deserialize<Preferences>("{\"Theme\":\"Satin\",\"Scope\":\"AllUsers\"}");
             Check(migrated.Hotkey.Enabled && migrated.Hotkey.ToString() == "Ctrl+Alt+Shift+A" && migrated.Theme == "Satin" && migrated.Scope == "AllUsers", "Old theme and scope preferences acquire the chosen default hotkey");
+            Check(migrated.IconSize == 48 && json.Deserialize<Preferences>("{\"IconSize\":1}").IconSize == 24 && json.Deserialize<Preferences>("{\"IconSize\":999}").IconSize == 128, "Older preferences keep 48-pixel icons and invalid saved sizes are bounded safely");
             HotkeySettings first = new HotkeySettings { Key = (int)Keys.F23 }, second = new HotkeySettings { Key = (int)Keys.F22 };
             string hotkeyError;
             int received = 0;
@@ -86,7 +88,7 @@ static class TrayTests
 
             string state = Path.Combine(root, "state"), preferencesPath = Path.Combine(state, "tray-preferences.json");
             Directory.CreateDirectory(state);
-            File.WriteAllText(preferencesPath, json.Serialize(new Preferences { Theme = "Craft-Icons-Zach/Satin", Scope = "CurrentUser", Hotkey = new HotkeySettings { Enabled = false } }));
+            File.WriteAllText(preferencesPath, json.Serialize(new Preferences { Theme = "Craft-Icons-Zach/Satin", Scope = "CurrentUser", IconSize = 72, Hotkey = new HotkeySettings { Enabled = false } }));
             using (EventWaitHandle show = new EventWaitHandle(false, EventResetMode.AutoReset))
             using (EventWaitHandle stop = new EventWaitHandle(false, EventResetMode.AutoReset))
             using (LauncherForm form = new LauncherForm(args[1], new FixtureConfig { ShortcutDirectory = new[] { root }, StateDirectory = Path.Combine(root, "state") }, true, show, stop))
@@ -135,6 +137,10 @@ static class TrayTests
                         TabControl pages = (TabControl)typeof(LauncherForm).GetField("pages", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
                         Check(pages.TabPages.Count == 2 && pages.TabPages[0].Text == "Launcher" && pages.TabPages[1].Text == "Settings", "Launcher and Settings occupy the left and right tabs");
                         Check(pages.TabPages[0].Controls.Count == 2 && !filter.Visible, "The populated Launcher page contains only the app grid");
+                        TrackBar slider = (TrackBar)typeof(LauncherForm).GetField("iconSizeSlider", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
+                        ImageList launcherImages = (ImageList)typeof(LauncherForm).GetField("pictures", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
+                        List<Bitmap> cached = (List<Bitmap>)typeof(LauncherForm).GetField("appArtwork", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
+                        Check(slider.Value == 72 && launcherImages.ImageSize == new Size(72, 72), "Hidden startup loads the saved icon size into the real launcher and Settings slider");
                         pages.Focus();
                         type("f");
                         Check(list.Items.Count == 2 && list.ContainsFocus && list.SelectedItems.Count == 1, "Typing from the launcher tab filters and focuses the highlighted result");
@@ -160,6 +166,17 @@ static class TrayTests
                         Check(list.Items.Count == 3 && !filter.Visible, "Reopening starts with all apps and no stale filter");
                         pages.SelectedIndex = 1; type("fil");
                         Check(list.Items.Count == 3 && pages.SelectedIndex == 1, "Settings keyboard input does not filter the launcher");
+                        Bitmap[] sources = cached.ToArray();
+                        foreach (int size in new[] { 24, 128, 32, 96 }) slider.Value = size;
+                        Check(launcherImages.ImageSize == new Size(96, 96) && launcherImages.Images.Count == 3 && cached.SequenceEqual(sources) && list.TileSize.Height >= 112, "Resizing through the full range rebuilds valid native images from cached artwork and reserves room for names");
+                        pages.SelectedIndex = 0; type("f"); list.Items[0].Selected = false; list.Items[1].Selected = true;
+                        pages.SelectedIndex = 1; slider.Value = 64;
+                        Check(list.Items.Count == 2 && list.AccessibleDescription.Contains("Filter: f.") && list.SelectedItems.Count == 1 && list.SelectedItems[0].Text == "FilmCraft", "Icon resizing preserves the active filter and selected app");
+                        Preferences sized = json.Deserialize<Preferences>(File.ReadAllText(preferencesPath));
+                        Check(sized.IconSize == 64 && sized.Theme == "Craft-Icons-Zach/Satin" && sized.Scope == "CurrentUser" && !sized.Hotkey.Enabled, "Icon size persists without changing theme, scope, or hotkey preferences");
+                        ((Button)typeof(LauncherForm).GetField("resetIconSize", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form)).PerformClick();
+                        Check(launcherImages.ImageSize == new Size(48, 48) && list.TileSize == new Size(260, 64) && json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).IconSize == 48, "Reset restores and saves the original compact launcher layout");
+                        pages.SelectedIndex = 0; key(Keys.Control | Keys.Back); pages.SelectedIndex = 1; slider.Value = 80;
                         ComboBox themePicker = (ComboBox)typeof(LauncherForm).GetField("themes", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
                         themePicker.DroppedDown = true;
                         KeyPressEventArgs dropdownKey = new KeyPressEventArgs('p'); character.Invoke(form, new object[] { dropdownKey });
@@ -176,7 +193,7 @@ static class TrayTests
                         string themeBefore = json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).Theme;
                         Check(saveHotkey.Invoke(form, new object[] { second }) == null, "Settings apply a custom combination without restarting");
                         Preferences saved = json.Deserialize<Preferences>(File.ReadAllText(preferencesPath));
-                        Check(saved.Hotkey.Key == second.Key && saved.Hotkey.Enabled && saved.Theme == themeBefore && saved.Scope == "CurrentUser", "Custom hotkey persists without changing the selected theme or scope");
+                        Check(saved.Hotkey.Key == second.Key && saved.Hotkey.Enabled && saved.Theme == themeBefore && saved.Scope == "CurrentUser" && saved.IconSize == 80, "Custom hotkey persists without changing theme, scope, or icon size");
                         using (FileStream locked = File.Open(preferencesPath, FileMode.Open, FileAccess.Read, FileShare.None)) {
                             string saveError = (string)saveHotkey.Invoke(form, new object[] { first });
                             GlobalHotkey active = (GlobalHotkey)typeof(LauncherForm).GetField("hotkey", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);

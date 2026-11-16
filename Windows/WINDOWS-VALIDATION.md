@@ -1,5 +1,13 @@
 # Windows validation
 
+## 1.6.0 adjustable launcher icons - 2026-11-16
+
+All 96 local native checks passed, including saved-size startup, migration from older preferences, bounds enforcement, resizing native image lists from cached artwork, preserving the active filter and selection, and resetting to the original compact layout. Theme, shortcut scope, and hotkey preferences remain intact when saving the size; saving a hotkey also retains the chosen icon size.
+
+In the isolated native UI fixture, the Settings slider reached 24 and 128 pixels. Small icons showed all 14 app shortcuts, large icons remained readable in a scrollable grid, and the 128-pixel setting survived a full process restart. Reset restored 48 pixels and the original three-column layout with all 14 shortcuts visible. The Settings controls fit the default popup. These checks used disposable launch-probe shortcuts and did not apply icons to installed shortcuts.
+
+The installer and JSON bridge implementation changed only its version number; the 1.5.0 installer and bridge results below remain their baseline. All builds and validation ran locally.
+
 ## 1.5.0 pack sharing, credits, and retirement - 2026-11-16
 
 All 90 local native checks passed, including 14 additional catalog/author/sharing checks. Export/import into independent libraries preserves Unicode pack names, public author credits, and both PNG and ICO bytes. Renaming the ZIP or importing its extracted folder preserves metadata. Checks also cover explicit overwrite, failed export preserving an existing ZIP, stale selection rejection, unsupported metadata rejection without changing the library, and older personal libraries without author fields. The catalog contains 13 themes and 218 icons; the seven themes using legacy Craft-Icons-Zach IDs are credited to OmegaDarling, and Oil Slick is absent.

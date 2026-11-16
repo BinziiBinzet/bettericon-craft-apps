@@ -72,6 +72,9 @@ namespace BetterIcon.Tray
         readonly ListView packPreview = new ListView();
         readonly ImageList packPictures = new ImageList();
         readonly Label packDetails = new Label();
+        readonly TrackBar iconSizeSlider = new TrackBar();
+        readonly Label iconSizeValue = new Label();
+        readonly Button resetIconSize = new Button();
         readonly List<Button> packButtons = new List<Button>();
         PackLibrary library;
         ThemeEntry[] bundledThemes = new ThemeEntry[0];
@@ -93,10 +96,19 @@ namespace BetterIcon.Tray
         {
             Button button = Button(text, width); button.Click += delegate { action(); }; packButtons.Add(button); return button;
         }
+        void ChangeIconSize()
+        {
+            preferences.IconSize = iconSizeSlider.Value;
+            iconSizeValue.Text = preferences.IconSize + " px";
+            ResizeAppIcons();
+            try { WritePreferences(); status.Text = "Launcher icon size saved."; }
+            catch (IOException) { status.Text = "Icon size changed for this session, but could not be saved."; }
+            catch (UnauthorizedAccessException) { status.Text = "Icon size changed for this session, but could not be saved."; }
+        }
         void BuildSettingsPage(bool testing)
         {
-            TableLayoutPanel layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(18), ColumnCount = 1, RowCount = 9, AutoScroll = true };
-            foreach (int height in new[] { 32, 42, 84, 170, 44, 44, 36, 50, 60 }) layout.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
+            TableLayoutPanel layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(18), ColumnCount = 1, RowCount = 10, AutoScroll = true };
+            foreach (int height in new[] { 32, 42, 84, 170, 44, 44, 36, 48, 50, 60 }) layout.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
             settingsPage.Controls.Add(layout);
             layout.Controls.Add(new Label { Text = "Icon packs", Font = new Font(Font, FontStyle.Bold), Dock = DockStyle.Fill }, 0, 0);
             TableLayoutPanel choice = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2 };
@@ -130,17 +142,29 @@ namespace BetterIcon.Tray
             previewLabel.Text = "Preview only until you apply."; previewLabel.AutoSize = true; previewLabel.Margin = new Padding(10, 8, 0, 0);
             applyRow.Controls.AddRange(new Control[] { apply, restore, previewLabel }); layout.Controls.Add(applyRow, 0, 5);
             layout.Controls.Add(new Label { Text = "Launcher", Font = new Font(Font, FontStyle.Bold), Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, 6);
+            TableLayoutPanel sizing = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4 };
+            sizing.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 86)); sizing.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            sizing.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 66)); sizing.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
+            sizing.Controls.Add(new Label { Text = "Icon size", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, 0);
+            iconSizeSlider.Minimum = Preferences.MinimumIconSize; iconSizeSlider.Maximum = Preferences.MaximumIconSize;
+            iconSizeSlider.Value = preferences.IconSize; iconSizeSlider.SmallChange = 8; iconSizeSlider.LargeChange = 16; iconSizeSlider.TickStyle = TickStyle.None;
+            iconSizeSlider.Dock = DockStyle.Fill; iconSizeSlider.AccessibleName = "Launcher icon size"; iconSizeSlider.AccessibleDescription = "Size in pixels, from 24 to 128. Updates the Launcher immediately.";
+            iconSizeValue.Text = preferences.IconSize + " px"; iconSizeValue.Dock = DockStyle.Fill; iconSizeValue.TextAlign = ContentAlignment.MiddleCenter;
+            resetIconSize.Text = "Reset"; resetIconSize.Dock = DockStyle.Fill; resetIconSize.AccessibleName = "Reset launcher icon size";
+            resetIconSize.Click += delegate { iconSizeSlider.Value = Preferences.DefaultIconSize; };
+            iconSizeSlider.ValueChanged += delegate { ChangeIconSize(); };
+            sizing.Controls.Add(iconSizeSlider, 1, 0); sizing.Controls.Add(iconSizeValue, 2, 0); sizing.Controls.Add(resetIconSize, 3, 0); layout.Controls.Add(sizing, 0, 7);
             Panel keyboard = new Panel { Dock = DockStyle.Fill };
             settings.Text = "Configure hotkey..."; settings.Width = 170; settings.Dock = DockStyle.Right;
             settings.Click += delegate { if (hotkey != null) using (HotkeySettingsDialog dialog = new HotkeySettingsDialog(preferences.Hotkey, hotkey.IsRegistered, SaveHotkey)) dialog.ShowDialog(this); };
             subtitle.Dock = DockStyle.Fill; subtitle.TextAlign = ContentAlignment.MiddleLeft; subtitle.AutoEllipsis = true;
-            keyboard.Controls.Add(subtitle); keyboard.Controls.Add(settings); layout.Controls.Add(keyboard, 0, 7);
+            keyboard.Controls.Add(subtitle); keyboard.Controls.Add(settings); layout.Controls.Add(keyboard, 0, 8);
             Panel footer = new Panel { Dock = DockStyle.Fill };
             FlowLayoutPanel buttons = new FlowLayoutPanel { Dock = DockStyle.Right, Width = 240 };
             Button refresh = Button("Refresh apps", 132); refresh.Click += async delegate { await RefreshCatalog(); }; packButtons.Add(refresh);
             exit.Text = "Exit"; exit.Width = 90; exit.Height = 34; exit.Click += delegate { ExitLauncher(); };
             buttons.Controls.Add(refresh); buttons.Controls.Add(exit); status.Dock = DockStyle.Fill; status.Text = testing ? "Test library and shortcuts only." : "Finding installed apps...";
-            footer.Controls.Add(status); footer.Controls.Add(buttons); layout.Controls.Add(footer, 0, 8);
+            footer.Controls.Add(status); footer.Controls.Add(buttons); layout.Controls.Add(footer, 0, 9);
         }
         void ReloadLibrary(string selectId)
         {
