@@ -389,6 +389,7 @@ namespace BetterIcon.Tray
             filterHint.TextAlign = ContentAlignment.MiddleLeft;
             launcherPage.Controls.Add(apps); launcherPage.Controls.Add(filterHint);
             BuildSettingsPage(testing);
+            BuildLoadingIndicator();
             iconMenu.ShowItemToolTips = true; iconMenu.Items.Add(restoreIconDefault);
             restoreIconDefault.Click += async delegate {
                 AppEntry target = iconMenuTarget;
@@ -410,6 +411,8 @@ namespace BetterIcon.Tray
             UpdatePackButtons();
             if (!String.IsNullOrEmpty(message)) status.Text = message;
             UseWaitCursor = value; BuildTrayMenu();
+            apps.Enabled = packPreview.Enabled = !value;
+            ShowLoading(value, message);
         }
         public void ToggleAboveTray(Point anchor)
         {
@@ -587,6 +590,7 @@ namespace BetterIcon.Tray
             try { RenderApps(); RenderPack(); }
             finally { renderingArtwork = false; }
             UpdateIconSizeLimit(); ResizeAppIcons(); ResizePackIcons();
+            renderedThemeId = SelectedTheme == null ? null : SelectedTheme.Id;
         }
         void UpdateIconSizeLimit()
         {
@@ -671,7 +675,7 @@ namespace BetterIcon.Tray
             finally { apps.EndUpdate(); }
         }
         void SetFilter(string value) { filterText = value; FilterApps(); }
-        bool CanFilter { get { return Enabled && pages.SelectedTab == launcherPage && !themes.DroppedDown && !scopes.DroppedDown && !restoreAppPicker.DroppedDown && !AppearanceMenuOpen && !trayMenu.Visible && !iconMenu.Visible && !importPackMenu.Visible && !managePackMenu.Visible; } }
+        bool CanFilter { get { return Enabled && !busy && pages.SelectedTab == launcherPage && !themes.DroppedDown && !scopes.DroppedDown && !restoreAppPicker.DroppedDown && !AppearanceMenuOpen && !trayMenu.Visible && !iconMenu.Visible && !importPackMenu.Visible && !managePackMenu.Visible; } }
         bool HandlePopupKey(Keys key)
         {
             if (key == Keys.Escape && Enabled && pages.SelectedTab == settingsPage && !themes.DroppedDown && !scopes.DroppedDown && !restoreAppPicker.DroppedDown && !AppearanceMenuOpen && !iconMenu.Visible && !busy) { pages.SelectedTab = launcherPage; apps.Focus(); return true; }
@@ -734,6 +738,7 @@ namespace BetterIcon.Tray
         }
         void Launch(AppEntry entry)
         {
+            if (busy) return;
             try {
                 if (!File.Exists(entry.Shortcut)) throw new FileNotFoundException("This shortcut is no longer available. Choose Refresh installed apps in the tray menu.");
                 Process.Start(new ProcessStartInfo(entry.Shortcut) { UseShellExecute = true });

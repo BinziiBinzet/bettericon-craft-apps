@@ -1,6 +1,6 @@
 # BetterIcon-Craft Apps for Windows
 
-Windows version **1.12.1** includes a native tray launcher alongside the existing icon installer. It shares the repository's artwork and leaves Craft executables, app settings, file associations, and the registry unchanged.
+Windows version **1.13.0** includes a native tray launcher alongside the existing icon installer. It shares the repository's artwork and leaves Craft executables, app settings, file associations, and the registry unchanged.
 
 ## Start here
 
@@ -58,6 +58,8 @@ Images are limited to 16 MB each and PNG dimensions to 4096 pixels per side. A p
 Shared ZIPs contain app-named image files and `bettericon-pack.json` with `Format: "BetterIcon.IconPack"`, `Version: 1`, `Name`, and `Author`. Exported packs can also be extracted and imported as a folder. Older image-only folders/ZIPs remain supported; their filename supplies the pack name. An older personal library without author metadata opens normally; use Edit pack to add a credit. Author credits are supplied by the pack creator, not a verified identity.
 
 The Launcher keeps its compact grid and supports direct typing without a permanent search box or filter label. Empty searches show a small no-results hint. Opening from the tray or hotkey selects Launcher; Escape in Settings returns to Launcher.
+
+When switching icon packs, a loading message names the selected pack and an animated bar appears below the tabs. Image loading runs in the background while the previous icons stay visible. Conflicting controls are unavailable until both grids are ready, then the loading bar disappears and the selected pack is saved. Switching packs previews artwork; **Apply icons** still reviews and changes Windows shortcuts separately. A failed load keeps the last successful selection. The same indicator also identifies other ongoing operations, such as finding apps, importing, and applying icons.
 
 ## Command-line use
 

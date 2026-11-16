@@ -164,7 +164,7 @@ namespace BetterIcon.Tray
 
             TableLayoutPanel packs = SettingsSection("IconPackSection", "Icon pack");
             themes.DropDownStyle = ComboBoxStyle.DropDownList; themes.Dock = DockStyle.Top; themes.Margin = new Padding(0, 0, 0, 5); themes.AccessibleName = "Icon pack";
-            themes.SelectedIndexChanged += delegate { if (!fillingThemes) { RenderSelection(); SavePreferences(); BuildTrayMenu(); } };
+            themes.SelectedIndexChanged += delegate { SelectPack(); };
             SettingsRow(packs, themes);
             packDetails.AutoSize = true; packDetails.Dock = DockStyle.Top; packDetails.Margin = new Padding(0, 0, 0, 10);
             SettingsRow(packs, packDetails);

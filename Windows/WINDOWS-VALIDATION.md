@@ -1,5 +1,11 @@
 # Windows validation
 
+## 1.13.0 loading feedback - 2026-11-16
+
+All 228 local native checks passed from source. Ten new checks exercise the real pack selector: immediate named loading feedback, an active marquee bar, disabled conflicting actions, retained old artwork and preferences, separate indicator layout, prevention of overlapping loads, UI heartbeat messages during decoding, successful completion and persistence, preservation of other settings, and failure cleanup restoring the last successful pack. Cross-thread control checks are enabled during these tests. The failure fixture changes only in-memory metadata and dismisses its test error dialog; it does not change installed packs or shortcuts.
+
+The two earlier synchronous selection checks now wait for completion while pumping the native window's messages. Existing large-image, default restoration, hotkey, appearance, pack sharing, and full shortcut apply/restore checks remain passing. Image preparation uses detached bitmaps and an owned fallback icon on a worker; native controls and image lists are updated on the window thread. No Computer Use was performed. Installer and bridge behavior is unchanged; their earlier baselines remain applicable. Builds, tests, and packages run locally.
+
 ## 1.12.1 Start menu shortcut - 2026-11-16
 
 Local shortcut validation uses the real per-user Start menu entry and Windows Shell metadata. The shortcut targets the native executable directly, supplies the source/helper folder explicitly, and uses its embedded icon. Launching it while BetterIcon runs reuses that process; cold-launch and managed-shortcut refresh checks use the same entry. Creation does not enable start at login or change ArtCraft shortcuts, preferences, packs, or backups. No Computer Use is needed for these checks.

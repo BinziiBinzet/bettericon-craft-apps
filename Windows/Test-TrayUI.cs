@@ -120,6 +120,7 @@ static class TrayTests
         Check(SettingsLayoutProblem(content) == null && content.Width <= scroll.ClientSize.Width && preview.Height >= 520,
             "Larger previews grow within the scrolling Settings layout without overlapping controls");
         themes.SelectedIndex = 0;
+        LoadingTests.Wait(form);
         Check(slider.Maximum == 128 && slider.Value == 128 && json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).IconSize == 128 && (IntPtr)typeof(IconGridView).GetField("largeArtwork", instance).GetValue(launcher) == IntPtr.Zero,
             "Switching to smaller artwork adjusts the range and releases the oversized native list");
         typeof(LauncherForm).GetMethod("ReloadLibrary", instance).Invoke(form, new object[] { high.Id }); slider.Value = 512;
@@ -244,7 +245,7 @@ static class TrayTests
         RequestIconMenu(preview, preview.Items.Cast<ListViewItem>().First(item => item.Text == "PhotoCraft"));
         Check(menu.Visible && restore.Enabled && ((AppEntry)field("iconMenuTarget")).Scope == "CurrentUser",
             "Changing locations makes the matching preview restoration available");
-        menu.Close(); themes.SelectedIndex = 0;
+        menu.Close(); themes.SelectedIndex = 0; LoadingTests.Wait(form);
         RequestIconMenu(preview, preview.Items.Cast<ListViewItem>().First(item => item.Text == "PhotoCraft"));
         Check(menu.Visible && restore.Enabled && ((AppEntry)field("iconMenuTarget")).Application == "PhotoCraft",
             "ArtCraft default previews retain the same per-app context action");
@@ -731,6 +732,7 @@ static class TrayTests
                         CheckLargeArtwork(form, root, preferencesPath, json);
                         CheckExistingLauncherDefault(form, root, json);
                         AppearanceTests.Run(form, preferencesPath, args[1], Check);
+                        LoadingTests.Run(form, preferencesPath, Check);
                         stop.Set(); // Exercise normal shutdown through the same message loop.
                     }
                     catch (Exception error) { eventFailure = error; timer.Stop(); context.ExitThread(); }

@@ -1,5 +1,11 @@
 # Windows installer changelog
 
+## 1.13.0 - 2026-11-16
+
+- Show the current operation and an animated loading bar below both tabs while BetterIcon is busy.
+- Load selected-pack artwork in the background so the popup can keep painting. Retain old previews until the new artwork is prepared, update both grids together, and save the selection after success.
+- Disable conflicting actions while loading, prevent overlapping pack changes, and restore the last successful selection if preparation fails.
+
 ## 1.12.1 - 2026-11-16
 
 - Add a per-user Start menu shortcut creator. Launch the native app directly with its own icon, reopen an existing tray instance, and support normal Windows pinning.
