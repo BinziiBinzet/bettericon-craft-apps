@@ -11,6 +11,7 @@ namespace BetterIcon.Tray
     public sealed class PackEditor : Form
     {
         readonly TextBox packName = new TextBox();
+        readonly TextBox packAuthor = new TextBox();
         readonly DataGridView grid = new DataGridView();
         readonly Dictionary<string, string> files = new Dictionary<string, string>();
         public ThemeEntry Saved { get; private set; }
@@ -18,14 +19,18 @@ namespace BetterIcon.Tray
         {
             Text = edit ? "Edit icon pack" : "Create icon pack"; Font = new Font("Segoe UI", 10F);
             StartPosition = FormStartPosition.CenterParent; ClientSize = new Size(730, 600); MinimumSize = new Size(660, 480); MinimizeBox = MaximizeBox = false;
-            TableLayoutPanel layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(18), ColumnCount = 1, RowCount = 5 };
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 38)); layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 43)); layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 45)); layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
+            TableLayoutPanel layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(18), ColumnCount = 1, RowCount = 6 };
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 38)); layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 38)); layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 43)); layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 45)); layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
             FlowLayoutPanel nameRow = new FlowLayoutPanel { Dock = DockStyle.Fill };
             nameRow.Controls.Add(new Label { Text = "Pack name", AutoSize = true, Margin = new Padding(0, 6, 12, 0) });
             packName.Width = 450; packName.MaxLength = 64; packName.AccessibleName = "Pack name";
             packName.Text = edit ? basis.Name : basis == null ? "My icon pack" : basis.Name + " custom"; nameRow.Controls.Add(packName);
             layout.Controls.Add(nameRow, 0, 0);
-            layout.Controls.Add(new Label { Text = "Choose a PNG or ICO for each app. Unassigned apps keep their existing shortcut icons. Saving adds the pack; Apply icons changes shortcuts.", Dock = DockStyle.Fill }, 0, 1);
+            FlowLayoutPanel authorRow = new FlowLayoutPanel { Dock = DockStyle.Fill };
+            authorRow.Controls.Add(new Label { Text = "Author", Width = 79, Margin = new Padding(0, 6, 12, 0) });
+            packAuthor.Width = 450; packAuthor.MaxLength = 64; packAuthor.AccessibleName = "Pack author"; packAuthor.Text = basis == null ? "" : basis.Author;
+            authorRow.Controls.Add(packAuthor); layout.Controls.Add(authorRow, 0, 1);
+            layout.Controls.Add(new Label { Text = "Choose a PNG or ICO for each app. Unassigned apps keep their existing shortcut icons. Saving adds the pack; Apply icons changes shortcuts.", Dock = DockStyle.Fill }, 0, 2);
             grid.Dock = DockStyle.Fill; grid.AllowUserToAddRows = grid.AllowUserToDeleteRows = grid.AllowUserToResizeRows = false; grid.RowHeadersVisible = false; grid.AutoGenerateColumns = false; grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect; grid.MultiSelect = false;
             grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "App", HeaderText = "App", Width = 145, ReadOnly = true });
             grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Artwork", HeaderText = "Artwork", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, ReadOnly = true });
@@ -41,21 +46,21 @@ namespace BetterIcon.Tray
                 }
                 if (e.ColumnIndex == 3) { files.Remove(app); grid.Rows[e.RowIndex].Cells[1].Value = "Not assigned"; }
             };
-            layout.Controls.Add(grid, 0, 2);
-            Label error = new Label { Dock = DockStyle.Fill, ForeColor = Color.Firebrick }; layout.Controls.Add(error, 0, 3);
+            layout.Controls.Add(grid, 0, 3);
+            Label error = new Label { Dock = DockStyle.Fill, ForeColor = Color.Firebrick }; layout.Controls.Add(error, 0, 4);
             FlowLayoutPanel buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft };
             Button cancel = new Button { Text = "Cancel", Width = 100, Height = 32, DialogResult = DialogResult.Cancel };
             Button save = new Button { Text = "Save pack", Width = 120, Height = 32 };
             save.Click += async delegate {
-                save.Enabled = cancel.Enabled = grid.Enabled = packName.Enabled = ControlBox = false;
+                save.Enabled = cancel.Enabled = grid.Enabled = packName.Enabled = packAuthor.Enabled = ControlBox = false;
                 try {
-                    string name = packName.Text; Dictionary<string, string> chosen = new Dictionary<string, string>(files);
-                    Saved = await Task.Run(() => library.Save(name, chosen, edit ? basis.LibraryId : null)); DialogResult = DialogResult.OK; Close();
+                    string name = packName.Text, author = packAuthor.Text; Dictionary<string, string> chosen = new Dictionary<string, string>(files);
+                    Saved = await Task.Run(() => library.Save(name, chosen, edit ? basis.LibraryId : null, author)); DialogResult = DialogResult.OK; Close();
                 }
                 catch (Exception failure) { error.Text = failure.Message; }
-                finally { save.Enabled = cancel.Enabled = grid.Enabled = packName.Enabled = ControlBox = true; }
+                finally { save.Enabled = cancel.Enabled = grid.Enabled = packName.Enabled = packAuthor.Enabled = ControlBox = true; }
             };
-            buttons.Controls.Add(cancel); buttons.Controls.Add(save); layout.Controls.Add(buttons, 0, 4);
+            buttons.Controls.Add(cancel); buttons.Controls.Add(save); layout.Controls.Add(buttons, 0, 5);
             Controls.Add(layout); AcceptButton = save; CancelButton = cancel;
         }
     }
@@ -72,6 +77,16 @@ namespace BetterIcon.Tray
         ThemeEntry[] bundledThemes = new ThemeEntry[0];
         bool fillingThemes;
 
+        void DrawPageTab(object sender, DrawItemEventArgs e)
+        {
+            bool selected = pages.SelectedIndex == e.Index;
+            Color background = selected ? accent : Color.FromArgb(205, 216, 232), foreground = selected ? Color.White : ink;
+            if (SystemInformation.HighContrast) { background = selected ? SystemColors.Highlight : SystemColors.Control; foreground = selected ? SystemColors.HighlightText : SystemColors.ControlText; }
+            using (Brush brush = new SolidBrush(background)) e.Graphics.FillRectangle(brush, e.Bounds);
+            using (Font font = new Font(Font, selected ? FontStyle.Bold : FontStyle.Regular))
+                TextRenderer.DrawText(e.Graphics, pages.TabPages[e.Index].Text, font, e.Bounds, foreground, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            if (selected && pages.Focused) ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(e.Bounds, -5, -5), foreground, background);
+        }
         void SizeTabs() { Size size = new Size(Math.Max(80, (pages.ClientSize.Width - 10) / 2), 38); if (pages.ItemSize != size) pages.ItemSize = size; }
 
         Button PackButton(string text, int width, Action action)
@@ -93,6 +108,7 @@ namespace BetterIcon.Tray
             FlowLayoutPanel actions = new FlowLayoutPanel { Dock = DockStyle.Fill };
             actions.Controls.Add(PackButton("Import folder...", 132, delegate { ImportPack(false); }));
             actions.Controls.Add(PackButton("Import ZIP...", 116, delegate { ImportPack(true); }));
+            actions.Controls.Add(PackButton("Export ZIP...", 116, ExportPack));
             actions.Controls.Add(PackButton("New pack...", 116, delegate { EditPack(false, false); }));
             actions.Controls.Add(PackButton("Customize...", 120, delegate { EditPack(true, false); }));
             actions.Controls.Add(PackButton("Edit pack...", 110, delegate { EditPack(true, true); }));
@@ -155,7 +171,7 @@ namespace BetterIcon.Tray
         {
             foreach (Button button in packButtons) button.Enabled = !busy;
             foreach (Button button in packButtons.Where(b => b.Text == "Customize..." || b.Text == "Remove pack")) button.Enabled = !busy && SelectedTheme != null;
-            foreach (Button button in packButtons.Where(b => b.Text == "Edit pack...")) button.Enabled = !busy && SelectedTheme != null && SelectedTheme.Managed;
+            foreach (Button button in packButtons.Where(b => b.Text == "Edit pack..." || b.Text == "Export ZIP...")) button.Enabled = !busy && SelectedTheme != null && SelectedTheme.Managed;
             apply.Enabled = !busy && SelectedTheme != null;
         }
         async void ImportPack(bool zip)
@@ -167,6 +183,19 @@ namespace BetterIcon.Tray
             if (source == null) return;
             SetBusy(true, "Importing icon pack...");
             try { ThemeEntry added = await Task.Run(() => library.Import(source)); ReloadLibrary(added.Id); status.Text = "Imported " + added.Name + ". Choose Apply icons to change shortcuts."; }
+            catch (Exception error) { Report(error); }
+            finally { SetBusy(false, null); }
+        }
+        async void ExportPack()
+        {
+            if (busy || SelectedTheme == null || !SelectedTheme.Managed) return;
+            ThemeEntry selected = SelectedTheme; string destination;
+            string filename = new string(selected.Name.Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '_' : c).ToArray()).TrimEnd(' ', '.');
+            using (SaveFileDialog picker = new SaveFileDialog { Title = "Export icon pack", Filter = "Icon pack ZIP (*.zip)|*.zip", DefaultExt = "zip", AddExtension = true, OverwritePrompt = true, FileName = filename + ".zip" }) {
+                if (picker.ShowDialog(this) != DialogResult.OK) return; destination = picker.FileName;
+            }
+            SetBusy(true, "Exporting icon pack...");
+            try { await Task.Run(() => library.Export(selected, destination, true)); status.Text = "Exported " + selected.Name + ". Share the ZIP; recipients can use Import ZIP."; }
             catch (Exception error) { Report(error); }
             finally { SetBusy(false, null); }
         }

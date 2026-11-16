@@ -5,6 +5,8 @@ using System.Drawing.Imaging;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Text;
+using System.Web.Script.Serialization;
 using BetterIcon.Tray;
 
 static class PackTests
@@ -14,6 +16,9 @@ static class PackTests
     {
         string state = Path.Combine(root, "pack-tests-state"); Directory.CreateDirectory(state);
         PackLibrary library = new PackLibrary(Path.Combine(state, "packs"));
+        ThemeEntry[] omega = catalog.Themes.Where(t => t.Pack == "Craft-Icons-Zach").ToArray();
+        check(omega.Length == 7 && omega.All(t => t.Author == "OmegaDarling" && t.ToString().Contains("OmegaDarling") && t.Id.StartsWith("Craft-Icons-Zach/")), "OmegaDarling credits are public while existing pack IDs stay stable");
+        check(catalog.Themes.Length == 13 && catalog.Themes.Sum(t => t.IconCount) == 218 && !catalog.Themes.Any(t => t.Name == "OilSlick"), "Oil Slick is retired from the 13-theme, 218-icon catalog");
         check(library.VisibleThemes(catalog.Themes).Length == catalog.Themes.Length, "An empty personal library preserves all bundled packs");
         string input = Path.Combine(state, "Imported sample"); Directory.CreateDirectory(input);
         string png = Path.Combine(input, "PhotoCraft.png");
@@ -62,5 +67,49 @@ static class PackTests
         check(Rejects(() => library.Save("Removed", new Dictionary<string, string> { { "PhotoCraft", png } }, edited.LibraryId)), "An editor cannot overwrite a pack removed since it opened");
         byte[] oversized = (byte[])originalPng.Clone(); oversized[16] = 0; oversized[17] = 0; oversized[18] = 16; oversized[19] = 1; File.WriteAllBytes(invalid, oversized);
         check(Rejects(() => library.Save("Oversized", new Dictionary<string, string> { { "PhotoCraft", invalid } }, null)), "Oversized PNG dimensions are rejected before decoding");
+        Sharing(state, png, catalog.Themes[0], check);
+    }
+    static void Sharing(string state, string png, ThemeEntry bundled, Action<bool, string> check)
+    {
+        PackLibrary sender = new PackLibrary(Path.Combine(state, "sender")), recipient = new PackLibrary(Path.Combine(state, "recipient"));
+        string ico = Path.Combine(state, "arbitrary artwork.ico");
+        using (FileStream output = File.Create(ico)) SystemIcons.Application.Save(output);
+        var files = new Dictionary<string, string> { { "PhotoCraft", png }, { "FilmCraft", ico } };
+        ThemeEntry pack = sender.Save("Studio \u03a9", files, null, "OmegaDarling");
+        string destination = Path.Combine(state, "renamed shared pack.zip");
+        sender.Export(pack, destination);
+        byte[] exported = File.ReadAllBytes(destination);
+        using (ZipArchive zip = ZipFile.OpenRead(destination)) {
+            string[] names = zip.Entries.Select(e => e.FullName).OrderBy(n => n).ToArray();
+            string metadata; using (StreamReader reader = new StreamReader(zip.GetEntry("bettericon-pack.json").Open(), Encoding.UTF8)) metadata = reader.ReadToEnd();
+            var data = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(metadata);
+            check(names.SequenceEqual(new[] { "bettericon-pack.json", "FilmCraft.ico", "PhotoCraft.png" }.OrderBy(n => n)) && data.Count == 4 && !metadata.Contains(state) && !metadata.Contains(pack.LibraryId), "Export contains only portable name/author metadata and canonical PNG/ICO artwork");
+        }
+        ThemeEntry imported = recipient.Import(destination);
+        check(imported.Name == pack.Name && imported.Author == "OmegaDarling" && imported.Id != pack.Id && imported.IconCount == 2 && imported.ToString().Contains("OmegaDarling"), "Import on another library preserves Unicode name and author even when the ZIP was renamed");
+        check(imported.Icons.All(i => File.ReadAllBytes(i.Path).SequenceEqual(File.ReadAllBytes(files[i.Application]))), "PNG and ICO artwork survives export/import byte-for-byte");
+        check(new PackLibrary(recipient.Root).VisibleThemes(new ThemeEntry[0])[0].Author == "OmegaDarling", "Imported author survives reopening the app library");
+        check(Rejects(() => sender.Export(pack, destination)) && File.ReadAllBytes(destination).SequenceEqual(exported), "Export refuses an existing ZIP without explicit overwrite");
+        check(Rejects(() => sender.Export(bundled, Path.Combine(state, "builtin.zip"))) && !File.Exists(Path.Combine(state, "builtin.zip")), "Built-in packs must be customized before export");
+        string extracted = Path.Combine(state, "renamed extracted folder"); ZipFile.ExtractToDirectory(destination, extracted);
+        ThemeEntry folder = new PackLibrary(Path.Combine(state, "folder-recipient")).Import(extracted);
+        check(folder.Name == pack.Name && folder.Author == pack.Author, "An extracted export imports with the same portable metadata");
+        ThemeEntry edited = sender.Save("Studio revised", files, pack.LibraryId, "OmegaDarling and friends");
+        check(Rejects(() => sender.Export(pack, destination, true)) && File.ReadAllBytes(destination).SequenceEqual(exported), "A stale selection cannot export a different revision or overwrite an existing ZIP");
+        sender.Export(edited, destination, true);
+        ThemeEntry updated = new PackLibrary(Path.Combine(state, "updated-recipient")).Import(destination);
+        check(updated.Name == edited.Name && updated.Author == edited.Author, "Confirmed overwrite publishes a complete ZIP with edited name and author");
+        byte[] complete = File.ReadAllBytes(destination); File.WriteAllText(edited.Icons[0].Path, "invalid image");
+        check(Rejects(() => sender.Export(edited, destination, true)) && File.ReadAllBytes(destination).SequenceEqual(complete), "Failed export preserves a previous valid ZIP");
+        string bad = Path.Combine(state, "bad description.zip");
+        using (ZipArchive zip = ZipFile.Open(bad, ZipArchiveMode.Create)) {
+            ZipFileExtensions.CreateEntryFromFile(zip, png, "PhotoCraft.png");
+            using (StreamWriter writer = new StreamWriter(zip.CreateEntry("bettericon-pack.json").Open())) writer.Write("{\"Format\":\"BetterIcon.IconPack\",\"Version\":99,\"Name\":\"Bad\"}");
+        }
+        byte[] before = File.ReadAllBytes(Path.Combine(recipient.Root, "library.json"));
+        check(Rejects(() => recipient.Import(bad)) && File.ReadAllBytes(Path.Combine(recipient.Root, "library.json")).SequenceEqual(before), "Unrecognized share metadata is rejected without changing the recipient library");
+        string manifest = Path.Combine(recipient.Root, "library.json");
+        File.WriteAllText(manifest, File.ReadAllText(manifest).Replace("\"Author\":\"OmegaDarling\",", ""));
+        check(new PackLibrary(recipient.Root).VisibleThemes(new ThemeEntry[0]).Length == 1, "Existing personal libraries without author fields remain readable");
     }
 }

@@ -11,6 +11,8 @@ Icon installers for [Artcraft](https://getartcraft.com/) applications. The Linux
 - **Clear Status Log:** Visual table showing which apps are ready, missing icons, or not installed.
 - **Windows Support:** A tray popup for installed apps, PNG/ICO theme previews, separate current-user/all-users scopes, and original-shortcut restoration.
 
+The themes in the legacy `Craft-Icons-Zach` folder are by **OmegaDarling**. Their public credit is separate from the folder name so existing theme IDs remain compatible.
+
 ## Supported Applications
 
 Supports all official Artcraft Crafting Apps.
@@ -31,6 +33,7 @@ Supports all official Artcraft Crafting Apps.
 - Open `Windows/Start-Tray.cmd` in a source checkout, or `Windows/BetterIcon-Tray.exe` in a locally built Windows ZIP.
 - Click the tray icon to open the launcher above the system tray; click it again to close the popup. The **Launcher** tab shows app icons and names; type to narrow the list, then press Enter or double-click to launch. The **Settings** tab manages icon packs, custom artwork, apply/restore, and the configurable global hotkey.
 - **Restore original icons** restores the saved shortcuts. Shared shortcuts request administrator access only when applying or restoring.
+- Share personal packs with **Settings > Export ZIP**; recipients use **Import ZIP**. Names, author credits, and artwork are preserved.
 - The command-line installers remain available as `Windows/Install-Windows.cmd` and `Windows/Restore-Windows.cmd`.
 - Windows PowerShell and .NET Framework are included with supported Windows installations; no Python or downloaded modules are required.
 - For supported themes, backups, and taskbar limitations, read [WINDOWS.md](Windows/WINDOWS.md).

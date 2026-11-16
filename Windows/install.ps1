@@ -24,7 +24,7 @@ try {
     Import-Module (Join-Path $PSScriptRoot 'BetterIcon.Windows.psm1') -Force
     Write-Host "BetterIcon-Craft Apps - Windows $(Get-BetterIconVersion)"
     if ($ListThemes) {
-        Get-BetterIconTheme | Select-Object Id,IconCount,Status | Format-Table -AutoSize | Out-Host
+        Get-BetterIconTheme | Select-Object Id,Author,IconCount,Status | Format-Table -AutoSize | Out-Host
         return
     }
     if (-not $Theme) {

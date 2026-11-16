@@ -1,7 +1,7 @@
-# BetterIcon-Craft Apps Windows support, version 1.4.0.
+# BetterIcon-Craft Apps Windows support, version 1.5.0.
 # No network access, executable patching, registry changes, or Explorer restart.
 Set-StrictMode -Version Latest
-$script:Version = '1.4.0'
+$script:Version = '1.5.0'
 $script:RepositoryRoot = Split-Path -Parent $PSScriptRoot
 $script:Applications = @('PhotoCraft','VectorCraft','FilmCraft','LightCraft','PdfCraft',
     'EffectCraft','AniCraft','DesignCraft','FigCraft','TextureCraft','MaterialCraft',
@@ -129,7 +129,9 @@ function Get-BetterIconTheme {
             # Ignore non-artwork folders, including future tests or documentation.
             if (-not $icons.Count) { continue }
             $name = if ($theme.FullName -eq $pack.FullName) { 'Root' } else { $theme.Name }
-            [pscustomobject]@{ Id = "$($pack.Name)/$name"; Pack = $pack.Name; Name = $name; Path = $theme.FullName;
+            # Keep stable folder IDs for saved selections and restoration; credit the public author separately.
+            $author = if ($pack.Name -eq 'Craft-Icons-Zach') { 'OmegaDarling' } else { $pack.Name -replace '^Craft-Icons-','' }
+            [pscustomobject]@{ Id = "$($pack.Name)/$name"; Pack = $pack.Name; Author = $author; Name = $name; Path = $theme.FullName;
                 IconCount = @($icons | ForEach-Object { Get-AppName $_.BaseName -Icon } | Sort-Object -Unique).Count; Status = 'Available' }
         }
     }

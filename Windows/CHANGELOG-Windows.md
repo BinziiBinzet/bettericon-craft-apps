@@ -1,5 +1,12 @@
 # Windows installer changelog
 
+## 1.5.0 - 2026-11-16
+
+- Export personal icon packs as ZIPs containing portable name/author metadata and original PNG/ICO artwork. Import keeps those details across machines and ZIP renames; existing image-only packs still work.
+- Add an editable public author field to the pack editor. Credit OmegaDarling for the seven remaining themes in the legacy Craft-Icons-Zach folder while retaining stable theme IDs.
+- Give the selected tab a solid blue background and bold white label, with a darker unselected tab and Windows high-contrast support.
+- Retire Oil Slick: remove its 19 icons and overview sheet from current repository artwork. The bundled catalog and Windows ZIP now contain 13 themes and 218 icons.
+
 ## 1.4.0 - 2026-11-16
 
 - Separate the popup into Launcher and Settings tabs. Keep Launcher limited to app icons and names, with direct typing, arrow navigation, and Enter to launch.

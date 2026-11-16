@@ -1,5 +1,13 @@
 # Windows validation
 
+## 1.5.0 pack sharing, credits, and retirement - 2026-11-16
+
+All 90 local native checks passed, including 14 additional catalog/author/sharing checks. Export/import into independent libraries preserves Unicode pack names, public author credits, and both PNG and ICO bytes. Renaming the ZIP or importing its extracted folder preserves metadata. Checks also cover explicit overwrite, failed export preserving an existing ZIP, stale selection rejection, unsupported metadata rejection without changing the library, and older personal libraries without author fields. The catalog contains 13 themes and 218 icons; the seven themes using legacy Craft-Icons-Zach IDs are credited to OmegaDarling, and Oil Slick is absent.
+
+The 12 JSON bridge checks and all 104 installer checks passed locally on both Windows PowerShell 5.1 and PowerShell 7, including copies of 12 installed shortcuts (10 MSI-advertised). Installed originals remained unchanged. Oil Slick's 19 source icons and overview sheet were removed; no Linux installer code changed.
+
+Native UI inspection confirmed solid blue selected tabs with white bold text, a darker unselected tab, and OmegaDarling in the built-in pack selector. Customize prefilled OmegaDarling in the editable author field. Saving a custom pack enabled Export ZIP; saving through the Windows dialog produced a valid ZIP with 19 images and the expected name/author metadata. Tests use a separate fixture library and disposable launcher shortcuts, with the default global hotkey disabled.
+
 ## 1.4.0 tabs and personal packs - 2026-11-16
 
 All 76 local native checks passed: the prior startup, tray, hotkey, filtering, and worker coverage plus 24 checks for tabs and pack management. These cover an app-only Launcher, Settings keyboard isolation, creating and reopening personal packs, immutable edits, applying previously reviewed artwork, removal without breaking applied icons, byte-exact shortcut restoration, hiding/restoring built-ins, folder/ZIP imports, duplicate names, ambiguous files, unsafe ZIP paths, invalid images, unsupported apps, removed-pack edits, and oversized PNG dimensions. The 12 existing JSON bridge checks also passed.
@@ -70,6 +78,6 @@ The 1.0 validation also checked themed icons in Explorer and launched a themed M
 - Multi-monitor and alternate-taskbar placement has automated geometry coverage; physical clicks and per-monitor DPI transitions across different hardware configurations still need broader user testing.
 - The Linux scripts and shared artwork are unchanged. No Linux runtime test was performed for this Windows-only addition.
 
-The Windows ZIP is produced locally by `Build-WindowsPackage.ps1`. It includes the native executable, Windows source, documentation, license, tests, and 237 ICO assets generated from the current shared artwork. PNG/ICNS artwork and Linux scripts remain in the full repository and are omitted from this Windows package. The build emits a SHA-256 sidecar for the ZIP.
+The Windows ZIP is produced locally by `Build-WindowsPackage.ps1`. It includes the native executable, Windows source, documentation, license, tests, and 218 ICO assets generated from the current shared artwork. PNG/ICNS artwork and Linux scripts remain in the full repository and are omitted from this Windows package. The build emits a SHA-256 sidecar for the ZIP.
 
 The extracted package also passed the 104 installer, 12 bridge, and 15 native checks. Its 23 source/documentation files matched the checkout byte-for-byte.

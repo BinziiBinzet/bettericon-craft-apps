@@ -22,7 +22,7 @@ try {
     switch ($request.Action) {
         'Catalog' {
             $themes = @(Get-BetterIconTheme | ForEach-Object {
-                [pscustomobject]@{ Id = $_.Id; Name = $_.Name; Pack = $_.Pack; IconCount = $_.IconCount;
+                [pscustomobject]@{ Id = $_.Id; Name = $_.Name; Pack = $_.Pack; Author = $_.Author; IconCount = $_.IconCount;
                     Icons = @(Get-BetterIconThemeIcon -Theme $_.Id) }
             })
             $reply.Catalog = @{ Version = Get-BetterIconVersion; Themes = $themes;

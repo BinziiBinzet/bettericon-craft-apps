@@ -31,11 +31,17 @@ namespace BetterIcon.Tray
         public string Id { get; set; }
         public string Name { get; set; }
         public string Pack { get; set; }
+        public string Author { get; set; }
         public int IconCount { get; set; }
         public bool Managed { get; set; }
         public string LibraryId { get; set; }
         public ThemeIcon[] Icons { get; set; }
-        public override string ToString() { return Managed ? Name + " (personal)" : Name == "Root" ? Pack.Replace("Craft-Icons-", "") : Name + " / " + Pack.Replace("Craft-Icons-", ""); }
+        public override string ToString()
+        {
+            string author = Author ?? (Managed ? "" : (Pack ?? "").Replace("Craft-Icons-", ""));
+            string title = Name == "Root" && !Managed ? author : Name + (String.IsNullOrWhiteSpace(author) ? "" : " / " + author);
+            return title + (Managed ? " (personal)" : "");
+        }
     }
     public sealed class Catalog { public string Version { get; set; } public AppEntry[] Apps { get; set; } public ThemeEntry[] Themes { get; set; } }
     public sealed class PlanItem
@@ -263,6 +269,7 @@ namespace BetterIcon.Tray
         void BuildWindow(bool testing)
         {
             pages.Dock = DockStyle.Fill; pages.SizeMode = TabSizeMode.Fixed; pages.ItemSize = new Size(420, 38);
+            pages.DrawMode = TabDrawMode.OwnerDrawFixed; pages.DrawItem += DrawPageTab;
             // Updating ItemSize from TabControl.SizeChanged re-enters native layout.
             // Resize only once layout settles, after showing or a user resize.
             ResizeEnd += delegate { SizeTabs(); };
@@ -280,7 +287,7 @@ namespace BetterIcon.Tray
             filterHint.TextAlign = ContentAlignment.MiddleLeft;
             launcherPage.Controls.Add(apps); launcherPage.Controls.Add(filterHint);
             BuildSettingsPage(testing);
-            pages.SelectedIndexChanged += delegate { if (pages.SelectedTab == launcherPage) apps.Focus(); };
+            pages.SelectedIndexChanged += delegate { pages.Invalidate(); if (pages.SelectedTab == launcherPage) apps.Focus(); };
         }
         string Scope { get { return scopes.SelectedIndex == 1 ? "AllUsers" : "CurrentUser"; } }
         ThemeEntry SelectedTheme { get { return themes.SelectedItem as ThemeEntry; } }
