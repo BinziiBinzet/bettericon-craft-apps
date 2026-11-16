@@ -38,7 +38,7 @@ APP_LIST=(
     "deckcraft|DeckCraft"
     "cadcraft|CADCraft"
     "gridcraft|GridCraft"
-    "craftanything|CraftAnything"
+    "craftanything|Craft Anything"
     "solidcraft|SolidCraft"
 )
 
