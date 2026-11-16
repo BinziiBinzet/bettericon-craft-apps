@@ -1,13 +1,14 @@
-# BetterIcon-Craft Apps Windows support, version 1.0.0.
+# BetterIcon-Craft Apps Windows support, version 1.1.0.
 # No network access, executable patching, registry changes, or Explorer restart.
 Set-StrictMode -Version Latest
-$script:Version = '1.0.0'
-$script:RepositoryRoot = $PSScriptRoot
+$script:Version = '1.1.0'
+$script:RepositoryRoot = Split-Path -Parent $PSScriptRoot
 $script:Applications = @('PhotoCraft','VectorCraft','FilmCraft','LightCraft','PdfCraft',
     'EffectCraft','AniCraft','DesignCraft','FigCraft','TextureCraft','MaterialCraft',
     'SoundCraft','WordCraft','DeckCraft','CADCraft','GridCraft','CraftAnything','SolidCraft','MailCraft')
 
 function Get-BetterIconVersion { $script:Version }
+function Get-BetterIconRepository { $script:RepositoryRoot }
 
 function Initialize-BetterIcon {
     if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { throw 'This installer requires Windows.' }
@@ -18,7 +19,9 @@ function Initialize-BetterIcon {
 
 function Get-FullPath([string]$Path) {
     if ([string]::IsNullOrWhiteSpace($Path)) { throw 'An empty path is not allowed.' }
-    [IO.Path]::GetFullPath($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)).TrimEnd('\')
+    $full = [IO.Path]::GetFullPath($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path))
+    if ($full -eq [IO.Path]::GetPathRoot($full)) { return $full }
+    $full.TrimEnd('\')
 }
 
 function Assert-RegularPath([string]$Path) {
@@ -121,12 +124,13 @@ function Get-BetterIconTheme {
         if (@(Get-ChildItem -LiteralPath $pack.FullName -File | Where-Object { $_.Extension -in '.ico','.png','.icns','.svg' -and (Get-AppName $_.BaseName -Icon) }).Count) { $themes = @($pack) + $themes }
         foreach ($theme in $themes) {
             if (Test-RedirectedItem $theme) { continue }
-            $icons = @(Get-RegularFiles $theme.FullName '.ico')
+            $icons = @(Get-RegularFiles $theme.FullName '.ico') + @(Get-RegularFiles $theme.FullName '.png')
+            $icons = @($icons | Where-Object { Get-AppName $_.BaseName -Icon })
             # Ignore non-artwork folders, including future tests or documentation.
-            if (-not $icons.Count -and -not @(Get-RegularFiles $theme.FullName '.png').Count) { continue }
+            if (-not $icons.Count) { continue }
             $name = if ($theme.FullName -eq $pack.FullName) { 'Root' } else { $theme.Name }
             [pscustomobject]@{ Id = "$($pack.Name)/$name"; Pack = $pack.Name; Name = $name; Path = $theme.FullName;
-                IconCount = $icons.Count; Status = $(if ($icons.Count) { 'Available' } else { 'Needs ICO conversion' }) }
+                IconCount = @($icons | ForEach-Object { Get-AppName $_.BaseName -Icon } | Sort-Object -Unique).Count; Status = 'Available' }
         }
     }
 }
@@ -134,20 +138,136 @@ function Get-BetterIconTheme {
 function Resolve-Theme([string]$Theme, [string]$Repository) {
     $matches = @(Get-BetterIconTheme -Repository $Repository | Where-Object { $_.Id -ieq $Theme -or $_.Name -ieq $Theme })
     if ($matches.Count -ne 1) { throw "Theme '$Theme' was not found or is ambiguous. Use -ListThemes and a full Pack/Theme ID." }
-    if (-not $matches[0].IconCount) { throw "Theme '$Theme' needs ICO conversion. Choose an Available theme from -ListThemes." }
     $matches[0]
 }
 
 function Get-IconMap($Theme) {
     $map = @{}
-    foreach ($icon in @(Get-RegularFiles $Theme.Path '.ico' | Sort-Object FullName)) {
+    $files = @(Get-RegularFiles $Theme.Path '.ico') + @(Get-RegularFiles $Theme.Path '.png')
+    foreach ($icon in @($files | Sort-Object FullName)) {
         $app = Get-AppName $icon.BaseName -Icon
         if ($app) {
             if (-not $map.ContainsKey($app)) { $map[$app] = @() }
             $map[$app] = @($map[$app]) + $icon.FullName
         }
     }
+    foreach ($app in @($map.Keys)) {
+        $native = @($map[$app] | Where-Object { [IO.Path]::GetExtension($_) -ieq '.ico' })
+        if ($native.Count) { $map[$app] = $native }
+    }
     return $map
+}
+
+function Get-BetterIconThemeIcon {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Theme, [string]$Repository = $script:RepositoryRoot)
+    $selected = Resolve-Theme $Theme $Repository
+    $map = Get-IconMap $selected
+    foreach ($app in @($map.Keys | Sort-Object)) {
+        if (@($map[$app]).Count -eq 1) { [pscustomobject]@{ Application = $app; Path = $map[$app][0] } }
+    }
+}
+
+function Get-BetterIconBytes {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path)
+    Add-Type -AssemblyName System.Drawing
+    if ([IO.Path]::GetExtension($Path) -ieq '.ico') {
+        $check = [Drawing.Icon]::new($Path)
+        $check.Dispose()
+        return ,([IO.File]::ReadAllBytes($Path))
+    }
+    if ([IO.Path]::GetExtension($Path) -ine '.png') { throw 'Only ICO and PNG artwork is supported.' }
+    $source = [Drawing.Image]::FromFile($Path)
+    $frames = New-Object 'Collections.Generic.List[byte[]]'
+    $sizes = @(16,24,32,48,64,128,256)
+    try {
+        foreach ($size in $sizes) {
+            $bitmap = [Drawing.Bitmap]::new($size, $size, [Drawing.Imaging.PixelFormat]::Format32bppArgb)
+            $graphics = [Drawing.Graphics]::FromImage($bitmap)
+            $stream = [IO.MemoryStream]::new()
+            $attributes = [Drawing.Imaging.ImageAttributes]::new()
+            try {
+                $graphics.Clear([Drawing.Color]::Transparent)
+                $graphics.CompositingMode = [Drawing.Drawing2D.CompositingMode]::SourceCopy
+                $graphics.InterpolationMode = [Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+                $graphics.PixelOffsetMode = [Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+                $attributes.SetWrapMode([Drawing.Drawing2D.WrapMode]::TileFlipXY)
+                $scale = [Math]::Min($size / $source.Width, $size / $source.Height)
+                $width = [Math]::Max(1, [int][Math]::Round($source.Width * $scale))
+                $height = [Math]::Max(1, [int][Math]::Round($source.Height * $scale))
+                $rect = [Drawing.Rectangle]::new([int](($size-$width)/2), [int](($size-$height)/2), $width, $height)
+                $graphics.DrawImage($source, $rect, 0, 0, $source.Width, $source.Height, [Drawing.GraphicsUnit]::Pixel, $attributes)
+                # Uncompressed 32-bit DIB frames work with both Explorer and the
+                # .NET Framework tray UI, including very small/flat-color artwork.
+                $dib = [IO.BinaryWriter]::new($stream)
+                $maskStride = [int]([Math]::Ceiling($size / 32.0) * 4)
+                $dib.Write([uint32]40); $dib.Write([int32]$size); $dib.Write([int32]($size * 2))
+                $dib.Write([uint16]1); $dib.Write([uint16]32); $dib.Write([uint32]0)
+                $dib.Write([uint32]($size * $size * 4 + $maskStride * $size))
+                $dib.Write([int32]0); $dib.Write([int32]0); $dib.Write([uint32]0); $dib.Write([uint32]0)
+                $bits = $bitmap.LockBits([Drawing.Rectangle]::new(0,0,$size,$size), [Drawing.Imaging.ImageLockMode]::ReadOnly, [Drawing.Imaging.PixelFormat]::Format32bppArgb)
+                try {
+                    $row = [byte[]]::new($size * 4)
+                    for ($y=$size-1; $y -ge 0; $y--) {
+                        [Runtime.InteropServices.Marshal]::Copy([IntPtr]::Add($bits.Scan0,$y*$bits.Stride),$row,0,$row.Length)
+                        $dib.Write($row)
+                    }
+                }
+                finally { $bitmap.UnlockBits($bits) }
+                $dib.Write([byte[]]::new($maskStride * $size)); $dib.Flush()
+                $frames.Add($stream.ToArray())
+                $dib.Dispose()
+            }
+            finally { $attributes.Dispose(); $stream.Dispose(); $graphics.Dispose(); $bitmap.Dispose() }
+        }
+    }
+    finally { $source.Dispose() }
+    $output = [IO.MemoryStream]::new()
+    $writer = [IO.BinaryWriter]::new($output)
+    try {
+        $writer.Write([uint16]0); $writer.Write([uint16]1); $writer.Write([uint16]$sizes.Count)
+        $offset = 6 + 16 * $sizes.Count
+        for ($i=0; $i -lt $sizes.Count; $i++) {
+            $dimension = if ($sizes[$i] -eq 256) { 0 } else { $sizes[$i] }
+            $writer.Write([byte]$dimension); $writer.Write([byte]$dimension)
+            $writer.Write([byte]0); $writer.Write([byte]0)
+            $writer.Write([uint16]1); $writer.Write([uint16]32)
+            $writer.Write([uint32]$frames[$i].Length); $writer.Write([uint32]$offset)
+            $offset += $frames[$i].Length
+        }
+        foreach ($frame in $frames) { $writer.Write($frame) }
+        $writer.Flush()
+        return ,($output.ToArray())
+    }
+    finally { $writer.Dispose(); $output.Dispose() }
+}
+
+function Get-BetterIconApplication {
+    [CmdletBinding()]
+    param([string[]]$ShortcutDirectory)
+    Initialize-BetterIcon
+    $roots = if ($ShortcutDirectory) { $ShortcutDirectory } else { @(Get-ShortcutRoots 'CurrentUser') + @(Get-ShortcutRoots 'AllUsers') }
+    $seen = @{}
+    foreach ($root in $roots) {
+        foreach ($file in @(Get-RegularFiles (Get-FullPath $root) '.lnk' | Sort-Object FullName)) {
+            $app = Get-AppName $file.BaseName
+            if (-not $app -and $file.BaseName -ieq 'ArtCraft Launcher') { $app = 'ArtCraftLauncher' }
+            if (-not $app -or $seen.ContainsKey($file.FullName)) { continue }
+            $seen[$file.FullName] = $true
+            try {
+                $info = [BetterIcon.Windows.ShellLink]::Read($file.FullName)
+                # Never launch the MSI icon-resource target. The original .lnk is
+                # the launch contract, including custom launch arguments.
+                $target = [Environment]::ExpandEnvironmentVariables($info.LaunchTarget)
+                if ($info.InstallerIdentity) { $target = $target -replace '^3:', '' }
+                if (-not $target -or -not (Test-Path -LiteralPath $target -PathType Leaf)) { continue }
+                [pscustomobject]@{ Application = $app; Name = $file.BaseName; Shortcut = $file.FullName;
+                    Scope = $(if (Test-CommonShortcut $file.FullName) { 'AllUsers' } else { 'CurrentUser' }); IconPath = $info.IconPath }
+            }
+            catch { Write-Verbose "Cannot inspect $($file.FullName): $($_.Exception.Message)" }
+        }
+    }
 }
 
 function Get-BetterIconPlan {
@@ -170,8 +290,8 @@ function Get-BetterIconPlan {
             if (-not $app) { continue }
             $status = 'Ready'; $icon = ''; $reason = ''; $digest = ''
             if ($Scope -eq 'CurrentUser' -and (Test-CommonShortcut $path)) { $status = 'Skipped'; $reason = 'Use -Scope AllUsers for shared shortcuts.' }
-            elseif (-not $icons.ContainsKey($app)) { $status = 'Missing icon'; $reason = "No ICO found for $app." }
-            elseif (@($icons[$app]).Count -ne 1) { $status = 'Ambiguous icon'; $reason = "Multiple ICO files match $app." }
+            elseif (-not $icons.ContainsKey($app)) { $status = 'Missing icon'; $reason = "No ICO or PNG found for $app." }
+            elseif (@($icons[$app]).Count -ne 1) { $status = 'Ambiguous icon'; $reason = "Multiple artwork files match $app." }
             else {
                 $icon = $icons[$app][0]
                 try {
@@ -291,14 +411,15 @@ function Install-BetterIconTheme {
                 $entry = @($state.Entries | Where-Object Id -ceq (Get-PathId $item.Shortcut)) | Select-Object -First 1
                 if ($entry -and -not (Test-OwnedHash $entry $currentHash)) { throw 'Shortcut changed after installation. Left untouched; original backup retained.' }
                 if ($entry) { $null = Get-BackupPath $entry $directory }
-                $iconDigest = Get-FileDigest $item.Icon
-                $iconObject = [Drawing.Icon]::new($item.Icon)
-                $iconObject.Dispose()
+                $iconBytes = Get-BetterIconBytes $item.Icon
+                $sha = [Security.Cryptography.SHA256]::Create()
+                try { $iconDigest = ([BitConverter]::ToString($sha.ComputeHash($iconBytes))).Replace('-','').ToLowerInvariant() }
+                finally { $sha.Dispose() }
                 $slug = ($item.Theme + '-' + $item.Application).ToLowerInvariant() -replace '[^a-z0-9_-]', '-'
                 $iconFile = $slug + '-' + $iconDigest.Substring(0,16) + '.ico'
                 $installedIcon = Join-Path $iconDirectory $iconFile
                 Assert-RegularPath $installedIcon
-                if (-not (Test-Path -LiteralPath $installedIcon)) { [IO.File]::Copy($item.Icon, $installedIcon, $false) }
+                if (-not (Test-Path -LiteralPath $installedIcon)) { [IO.File]::WriteAllBytes($installedIcon, $iconBytes) }
                 if ((Get-FileDigest $installedIcon) -cne $iconDigest) { throw 'Installed icon failed integrity verification.' }
                 $before = [BetterIcon.Windows.ShellLink]::Read($item.Shortcut)
                 if ($entry -and $before.IconPath -ieq $installedIcon -and $before.IconIndex -eq 0) {
@@ -344,7 +465,7 @@ function Install-BetterIconTheme {
 
 function Restore-BetterIcon {
     [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium')]
-    param([ValidateSet('CurrentUser','AllUsers')][string]$Scope = 'CurrentUser', [string]$StateDirectory)
+    param([ValidateSet('CurrentUser','AllUsers')][string]$Scope = 'CurrentUser', [string]$StateDirectory, [string]$ExpectedStateHash)
     Initialize-BetterIcon
     $directory = if ($StateDirectory) { Get-FullPath $StateDirectory } else { Get-BetterIconStateDirectory $Scope }
     Assert-RegularPath $directory
@@ -356,6 +477,11 @@ function Restore-BetterIcon {
     }
     $lock = Open-StateLock $directory $Scope
     try {
+        if ($ExpectedStateHash) {
+            $manifestPath = Join-Path $directory 'manifest.json'
+            $actualHash = if (Test-Path -LiteralPath $manifestPath) { Get-FileDigest $manifestPath } else { 'missing' }
+            if ($actualHash -ine $ExpectedStateHash) { throw 'The installation changed after preview. Review the restoration again.' }
+        }
         $state = Read-State $directory $Scope
         foreach ($entry in @($state.Entries)) {
             $temporary = $null
@@ -387,4 +513,4 @@ function Restore-BetterIcon {
     finally { $lock.Dispose() }
 }
 
-Export-ModuleMember -Function Get-BetterIconVersion,Get-BetterIconStateDirectory,Get-BetterIconTheme,Get-BetterIconPlan,Install-BetterIconTheme,Restore-BetterIcon
+Export-ModuleMember -Function Get-BetterIconVersion,Get-BetterIconRepository,Get-BetterIconStateDirectory,Get-BetterIconTheme,Get-BetterIconThemeIcon,Get-BetterIconBytes,Get-BetterIconApplication,Get-BetterIconPlan,Install-BetterIconTheme,Restore-BetterIcon

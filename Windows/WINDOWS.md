@@ -1,24 +1,30 @@
 # BetterIcon-Craft Apps for Windows
 
-Windows installer version **1.0.0**. Uses the existing icon library alongside the Linux scripts. No changes to Craft executables, app settings, file associations, or the registry.
+Windows version **1.1.0** adds a native tray launcher alongside the existing icon installer. It shares the repository's artwork and leaves Craft executables, app settings, file associations, and the registry unchanged.
 
 ## Start here
 
-1. Download or clone the repository and extract it to a folder. Keep the Windows scripts, helper files, and icon folders together.
-2. Double-click **Install-Windows.cmd**. Choose **Current user** for your own Desktop and Start-menu shortcuts, then choose a theme and review the proposed changes.
-3. For apps installed for everyone, right-click **Install-Windows.cmd**, choose **Run as administrator**, and select **All users**. This scope changes the shared Desktop and Start-menu shortcuts only.
-4. To undo, run **Restore-Windows.cmd** with the same scope. All-users restoration also requires administrator access.
+1. Download or clone the repository and extract it to a folder. Keep `Windows/` beside the `Craft-Icons-*` artwork folders.
+2. In a source checkout, double-click **Windows/Start-Tray.cmd**. It compiles the launcher locally on first use. In a built Windows ZIP, open **Windows/BetterIcon-Tray.exe** directly.
+3. Click its notification-area icon to open the popup above the system tray. Click the icon again to hide it. Escape, closing the window, or clicking elsewhere also hides it. The popup stays inside the clicked monitor's working area.
+4. Double-click an app to launch it, or select it and choose **Open selected**. The tray's right-click menu also lists installed apps.
+5. Choose an icon theme to preview it. Select **My Desktop and Start menu** or **Shared shortcuts (administrator)**, then choose **Apply theme** and review the exact shortcuts. Shared writes request elevation; normal app launches remain unelevated.
+6. To undo, choose **Restore original icons** with the same scope and review the restoration.
+
+Choose **Exit** or use **Windows/Stop-Tray.cmd** to stop this user's launcher. Starting it again reopens the existing instance. `Start-Tray.ps1 -TrayOnly` starts without opening the popup. No login/startup entry is created.
+
+The tray finds existing shortcuts in both your own and the shared Desktop/Start menu. It includes the ArtCraft Launcher and custom Craft launchers, and skips shortcuts whose installed target is missing. Portable apps without these shortcuts need a shortcut added to one of those locations, followed by **Refresh apps**. Duplicate launch variants are shown separately so their arguments are preserved.
 
 The two scopes are independent; apply both separately if you have both kinds of shortcut. No shortcuts are created for missing apps. Launchers whose names start with a supported Craft app name, such as `PhotoCraft with custom launcher`, retain their launch configuration. Uninstall/help shortcuts are excluded.
 
-The launchers use the Windows PowerShell included with Windows. Their execution-policy override applies only to that process; it does not change the machine's policy. Organizational policies may still prevent execution. PowerShell 7 is also supported. No internet connection or package installation is needed.
+The launcher uses Windows PowerShell 5.1 and .NET Framework 4.8 on Windows 10/11. Source builds use the local .NET Framework compiler. Their execution-policy override applies only to that process; it does not change the machine's policy. Organizational policies may still prevent execution. The command-line installer also supports PowerShell 7. No internet connection or package installation is needed.
 
 ## Command-line use
 
-Open PowerShell in the extracted folder. If local script policy prevents execution, use `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1` with the same options, or use the CMD launcher above.
+Open PowerShell in the **Windows** subfolder. `Install-Windows.cmd` and `Restore-Windows.cmd` retain the interactive command-line workflow. Shared shortcuts require running those installers as administrator. If local script policy prevents execution, use `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1` with the same options.
 
 ```powershell
-# List themes, including those that still need conversion.
+# List available themes.
 .\install.ps1 -ListThemes
 
 # Preview without creating backups, installing files, or changing shortcuts.
@@ -43,11 +49,11 @@ Use reasonably short folder paths. This version requires shortcut and installed 
 
 ## Themes and matching
 
-The first release supports the eight themes in **Craft-Icons-Zach**: Cardboard, Cardstock, HyGel, Irridiant, KnivesAndFeathers, NegativeSpace, OilSlick, and Satin. Each contains 19 existing Windows ICO files, including MailCraft and Craft Anything. Artwork is reused without alteration.
+All **14 current themes** are available: eight in **Craft-Icons-Zach**, five in **Craft-Icons-Komplett**, and the root theme in **Craft-Icons-circleb**. The current collection supplies **237 app icons** across these themes.
 
-The five **Craft-Icons-Komplett** themes currently contain PNG/ICNS files and are listed as **Needs ICO conversion**. This version does not convert them or choose a replacement silently. Missing, duplicate, unreadable, and invalid icons are reported.
+PNG artwork is converted locally to transparent Windows ICOs containing 16, 24, 32, 48, 64, 128, and 256-pixel frames. Aspect ratio is preserved. Source images are never rewritten. An existing ICO is preferred over a PNG for the same app; duplicate ICOs or duplicate PNGs are reported as ambiguous. ICNS/SVG-only artwork is not selectable.
 
-Theme discovery understands the existing nested `ico/` folders. New ICO themes should follow the same layout and app names. A full `Pack/Theme` ID disambiguates identical theme names in different packs. Pack overview images are not selectable themes.
+Theme discovery understands flat PNG folders, root-level pack artwork, and nested `ico/` folders. Use recognized app names such as `PhotoCraft.png`. A full `Pack/Theme` ID disambiguates identical theme names; the circleb theme uses `Craft-Icons-circleb/Root`. Overview sheets are ignored. Missing artwork is skipped when applying; the tray uses its own icon as a preview fallback, including for ArtCraft Launcher.
 
 ## Backups and restoration
 
@@ -56,7 +62,7 @@ Theme discovery understands the existing nested `ico/` folders. New ICO themes s
 | Current user | `%LOCALAPPDATA%\BetterIcon-Craft Apps` |
 | All users | `%ProgramData%\BetterIcon-Craft Apps` |
 
-Each directory contains `manifest.json`, `backups/`, `icons/`, and a lock file. Installed icons use stable names incorporating the theme, app, and content hash. Moving or deleting the downloaded repository after installation does not break those references.
+Each installation directory contains `manifest.json`, `backups/`, `icons/`, and a lock file. The tray also remembers the selected theme and scope in the current-user `tray-preferences.json`. Installed icons use stable names incorporating the theme, app, and content hash. Moving or deleting the downloaded repository after installation does not break installed icon references; the tray still needs its helper and artwork folders to run. Existing version 1.0 backups remain usable.
 
 The installer saves the complete original `.lnk` file before replacing it. Theme switching keeps that original backup. It verifies launch information before applying a staged change and uses an on-disk journal to support recovery if interrupted. For MSI-advertised shortcuts, it checks the installer identity, installed component path, and extra data; the shell's displayed target can be an icon resource rather than the executable.
 
@@ -85,7 +91,12 @@ pwsh.exe -NoProfile -File .\Test-Windows.ps1
 # Also test copies of installed Craft shortcuts, leaving originals unchanged.
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Test-Windows.ps1 -TestInstalledCopies
 
-# Build an ICO-only Windows ZIP on this machine.
+# Exercise the JSON bridge, then native popup placement and tray events.
+.\Test-Tray.ps1 -ArtifactDirectory 'D:\tmp'
+.\Test-TrayUI.ps1 -ArtifactDirectory 'D:\tmp'
+
+# Build a native executable, or a ZIP with executable and converted ICOs.
+.\Build-Tray.ps1 -OutputDirectory 'C:\path\to\local-output'
 .\Build-WindowsPackage.ps1 -OutputDirectory 'C:\path\to\local-output'
 ```
 
@@ -93,7 +104,11 @@ Tests retain temporary fixtures and a JSON receipt, whose location is printed at
 
 For cross-drive testing, add `-ArtifactDirectory 'D:\tmp'` (or another short local path). Each run creates its own unique subdirectory.
 
-The Windows additions use root-level files so the existing Linux installer does not mistake a new source/test directory for an icon pack. The Linux scripts and original assets are unchanged. Build and validate locally or on user-owned machines; no GitHub-hosted workflow is included.
+Windows code stays in the maintainer's `Windows/` folder. The Linux scripts and shared source assets are unchanged. Build and validate locally or on user-owned machines; no GitHub-hosted workflow is included.
+
+The tray UI talks to `BetterIcon.TrayWorker.ps1` through JSON files with a fixed set of actions. Applying revalidates the preview; restoration verifies that the installation manifest has not changed since review. The existing module owns shortcut modification and backup/restore safety.
+
+For UI testing, the executable accepts `--config` with an absolute JSON file containing both `ShortcutDirectory` (an array of existing absolute folders) and `StateDirectory`. Fixture mode is labeled in the UI and writes `tray-events.jsonl` to that isolated state directory. An optional `KeepOpenForAutomation: true` disables focus-loss dismissal only in fixture mode, so automation tools that take focus between calls can inspect dialogs. Production startup uses neither fixture mode nor that option. `--source-folder` locates helper scripts when running a development executable from an external build directory.
 
 See [Windows changelog](CHANGELOG-Windows.md) and [validation record](WINDOWS-VALIDATION.md).
 

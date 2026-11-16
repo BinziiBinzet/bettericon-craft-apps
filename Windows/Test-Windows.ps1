@@ -50,10 +50,9 @@ function New-TestLink([string]$Directory, [string]$Name) {
 
 try {
     $themes = @(Get-BetterIconTheme)
-    Assert (@($themes | Where-Object Status -eq 'Available').Count -eq 8) 'Eight existing ICO themes discovered'
-    $expectedPngThemes = if (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'Craft-Icons-Komplett')) { 5 } else { 0 }
-    Assert (@($themes | Where-Object Status -eq 'Needs ICO conversion').Count -eq $expectedPngThemes) 'PNG-only themes clearly reported when bundled'
-    Assert (@($themes | Where-Object { $_.Name -eq 'Root' }).Count -eq 0) 'Pack preview sheets are not mistaken for themes'
+    Assert (@($themes | Where-Object Status -eq 'Available').Count -eq 14) 'All fourteen current ICO or PNG themes discovered from the repository parent'
+    Assert (@($themes | Where-Object Pack -eq 'Craft-Icons-Zach').Count -eq 8) 'Eight Zach themes remain available after the upstream PNG layout change'
+    Assert (@($themes | Where-Object { $_.Name -eq 'Root' -and $_.Pack -ne 'Craft-Icons-circleb' }).Count -eq 0) 'Pack preview sheets are not mistaken for themes'
     $links = Join-Path $testRoot ('links [sample] ' + [char]0x00FC)
     $state = Join-Path $testRoot 'state'
     $paths = @(
@@ -69,6 +68,14 @@ try {
     $originals = @{}; $launch = @{}
     $plan = @(Get-BetterIconPlan -Theme Cardboard -ShortcutDirectory $links)
     Assert ($plan.Count -eq 5 -and @($plan | Where-Object Status -eq 'Ready').Count -eq 5) 'Aliases and custom launcher names match; unrelated links excluded'
+    $discovered = @(Get-BetterIconApplication -ShortcutDirectory @($links,$links))
+    Assert ($discovered.Count -eq 5 -and @($discovered | Where-Object { $_.Shortcut -notin $paths }).Count -eq 0) 'Tray inventory deduplicates paths and preserves supported custom launchers'
+    $broken = New-TestLink (Join-Path $testRoot 'broken') 'FilmCraft'
+    $shell = New-Object -ComObject WScript.Shell
+    $brokenLink = $shell.CreateShortcut($broken); $brokenLink.TargetPath = Join-Path $testRoot 'does-not-exist.exe'; $brokenLink.Save()
+    [Runtime.InteropServices.Marshal]::FinalReleaseComObject($brokenLink) | Out-Null
+    [Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell) | Out-Null
+    Assert (@(Get-BetterIconApplication -ShortcutDirectory (Split-Path $broken -Parent)).Count -eq 0) 'Tray inventory excludes broken app shortcuts'
     foreach ($path in $paths) { $originals[$path] = Digest $path; $launch[$path] = [BetterIcon.Windows.ShellLink]::Read($path).LaunchFingerprint }
 
     $rejected = $false
@@ -145,9 +152,10 @@ try {
     $fixtureRepository = Join-Path $testRoot 'fixture repository'
     $fixtureTheme = Join-Path $fixtureRepository 'Pack\Theme'
     $null = [IO.Directory]::CreateDirectory($fixtureTheme)
-    $sourceIcon = Join-Path $PSScriptRoot 'Craft-Icons-Zach\Cardboard\ico\PhotoCraft.ico'
-    [IO.File]::Copy($sourceIcon, (Join-Path $fixtureTheme 'PhotoCraft.ico'))
-    [IO.File]::Copy($sourceIcon, (Join-Path $fixtureTheme 'PhotoCraft-other.ico'))
+    $sourceIcon = (Get-BetterIconThemeIcon -Theme Cardboard | Where-Object Application -eq 'PhotoCraft').Path
+    $sourceBytes = Get-BetterIconBytes $sourceIcon
+    [IO.File]::WriteAllBytes((Join-Path $fixtureTheme 'PhotoCraft.ico'), $sourceBytes)
+    [IO.File]::WriteAllBytes((Join-Path $fixtureTheme 'PhotoCraft-other.ico'), $sourceBytes)
     $ambiguous = @(Get-BetterIconPlan -Theme Theme -Repository $fixtureRepository -ShortcutDirectory $links)
     Assert (@($ambiguous | Where-Object Status -eq 'Ambiguous icon').Count -eq 2) 'Ambiguous artwork is reported instead of chosen arbitrarily'
     Assert (@($ambiguous | Where-Object Status -eq 'Missing icon').Count -eq 3) 'Missing artwork is reported'
@@ -157,8 +165,39 @@ try {
     $invalid = @(Install-BetterIconTheme -Theme Theme -Repository $fixtureRepository -ShortcutDirectory $links -StateDirectory $invalidState -Confirm:$false)
     Assert (@($invalid | Where-Object Status -eq 'Failed').Count -eq 2 -and (Digest $paths[0]) -ceq $editedHash) 'Invalid ICO files cannot change shortcuts'
     $rejected = $false
-    try { $null = Get-BetterIconPlan -Theme 'Craft-Icons-Komplett/Standard' -ShortcutDirectory $links } catch { $rejected = $true }
-    Assert $rejected 'Unsupported PNG-only themes fail clearly'
+    try { $null = Get-BetterIconPlan -Theme 'This theme does not exist' -ShortcutDirectory $links } catch { $rejected = $true }
+    Assert $rejected 'Unknown themes fail clearly'
+
+    $pngTheme = Join-Path $fixtureRepository 'Pack\PNG'
+    $null = [IO.Directory]::CreateDirectory($pngTheme)
+    $pngPath = Join-Path $pngTheme 'PhotoCraft.png'
+    $bitmap = [Drawing.Bitmap]::new(80,40)
+    $drawing = [Drawing.Graphics]::FromImage($bitmap)
+    $drawing.Clear([Drawing.Color]::Transparent)
+    $drawing.FillRectangle([Drawing.Brushes]::RoyalBlue,0,0,80,40)
+    $bitmap.Save($pngPath,[Drawing.Imaging.ImageFormat]::Png)
+    $drawing.Dispose(); $bitmap.Dispose()
+    $pngHash = Digest $pngPath
+    $converted = Get-BetterIconBytes $pngPath
+    Assert ([BitConverter]::ToUInt16($converted,4) -eq 7) 'PNG conversion creates seven Windows icon sizes'
+    $convertedPath = Join-Path $testRoot 'converted.ico'
+    [IO.File]::WriteAllBytes($convertedPath,$converted)
+    $decoded = [Drawing.Icon]::new($convertedPath,256,256)
+    # Check actual Windows drawing, including transparent aspect-ratio padding.
+    $pixels = [Drawing.Bitmap]::new(256,256)
+    $canvas = [Drawing.Graphics]::FromImage($pixels)
+    $canvas.Clear([Drawing.Color]::Transparent)
+    $canvas.DrawIcon($decoded,[Drawing.Rectangle]::new(0,0,256,256))
+    $canvas.Dispose()
+    Assert ($pixels.Width -eq 256 -and $pixels.GetPixel(128,0).A -eq 0 -and $pixels.GetPixel(128,128).B -gt 100) 'PNG conversion preserves aspect ratio and transparent padding'
+    $pixels.Dispose(); $decoded.Dispose()
+    Assert ((Digest $pngPath) -ceq $pngHash) 'PNG conversion leaves shared source artwork unchanged'
+    $pngLinks = Join-Path $testRoot 'png links'; $pngState = Join-Path $testRoot 'png state'
+    $pngLink = New-TestLink $pngLinks 'PhotoCraft'; $pngOriginal = Digest $pngLink
+    $pngApply = @(Install-BetterIconTheme -Theme 'Pack/PNG' -Repository $fixtureRepository -ShortcutDirectory $pngLinks -StateDirectory $pngState -Confirm:$false)
+    Assert ($pngApply[0].Status -eq 'Applied') 'PNG-only themes install through the normal backup workflow'
+    $null = Restore-BetterIcon -StateDirectory $pngState -Confirm:$false
+    Assert ((Digest $pngLink) -ceq $pngOriginal) 'PNG theme installation restores the exact original shortcut'
 
     $previewPlan = @(Get-BetterIconPlan -Theme Cardboard -ShortcutDirectory $links)
     $newPath = New-TestLink $links 'EffectCraft'

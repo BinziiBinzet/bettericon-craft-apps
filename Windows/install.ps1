@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-Apply an existing ICO theme to Windows Desktop and Start-menu shortcuts.
+Apply an existing PNG or ICO theme to Windows Desktop and Start-menu shortcuts.
 .EXAMPLE
 .\install.ps1 -ListThemes
 .EXAMPLE
@@ -30,7 +30,7 @@ try {
     if (-not $Theme) {
         if ($Yes -or $WhatIfPreference) { throw 'Specify -Theme, or use -ListThemes to see available choices.' }
         $themes = @(Get-BetterIconTheme | Where-Object Status -eq 'Available')
-        if (-not $themes.Count) { throw 'No ICO themes were found beside the installer.' }
+        if (-not $themes.Count) { throw 'No PNG or ICO themes were found in the repository icon packs.' }
         for ($index = 0; $index -lt $themes.Count; $index++) { Write-Host ('  {0}. {1}' -f ($index + 1), $themes[$index].Id) }
         $choice = Read-Host 'Choose a theme number (Enter to cancel)'
         if (-not $choice) { return }
