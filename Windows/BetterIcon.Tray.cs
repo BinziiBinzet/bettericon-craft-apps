@@ -69,7 +69,13 @@ namespace BetterIcon.Tray
     // Optional developer fixture configuration. Both fields are required so a
     // disposable test cannot accidentally fall back to the user's real folders.
     public sealed class FixtureConfig { public string[] ShortcutDirectory { get; set; } public string StateDirectory { get; set; } public bool KeepOpenForAutomation { get; set; } }
-    public sealed class Preferences { public string Theme { get; set; } public string Scope { get; set; } }
+    public sealed class Preferences
+    {
+        public string Theme { get; set; }
+        public string Scope { get; set; }
+        public HotkeySettings Hotkey { get; set; }
+        public Preferences() { Hotkey = new HotkeySettings(); }
+    }
 
     public sealed class WorkerClient
     {
@@ -125,12 +131,20 @@ namespace BetterIcon.Tray
     {
         public static Rectangle AboveTray(Size size, Point anchor, Rectangle work)
         {
+            return Place(size, anchor, work, false);
+        }
+        public static Rectangle CenteredOnCursor(Size size, Point cursor, Rectangle work)
+        {
+            return Place(size, cursor, work, true);
+        }
+        static Rectangle Place(Size size, Point anchor, Rectangle work, bool centered)
+        {
             if (work.Width < 1 || work.Height < 1) throw new ArgumentException("Invalid screen working area.");
             int gap = Math.Min(8, (Math.Min(work.Width, work.Height) - 1) / 2);
             int width = Math.Max(1, Math.Min(size.Width, work.Width - gap * 2));
             int height = Math.Max(1, Math.Min(size.Height, work.Height - gap * 2));
             int x = Math.Max(work.Left + gap, Math.Min(anchor.X - width / 2, work.Right - gap - width));
-            int y = Math.Max(work.Top + gap, Math.Min(anchor.Y - gap - height, work.Bottom - gap - height));
+            int y = Math.Max(work.Top + gap, Math.Min(centered ? anchor.Y - height / 2 : anchor.Y - gap - height, work.Bottom - gap - height));
             return new Rectangle(x, y, width, height);
         }
     }
@@ -148,7 +162,8 @@ namespace BetterIcon.Tray
         readonly ListView apps = new ListView();
         readonly Label status = new Label();
         readonly Label previewLabel = new Label();
-        readonly Button apply = new Button(), restore = new Button(), refresh = new Button(), open = new Button(), exit = new Button();
+        readonly Label subtitle = new Label();
+        readonly Button apply = new Button(), restore = new Button(), refresh = new Button(), open = new Button(), exit = new Button(), settings = new Button();
         readonly ImageList pictures = new ImageList();
         readonly EventWaitHandle showEvent, stopEvent;
         readonly System.Windows.Forms.Timer signalTimer = new System.Windows.Forms.Timer();
@@ -158,6 +173,7 @@ namespace BetterIcon.Tray
         readonly bool startInTray;
         Catalog catalog;
         Preferences preferences = new Preferences();
+        GlobalHotkey hotkey;
         bool busy, exiting, notified;
         Point? trayAnchor;
         readonly Color ink = Color.FromArgb(26, 39, 58), accent = Color.FromArgb(41, 100, 208);
@@ -169,6 +185,7 @@ namespace BetterIcon.Tray
             preferencesPath = Path.Combine(state, "tray-preferences.json");
             if (fixture != null) fixtureLog = Path.Combine(state, "tray-events.jsonl");
             try { if (File.Exists(preferencesPath)) preferences = new JavaScriptSerializer().Deserialize<Preferences>(File.ReadAllText(preferencesPath)) ?? preferences; } catch (Exception) { }
+            if (preferences.Hotkey == null) preferences.Hotkey = new HotkeySettings();
             Text = "BetterIcon for ArtCraft"; Name = "BetterIconLauncher";
             Font = new Font("Segoe UI", 10F); ForeColor = ink; BackColor = Color.FromArgb(244, 247, 251);
             AutoScaleMode = AutoScaleMode.Font; ClientSize = new Size(900, 690); MinimumSize = new Size(790, 570);
@@ -203,7 +220,7 @@ namespace BetterIcon.Tray
                     if (!notified) { tray.ShowBalloonTip(2500, "BetterIcon is in the tray", "Click its tray icon to return. Choose Exit to stop the launcher.", ToolTipIcon.Info); notified = true; }
                 }
             };
-            FormClosed += delegate { signalTimer.Stop(); signalTimer.Dispose(); dismissTimer.Stop(); dismissTimer.Dispose(); tray.Visible = false; tray.Dispose(); trayMenu.Dispose(); pictures.Dispose(); };
+            FormClosed += delegate { if (hotkey != null) hotkey.Dispose(); signalTimer.Stop(); signalTimer.Dispose(); dismissTimer.Stop(); dismissTimer.Dispose(); tray.Visible = false; tray.Dispose(); trayMenu.Dispose(); pictures.Dispose(); };
             BuildTrayMenu();
         }
 
@@ -212,15 +229,25 @@ namespace BetterIcon.Tray
             // ApplicationContext keeps the message loop alive while the popup is
             // hidden; creating its handle also enables asynchronous UI callbacks.
             CreateHandle();
+            hotkey = new GlobalHotkey(delegate { ShowAtCursor(Cursor.Position); });
+            string error;
+            hotkey.TrySet(preferences.Hotkey, out error);
+            UpdateHotkeyHint();
             BeginInvoke(new Action(async delegate { if (!startInTray) ShowManager(); await RefreshCatalog(); }));
         }
 
-        void TraceFixture(string action)
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && hotkey != null) hotkey.Dispose();
+            base.Dispose(disposing);
+        }
+
+        void TraceFixture(string action, Point? anchor = null)
         {
             if (fixtureLog == null) return;
             try {
                 Directory.CreateDirectory(Path.GetDirectoryName(fixtureLog));
-                File.AppendAllText(fixtureLog, new JavaScriptSerializer().Serialize(new { Event = action, Utc = DateTime.UtcNow.ToString("o"), Visible, ContainsFocus, Bounds = new { Left, Top, Width, Height } }) + Environment.NewLine);
+                File.AppendAllText(fixtureLog, new JavaScriptSerializer().Serialize(new { Event = action, Utc = DateTime.UtcNow.ToString("o"), Visible, ContainsFocus, Bounds = new { Left, Top, Width, Height }, Anchor = anchor, WorkingArea = anchor.HasValue ? (Rectangle?)Screen.FromPoint(anchor.Value).WorkingArea : null }) + Environment.NewLine);
             }
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
@@ -239,8 +266,7 @@ namespace BetterIcon.Tray
             Controls.Add(layout);
             Panel heading = new Panel { Dock = DockStyle.Fill };
             Label title = new Label { Text = "Your ArtCraft apps", Font = new Font("Segoe UI", 23F, FontStyle.Bold), AutoSize = true, Location = new Point(0, 0) };
-            Label subtitle = new Label { Text = "Launch an app. Find a look you love. Keep it all in your tray.", AutoSize = true, Location = new Point(2, 48), ForeColor = Color.FromArgb(83, 98, 119) };
-            if (testing) subtitle.Text = "Test copy: changes apply only to disposable shortcuts.";
+            subtitle.AutoSize = true; subtitle.Location = new Point(2, 48); subtitle.ForeColor = Color.FromArgb(83, 98, 119);
             heading.Controls.Add(title); heading.Controls.Add(subtitle); layout.Controls.Add(heading, 0, 0);
             FlowLayoutPanel themeRow = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false };
             themeRow.Controls.Add(new Label { Text = "Icon theme", AutoSize = true, Margin = new Padding(0, 10, 12, 0) });
@@ -265,7 +291,8 @@ namespace BetterIcon.Tray
             search.Width = 230; search.Margin = new Padding(0, 5, 12, 0); search.TextChanged += delegate { RenderApps(); }; search.AccessibleName = "Find an installed app";
             refresh.Text = "Refresh apps"; refresh.Width = 125; refresh.Height = 32; refresh.Click += async delegate { await RefreshCatalog(); };
             open.Text = "Open selected"; open.Width = 135; open.Height = 32; open.Margin = new Padding(10, 0, 0, 0); open.Click += delegate { LaunchSelected(); };
-            tools.Controls.Add(search); tools.Controls.Add(refresh); tools.Controls.Add(open); layout.Controls.Add(tools, 0, 3);
+            settings.Text = "Settings..."; settings.Width = 100; settings.Height = 32; settings.Margin = new Padding(10, 0, 0, 0); settings.Click += delegate { ShowSettings(); };
+            tools.Controls.Add(search); tools.Controls.Add(refresh); tools.Controls.Add(open); tools.Controls.Add(settings); layout.Controls.Add(tools, 0, 3);
             pictures.ImageSize = new Size(AppIconSize, AppIconSize); pictures.ColorDepth = ColorDepth.Depth32Bit;
             // Hidden startup loads artwork before the ListView has a handle.
             // Create the native image list now so Add copies each bitmap before
@@ -289,7 +316,7 @@ namespace BetterIcon.Tray
         static bool IsAdministrator() { return new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator); }
         void SetBusy(bool value, string message)
         {
-            busy = value; apply.Enabled = restore.Enabled = refresh.Enabled = themes.Enabled = scopes.Enabled = exit.Enabled = !value;
+            busy = value; apply.Enabled = restore.Enabled = refresh.Enabled = themes.Enabled = scopes.Enabled = exit.Enabled = settings.Enabled = !value;
             if (!String.IsNullOrEmpty(message)) status.Text = message;
             UseWaitCursor = value; BuildTrayMenu();
         }
@@ -297,29 +324,79 @@ namespace BetterIcon.Tray
         {
             TraceFixture("Tray click");
             dismissTimer.Stop(); trayAnchor = anchor;
+            if (!Enabled) { ActivateDialog(); return; }
             if (Visible && WindowState != FormWindowState.Minimized) { Hide(); return; }
             ShowManager();
         }
         public void ShowManager()
         {
-            dismissTimer.Stop();
             Rectangle work = Screen.FromPoint(trayAnchor ?? Cursor.Position).WorkingArea;
             Point anchor = trayAnchor ?? new Point(work.Right, work.Bottom);
+            ShowPopup(anchor, false);
+        }
+        public void ShowAtCursor(Point cursor) { ShowPopup(cursor, true); }
+        void ActivateDialog() { foreach (Form dialog in OwnedForms) if (dialog.Visible) { dialog.Activate(); break; } }
+        void ShowPopup(Point anchor, bool centered)
+        {
+            if (!Enabled) { ActivateDialog(); return; }
+            dismissTimer.Stop();
+            Rectangle work = Screen.FromPoint(anchor).WorkingArea;
             WindowState = FormWindowState.Normal;
-            Rectangle bounds = PopupPlacement.AboveTray(Size, anchor, work);
+            Rectangle bounds = centered ? PopupPlacement.CenteredOnCursor(Size, anchor, work) : PopupPlacement.AboveTray(Size, anchor, work);
             MinimumSize = new Size(Math.Min(790, bounds.Width), Math.Min(570, bounds.Height));
             Bounds = bounds; Show();
             // Also works when launched with STARTUPINFO's initial hidden state.
             ShowWindow(Handle, 1);
-            Bounds = PopupPlacement.AboveTray(Size, anchor, work); Activate();
-            TraceFixture("Positioned");
+            Bounds = centered ? PopupPlacement.CenteredOnCursor(Size, anchor, work) : PopupPlacement.AboveTray(Size, anchor, work); Activate();
+            TraceFixture(centered ? "Hotkey positioned" : "Positioned", anchor);
         }
         void ExitLauncher() { if (busy) { ShowManager(); MessageBox.Show(this, "Please wait for the current operation to finish.", Text); return; } exiting = true; Close(); }
+        void UpdateHotkeyHint()
+        {
+            string hint = !preferences.Hotkey.Enabled ? "Hotkey disabled. Change it in Settings." : hotkey != null && hotkey.IsRegistered ? preferences.Hotkey + " opens at your cursor. Change it in Settings." : "Hotkey unavailable. Choose another combination in Settings.";
+            subtitle.Text = (fixtureLog == null ? "" : "Test shortcuts only. ") + hint;
+        }
+        void ShowSettings()
+        {
+            if (busy || hotkey == null) return;
+            if (!Enabled) { ActivateDialog(); return; }
+            if (!Visible) ShowManager();
+            using (HotkeySettingsDialog dialog = new HotkeySettingsDialog(preferences.Hotkey, hotkey.IsRegistered, SaveHotkey)) dialog.ShowDialog(this);
+        }
+        string SaveHotkey(HotkeySettings requested)
+        {
+            HotkeySettings previous = preferences.Hotkey;
+            HotkeySettings binding = hotkey.Current == null ? new HotkeySettings { Enabled = false } : hotkey.Current.Copy();
+            string error;
+            if (!hotkey.TrySet(requested, out error)) return error;
+            preferences.Hotkey = requested.Copy();
+            try { WritePreferences(); }
+            catch (Exception failure) {
+                if (!(failure is IOException) && !(failure is UnauthorizedAccessException)) throw;
+                preferences.Hotkey = previous;
+                bool restored = hotkey.TrySet(binding, out error);
+                UpdateHotkeyHint();
+                return "Could not save settings: " + failure.Message + (restored ? " The previous hotkey is unchanged." : " The previous hotkey could not be restored; choose another combination.");
+            }
+            UpdateHotkeyHint();
+            return null;
+        }
+        void WritePreferences()
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(preferencesPath));
+            string temporary = preferencesPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try {
+                File.WriteAllText(temporary, new JavaScriptSerializer().Serialize(preferences), new UTF8Encoding(false));
+                if (File.Exists(preferencesPath)) File.Replace(temporary, preferencesPath, null);
+                else File.Move(temporary, preferencesPath);
+            }
+            finally { if (File.Exists(temporary)) File.Delete(temporary); }
+        }
         void SavePreferences()
         {
-            if (SelectedTheme == null) return;
-            preferences.Theme = SelectedTheme.Id; preferences.Scope = Scope;
-            try { Directory.CreateDirectory(Path.GetDirectoryName(preferencesPath)); File.WriteAllText(preferencesPath, new JavaScriptSerializer().Serialize(preferences), new UTF8Encoding(false)); }
+            if (SelectedTheme != null) preferences.Theme = SelectedTheme.Id;
+            preferences.Scope = Scope;
+            try { WritePreferences(); }
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
         }
@@ -413,6 +490,7 @@ namespace BetterIcon.Tray
             trayMenu.Items.Add(themeMenu); trayMenu.Items.Add(new ToolStripSeparator());
             ToolStripMenuItem reload = new ToolStripMenuItem("Refresh installed apps") { Enabled = !busy }; reload.Click += async delegate { await RefreshCatalog(); }; trayMenu.Items.Add(reload);
             ToolStripMenuItem restoreItem = new ToolStripMenuItem("Restore original icons...") { Enabled = !busy }; restoreItem.Click += async delegate { ShowManager(); await RestoreIcons(); }; trayMenu.Items.Add(restoreItem);
+            ToolStripMenuItem settingsItem = new ToolStripMenuItem("Settings...") { Enabled = !busy }; settingsItem.Click += delegate { ShowSettings(); }; trayMenu.Items.Add(settingsItem);
             trayMenu.Items.Add(new ToolStripSeparator());
             ToolStripMenuItem quit = new ToolStripMenuItem("Exit BetterIcon") { Enabled = !busy }; quit.Click += delegate { ExitLauncher(); }; trayMenu.Items.Add(quit);
         }

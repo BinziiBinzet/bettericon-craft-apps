@@ -1,5 +1,13 @@
 # Windows validation
 
+## 1.2.0 configurable global hotkey - 2026-11-16
+
+All 38 local native checks passed on Windows 11, including the existing startup/tray/worker checks plus cursor centering, edge clamps, negative coordinates, small screens, preference migration, native registration and release, conflicts preserving the old binding, stale-message rejection, reserved-key validation, persistence, and rollback after a settings write failure. Registration tests use isolated function-key combinations and do not take the user's default hotkey.
+
+The actual Settings dialog was inspected with 14 disposable app shortcuts: changing modifiers and disabling the shortcut saved successfully, and disabled state survived a full process restart. A configured shortcut was invoked through Windows keyboard input while File Explorer had focus. The popup moved to the cursor center; after hiding it, another invocation near the top edge reopened it with its top clamped to the screen's eight-pixel margin. Fixture logs confirmed the cursor, bounds, and working area. All 14 apps still fit without scrolling. The default is Ctrl+Alt+Shift+A; Settings is accessible from both the popup and tray menu.
+
+Shortcut installer and worker behavior did not change; their broader 1.1.0 results below remain the baseline. No icon themes were applied to installed shortcuts for this feature. Negative-coordinate and small-screen coverage is automated geometry testing, not physical monitor or DPI-transition testing.
+
 ## 1.1.1 compact layout - 2026-11-16
 
 The locally compiled 1.1.1 launcher passed all 15 existing native startup, tray-event, placement, and worker checks. Visual inspection at the unchanged default popup size showed all 14 current launch shortcuts in three columns and five rows without a scrollbar. The long custom PhotoCraft launcher name remained readable. Tiles use 48-pixel icons and omit shared/my-shortcut subtitles; the full name and shortcut path remain in the tooltip. No shortcut icons were changed for this layout check.

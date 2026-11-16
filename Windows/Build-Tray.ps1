@@ -19,6 +19,6 @@ $themeIcon = Get-BetterIconThemeIcon -Theme Cardboard | Where-Object Application
 if (-not $themeIcon) { throw 'The Cardboard Craft Anything artwork is missing.' }
 [IO.File]::WriteAllBytes($icon, (Get-BetterIconBytes $themeIcon.Path))
 $exe = Join-Path $output 'BetterIcon-Tray.exe'
-& $compiler /nologo /target:winexe /platform:anycpu /optimize+ /warnaserror+ "/out:$exe" "/win32icon:$icon" "/win32manifest:$(Join-Path $PSScriptRoot 'BetterIcon.Tray.manifest')" /reference:System.dll /reference:System.Core.dll /reference:System.Drawing.dll /reference:System.Windows.Forms.dll /reference:System.Web.Extensions.dll (Join-Path $PSScriptRoot 'BetterIcon.Tray.cs') $metadata
+& $compiler /nologo /target:winexe /platform:anycpu /optimize+ /warnaserror+ "/out:$exe" "/win32icon:$icon" "/win32manifest:$(Join-Path $PSScriptRoot 'BetterIcon.Tray.manifest')" /reference:System.dll /reference:System.Core.dll /reference:System.Drawing.dll /reference:System.Windows.Forms.dll /reference:System.Web.Extensions.dll (Join-Path $PSScriptRoot 'BetterIcon.Tray.cs') (Join-Path $PSScriptRoot 'BetterIcon.Hotkey.cs') $metadata
 if ($LASTEXITCODE -ne 0) { throw 'Tray compilation failed.' }
 [pscustomobject]@{ Executable = $exe; Version = $version; SHA256 = (Get-FileHash -LiteralPath $exe).Hash }

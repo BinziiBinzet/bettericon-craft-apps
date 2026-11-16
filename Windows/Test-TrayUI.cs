@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
@@ -11,6 +12,7 @@ using BetterIcon.Tray;
 
 static class TrayTests
 {
+    [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
     static readonly List<object> checks = new List<object>();
     static void Check(bool ok, string name)
     {
@@ -40,6 +42,38 @@ static class TrayTests
             work = new Rectangle(0, 0, 1, 1);
             Check(PopupPlacement.AboveTray(new Size(900, 690), Point.Empty, work) == work, "Tiny work area remains valid");
 
+            work = new Rectangle(0, 0, 1920, 1040);
+            Check(PopupPlacement.CenteredOnCursor(new Size(900, 690), new Point(960, 520), work) == new Rectangle(510, 175, 900, 690), "Hotkey popup is centered on the cursor away from screen edges");
+            foreach (Point corner in new[] { new Point(0, 0), new Point(1919, 0), new Point(0, 1039), new Point(1919, 1039) })
+                Check(work.Contains(PopupPlacement.CenteredOnCursor(new Size(900, 690), corner, work)), "Cursor placement clamps corner " + corner);
+            work = new Rectangle(-1920, -200, 1920, 1040);
+            Check(PopupPlacement.CenteredOnCursor(new Size(900, 690), new Point(-960, 320), work) == new Rectangle(-1410, -25, 900, 690), "Cursor centering supports negative monitor coordinates");
+            work = new Rectangle(0, 40, 640, 440);
+            Check(work.Contains(PopupPlacement.CenteredOnCursor(new Size(2000, 1500), new Point(638, 478), work)), "Cursor popup shrinks to fit a small working area");
+            JavaScriptSerializer json = new JavaScriptSerializer();
+            Preferences migrated = json.Deserialize<Preferences>("{\"Theme\":\"Satin\",\"Scope\":\"AllUsers\"}");
+            Check(migrated.Hotkey.Enabled && migrated.Hotkey.ToString() == "Ctrl+Alt+Shift+A" && migrated.Theme == "Satin" && migrated.Scope == "AllUsers", "Old theme and scope preferences acquire the chosen default hotkey");
+            HotkeySettings first = new HotkeySettings { Key = (int)Keys.F23 }, second = new HotkeySettings { Key = (int)Keys.F22 };
+            string hotkeyError;
+            int received = 0;
+            using (GlobalHotkey binding = new GlobalHotkey(delegate { received++; }))
+            using (GlobalHotkey other = new GlobalHotkey(delegate { })) {
+                Check(binding.TrySet(first, out hotkeyError) && binding.IsRegistered, "Windows registers a system-wide hotkey on a message-only window");
+                int id = (int)typeof(GlobalHotkey).GetField("activeId", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(binding);
+                SendMessage(binding.Handle, 0x0312, new IntPtr(id), new IntPtr((first.Key << 16) | (int)first.Modifiers()));
+                Check(received == 1, "Registered WM_HOTKEY dispatches its callback");
+                Check(other.TrySet(second, out hotkeyError) && !binding.TrySet(second, out hotkeyError) && hotkeyError.Contains("already in use") && binding.Current.Key == first.Key, "A conflicting shortcut reports failure and preserves the previous binding");
+                HotkeySettings disabled = second.Copy(); disabled.Enabled = false;
+                Check(other.TrySet(disabled, out hotkeyError) && !other.IsRegistered && binding.TrySet(second, out hotkeyError), "Disabling releases the shortcut immediately for another registration");
+                SendMessage(binding.Handle, 0x0312, new IntPtr(id), new IntPtr((first.Key << 16) | (int)first.Modifiers()));
+                Check(received == 1, "Queued messages for the replaced shortcut are ignored");
+                Check(other.TrySet(first, out hotkeyError), "Changing the shortcut releases the old combination");
+                Check(!binding.TrySet(new HotkeySettings { Key = (int)Keys.F12 }, out hotkeyError) && binding.Current.Key == second.Key, "Reserved F12 cannot replace a working hotkey");
+                Check(!binding.TrySet(new HotkeySettings { Control = false, Alt = false }, out hotkeyError), "A bare typing key cannot become a global shortcut");
+            }
+            using (GlobalHotkey released = new GlobalHotkey(delegate { }))
+                Check(released.TrySet(second, out hotkeyError), "Disposal releases the registered shortcut");
+
             string workerState = Path.Combine(root, "worker-state");
             Directory.CreateDirectory(workerState);
             File.WriteAllText(Path.Combine(workerState, "manifest.json"), "{\"Product\":\"BetterIcon-Craft Apps Windows\",\"SchemaVersion\":1,\"Version\":\"1.1.0\",\"Scope\":\"CurrentUser\",\"Entries\":[]}");
@@ -49,6 +83,9 @@ static class TrayTests
             WorkerReply preview = client.Run(new WorkerRequest { Action = "RestorePreview", Scope = "CurrentUser" }, false).GetAwaiter().GetResult();
             Check(preview.Success && preview.StateHash.Length == 64 && preview.Results.Length == 0, "Native restore worker hashes an existing manifest with inherited module paths");
 
+            string state = Path.Combine(root, "state"), preferencesPath = Path.Combine(state, "tray-preferences.json");
+            Directory.CreateDirectory(state);
+            File.WriteAllText(preferencesPath, json.Serialize(new Preferences { Theme = "Craft-Icons-Zach/Satin", Scope = "CurrentUser", Hotkey = new HotkeySettings { Enabled = false } }));
             using (EventWaitHandle show = new EventWaitHandle(false, EventResetMode.AutoReset))
             using (EventWaitHandle stop = new EventWaitHandle(false, EventResetMode.AutoReset))
             using (LauncherForm form = new LauncherForm(args[1], new FixtureConfig { ShortcutDirectory = new[] { root }, StateDirectory = Path.Combine(root, "state") }, true, show, stop))
@@ -75,6 +112,24 @@ static class TrayTests
                         Check(!form.Visible, "Right tray release does not toggle the popup");
                         form.ShowManager(); Check(form.Visible, "Explicit open reopens the existing popup");
                         form.Hide(); Check(!form.Visible, "Hide retains the launcher for another tray click");
+                        Point center = new Point(Screen.PrimaryScreen.WorkingArea.Left + Screen.PrimaryScreen.WorkingArea.Width / 2, Screen.PrimaryScreen.WorkingArea.Top + Screen.PrimaryScreen.WorkingArea.Height / 2);
+                        form.ShowAtCursor(center);
+                        Check(form.Visible && form.Bounds == PopupPlacement.CenteredOnCursor(form.Size, center, Screen.FromPoint(center).WorkingArea), "The real hidden form opens at the cursor position");
+                        Point edge = Screen.PrimaryScreen.WorkingArea.Location;
+                        form.ShowAtCursor(edge);
+                        Check(Screen.PrimaryScreen.WorkingArea.Contains(form.Bounds), "Reopening by hotkey moves the existing popup and clamps it on screen");
+                        MethodInfo saveHotkey = typeof(LauncherForm).GetMethod("SaveHotkey", BindingFlags.Instance | BindingFlags.NonPublic);
+                        string themeBefore = json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).Theme;
+                        Check(saveHotkey.Invoke(form, new object[] { second }) == null, "Settings apply a custom combination without restarting");
+                        Preferences saved = json.Deserialize<Preferences>(File.ReadAllText(preferencesPath));
+                        Check(saved.Hotkey.Key == second.Key && saved.Hotkey.Enabled && saved.Theme == themeBefore && saved.Scope == "CurrentUser", "Custom hotkey persists without changing the selected theme or scope");
+                        using (FileStream locked = File.Open(preferencesPath, FileMode.Open, FileAccess.Read, FileShare.None)) {
+                            string saveError = (string)saveHotkey.Invoke(form, new object[] { first });
+                            GlobalHotkey active = (GlobalHotkey)typeof(LauncherForm).GetField("hotkey", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
+                            Check(saveError != null && active.Current.Key == second.Key, "A settings write failure rolls back to the previous working shortcut");
+                        }
+                        HotkeySettings off = second.Copy(); off.Enabled = false;
+                        Check(saveHotkey.Invoke(form, new object[] { off }) == null && !json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).Hotkey.Enabled, "Disabled hotkey is saved for subsequent launches");
                         stop.Set(); // Exercise normal shutdown through the same message loop.
                     }
                     catch (Exception error) { eventFailure = error; timer.Stop(); context.ExitThread(); }

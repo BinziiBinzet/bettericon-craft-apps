@@ -1,5 +1,11 @@
 # Windows installer changelog
 
+## 1.2.0 - 2026-11-16
+
+- Open the popup from any app with Ctrl+Alt+Shift+A, centered on the mouse cursor and clamped to the selected monitor's working area.
+- Add Settings in the popup and tray menu to customize or disable the system-wide hotkey, with persistent preferences and immediate updates.
+- Report shortcut conflicts without losing the previous binding; release registrations when disabled or exiting. Preserve tray-click positioning and the compact app grid.
+
 ## 1.1.1 - 2026-11-16
 
 - Fit more apps in the default tray popup with three columns, 48-pixel icons, and tighter tile spacing.

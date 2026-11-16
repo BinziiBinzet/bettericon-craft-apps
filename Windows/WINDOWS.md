@@ -1,6 +1,6 @@
 # BetterIcon-Craft Apps for Windows
 
-Windows version **1.1.1** includes a native tray launcher alongside the existing icon installer. It shares the repository's artwork and leaves Craft executables, app settings, file associations, and the registry unchanged.
+Windows version **1.2.0** includes a native tray launcher alongside the existing icon installer. It shares the repository's artwork and leaves Craft executables, app settings, file associations, and the registry unchanged.
 
 ## Start here
 
@@ -12,6 +12,10 @@ Windows version **1.1.1** includes a native tray launcher alongside the existing
 6. To undo, choose **Restore original icons** with the same scope and review the restoration.
 
 Choose **Exit** or use **Windows/Stop-Tray.cmd** to stop this user's launcher. Starting it again reopens the existing instance. `Start-Tray.ps1 -TrayOnly` starts without opening the popup. No login/startup entry is created.
+
+Press **Ctrl+Alt+Shift+A** from any app to open the popup centered on your mouse cursor. Near an edge it moves just enough to stay within that monitor's working area, clear of the taskbar. Pressing the hotkey again repositions the existing popup at the current cursor. Tray clicks still open it above the tray and toggle it closed.
+
+Choose **Settings...** in the popup or tray menu to change the combination or uncheck **Enable system-wide hotkey**. Changes take effect when you save and persist across launches. Choose Ctrl and/or Alt, optionally Shift, plus a letter, number, function key (except reserved F12), or Space. If another app owns the combination, an inline error keeps your previous shortcut active. If a saved shortcut is unavailable at startup, the popup reports that and remains accessible from the tray. Exit releases the shortcut; no keyboard hook or permanent Windows hotkey setting is installed.
 
 The tray finds existing shortcuts in both your own and the shared Desktop/Start menu. It includes the ArtCraft Launcher and custom Craft launchers, and skips shortcuts whose installed target is missing. Portable apps without these shortcuts need a shortcut added to one of those locations, followed by **Refresh apps**. Duplicate launch variants are shown separately so their arguments are preserved.
 
