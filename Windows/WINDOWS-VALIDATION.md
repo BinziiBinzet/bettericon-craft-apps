@@ -1,5 +1,11 @@
 # Windows validation
 
+## 1.8.0 Settings layout - 2026-11-16
+
+All 110 local native checks passed. Eight new checks cover the three Settings sections, nonoverlapping controls and horizontal fit at 790x570 and 900x690 with both 24- and 128-pixel icons, built-in pack action availability, and keyboard isolation while either pack menu is open. Existing launcher, wheel, shared-size, pack and worker checks remain passing.
+
+Visual inspection of the isolated native test app confirmed separated sections, accessible shortcut controls through vertical scrolling, a separate status/footer area, and a growing 128-pixel preview without overlap into the next section. Pack actions opened and closed correctly, and Reset restored 48 pixels. No installed shortcut icons or personal packs were changed. Installer/bridge logic is unchanged except its version; the 1.5.0 baseline remains applicable. Builds and validation ran locally.
+
 ## 1.7.0 compact grids and wheel resizing - 2026-11-16
 
 All 102 local native checks passed. Native item rectangles confirm that launcher labels sit below the icons and items form compact rows. The Settings pack preview uses the same saved image size, updates immediately from cached artwork, retains its selection, and resets with the launcher. Existing filtering, keyboard launch, tray, hotkey, pack-management, sharing, and worker regressions also pass.

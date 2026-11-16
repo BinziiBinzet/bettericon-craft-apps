@@ -21,6 +21,29 @@ static class TrayTests
         if (!ok) throw new Exception(name);
         Console.WriteLine("PASS: " + name);
     }
+    static string SettingsLayoutProblem(Control parent)
+    {
+        // Native list items/scrollbars are not independent layout controls.
+        if (parent is ListView) return null;
+        Control[] children = parent.Controls.Cast<Control>().Where(c => c.Visible).ToArray();
+        for (int i = 0; i < children.Length; i++) {
+            Control child = children[i];
+            string name = String.IsNullOrEmpty(child.Name) ? child.GetType().Name + " " + child.Text : child.Name;
+            if (child.Width <= 0 || child.Height <= 0) return name + " has no usable area";
+            ScrollableControl scroll = parent as ScrollableControl;
+            if (scroll == null || !scroll.AutoScroll) {
+                Rectangle allowed = parent.ClientRectangle; allowed.Inflate(1, 1);
+                if (!allowed.Contains(child.Bounds)) return name + " is clipped by " + parent.GetType().Name + ": " + child.Bounds + " outside " + parent.ClientRectangle;
+            }
+            for (int j = i + 1; j < children.Length; j++) {
+                Rectangle overlap = Rectangle.Intersect(child.Bounds, children[j].Bounds);
+                if (overlap.Width > 1 && overlap.Height > 1) return name + " overlaps " + children[j].GetType().Name + " " + children[j].Text;
+            }
+            string nested = SettingsLayoutProblem(child);
+            if (nested != null) return nested;
+        }
+        return null;
+    }
     [STAThread]
     static int Main(string[] args)
     {
@@ -199,6 +222,37 @@ static class TrayTests
                         typeof(LauncherForm).GetMethod("SetBusy", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(form, new object[] { false, null });
                         pages.SelectedIndex = 0; key(Keys.Control | Keys.Back); pages.SelectedIndex = 1; slider.Value = 80;
                         ComboBox themePicker = (ComboBox)typeof(LauncherForm).GetField("themes", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
+                        Panel settingsScroll = (Panel)typeof(LauncherForm).GetField("settingsScroll", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
+                        TableLayoutPanel settingsContent = (TableLayoutPanel)typeof(LauncherForm).GetField("settingsContent", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
+                        Check(new[] { "IconPackSection", "LauncherSection", "ShortcutsSection" }.All(name => settingsContent.Controls.Find(name, true).Length == 1), "Settings groups pack management, launcher preferences, and Windows shortcuts into separate sections");
+                        Size previousSize = form.Size; int previousIconSize = slider.Value;
+                        try {
+                            foreach (Size windowSize in new[] { new Size(790, 570), new Size(900, 690) }) foreach (int iconSize in new[] { 24, 128 }) {
+                                form.Size = windowSize; slider.Value = iconSize; settingsScroll.AutoScrollPosition = Point.Empty;
+                                form.PerformLayout(); settingsContent.PerformLayout(); Application.DoEvents();
+                                string layoutProblem = SettingsLayoutProblem(settingsContent);
+                                Check(layoutProblem == null && settingsContent.Width <= settingsScroll.ClientSize.Width && !settingsScroll.HorizontalScroll.Visible,
+                                    "Settings controls remain separated and fit horizontally at " + windowSize.Width + "x" + windowSize.Height + ", " + iconSize + "-pixel icons" + (layoutProblem == null ? "" : ": " + layoutProblem));
+                            }
+                        }
+                        finally { form.Size = previousSize; slider.Value = previousIconSize; settingsScroll.AutoScrollPosition = Point.Empty; form.PerformLayout(); }
+                        ContextMenuStrip importMenu = (ContextMenuStrip)typeof(LauncherForm).GetField("importPackMenu", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
+                        ContextMenuStrip manageMenu = (ContextMenuStrip)typeof(LauncherForm).GetField("managePackMenu", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
+                        ToolStripItem[] manageItems = manageMenu.Items.Cast<ToolStripItem>().ToArray();
+                        Check(new[] { "Edit pack...", "Export ZIP..." }.All(text => manageItems.Single(item => item.Text == text).Enabled == false) && manageItems.Single(item => item.Text == "Customize...").Enabled,
+                            "Built-in packs offer Customize while personal-only Edit and Export actions stay disabled");
+                        pages.SelectedIndex = 0;
+                        PropertyInfo canFilter = typeof(LauncherForm).GetProperty("CanFilter", BindingFlags.Instance | BindingFlags.NonPublic);
+                        foreach (ContextMenuStrip menu in new[] { importMenu, manageMenu }) {
+                            try {
+                                menu.Show(list, new Point(8, 8));
+                                bool filteringBlocked = !(bool)canFilter.GetValue(form, null);
+                                type("zzz");
+                                Check(menu.Visible && filteringBlocked && list.Items.Count == 3, (menu == importMenu ? "Import" : "Pack actions") + " menu keeps keyboard input out of launcher filtering");
+                            }
+                            finally { menu.Close(); }
+                        }
+                        pages.SelectedIndex = 1;
                         themePicker.DroppedDown = true;
                         KeyPressEventArgs dropdownKey = new KeyPressEventArgs('p'); character.Invoke(form, new object[] { dropdownKey });
                         Check(!dropdownKey.Handled && list.Items.Count == 3, "An open theme dropdown keeps its own typing behavior");

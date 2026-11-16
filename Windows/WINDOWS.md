@@ -1,6 +1,6 @@
 # BetterIcon-Craft Apps for Windows
 
-Windows version **1.7.0** includes a native tray launcher alongside the existing icon installer. It shares the repository's artwork and leaves Craft executables, app settings, file associations, and the registry unchanged.
+Windows version **1.8.0** includes a native tray launcher alongside the existing icon installer. It shares the repository's artwork and leaves Craft executables, app settings, file associations, and the registry unchanged.
 
 ## Start here
 
@@ -19,7 +19,7 @@ The Launcher uses a compact grid with app names centered underneath their icons.
 
 You can also hold **Ctrl** and turn the **mouse wheel** over the Launcher to resize icons: wheel up enlarges them, wheel down makes them smaller, in 8-pixel steps. This updates the same slider and saved size for both tabs. Scrolling without Ctrl scrolls the grid normally.
 
-Open **Settings > Configure hotkey** to change the combination or uncheck **Enable system-wide hotkey**. Changes take effect when you save and persist across launches. Choose Ctrl and/or Alt, optionally Shift, plus a letter, number, function key (except reserved F12), or Space. If another app owns the combination, an inline error keeps your previous shortcut active. If a saved shortcut is unavailable at startup, Settings reports that and the popup remains accessible from the tray. Exit releases the shortcut; no keyboard hook or permanent Windows hotkey setting is installed.
+Open **Settings > Launcher > Change hotkey** to change the combination or uncheck **Enable system-wide hotkey**. Changes take effect when you save and persist across launches. Choose Ctrl and/or Alt, optionally Shift, plus a letter, number, function key (except reserved F12), or Space. If another app owns the combination, an inline error keeps your previous shortcut active. If a saved shortcut is unavailable at startup, Settings reports that and the popup remains accessible from the tray. Exit releases the shortcut; no keyboard hook or permanent Windows hotkey setting is installed.
 
 The tray finds existing shortcuts in both your own and the shared Desktop/Start menu. It includes the ArtCraft Launcher and custom Craft launchers, and skips shortcuts whose installed target is missing. Portable apps without these shortcuts need a shortcut added to one of those locations, followed by **Refresh installed apps** in the tray's right-click menu. That menu also lists apps for direct launching. Duplicate launch variants are shown separately so their arguments are preserved.
 
@@ -29,13 +29,13 @@ The launcher uses Windows PowerShell 5.1 and .NET Framework 4.8 on Windows 10/11
 
 ## Manage icon packs
 
-All customization lives in **Settings**. Selecting a pack previews its artwork in Settings and the Launcher; changing shortcut icons still requires **Apply icons** and a review.
+Settings has three sections: **Icon pack**, **Launcher**, and **Windows shortcuts**. Less-used pack commands are grouped under **Pack actions**; **Import** offers ZIP and folder choices. The content scrolls vertically when needed, while status, Refresh apps, and Exit remain in a separate footer. All customization lives in **Settings**. Selecting a pack previews its artwork in Settings and the Launcher; changing shortcut icons still requires **Apply icons** and a review.
 
-- **Import folder / Import ZIP:** add one theme at a time, using app-named PNG or ICO files such as `PhotoCraft.png` or `FilmCraft.ico`. Nested folders are supported. An ICO takes precedence over a PNG for the same app; multiple variants in the same format are rejected. ICNS and SVG are not supported. Imports are copied locally, so their original folder or ZIP is no longer needed.
+- **Import > From folder / From ZIP:** add one theme at a time, using app-named PNG or ICO files such as `PhotoCraft.png` or `FilmCraft.ico`. Nested folders are supported. An ICO takes precedence over a PNG for the same app; multiple variants in the same format are rejected. ICNS and SVG are not supported. Imports are copied locally, so their original folder or ZIP is no longer needed.
 - **New pack:** name a pack, optionally enter its public author credit, and choose a PNG or ICO for each app you want to customize. At least one icon is required. Apps without assigned artwork keep their current shortcut icons.
 - **Customize:** start a personal copy of the selected pack and mix in your own artwork. Built-in source artwork stays unchanged.
 - **Edit pack:** rename or change assignments in a personal pack. Each save creates a new revision so an earlier preview continues to refer to the artwork it showed.
-- **Export ZIP:** select a personal pack and save a ZIP to share. Recipients choose **Import ZIP** to install it into their own library. The pack name, author, and exact PNG/ICO artwork travel with it, even if the ZIP is renamed. Built-ins can be copied with **Customize** before exporting. Export includes no local paths, preferences, shortcut backups, or internal library IDs.
+- **Export ZIP:** select a personal pack and save a ZIP to share. Recipients choose **Import > From ZIP** to install it into their own library. The pack name, author, and exact PNG/ICO artwork travel with it, even if the ZIP is renamed. Built-ins can be copied with **Customize** before exporting. Export includes no local paths, preferences, shortcut backups, or internal library IDs.
 - **Remove pack:** remove a personal pack from the selector, or hide a built-in pack. Already-applied shortcut icons remain unchanged. **Restore built-in packs** brings hidden built-ins back.
 
 Personal packs and their library metadata live in `%LOCALAPPDATA%\BetterIcon-Craft Apps\packs`. Old revisions and removed artwork are retained to preserve existing previews and references; removing a pack is a library operation, not disk cleanup. Personal artwork is never included in a source commit or a Windows release package. Pack management does not require administrator access; applying to shared shortcuts still does.

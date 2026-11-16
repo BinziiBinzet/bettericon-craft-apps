@@ -250,7 +250,7 @@ namespace BetterIcon.Tray
             dismissTimer.Tick += delegate {
                 if (ContainsFocus) { dismissTimer.Stop(); return; }
                 if (fixture != null && fixture.KeepOpenForAutomation) { dismissTimer.Stop(); return; }
-                if (Control.MouseButtons != MouseButtons.None || trayMenu.Visible || busy || !Enabled || themes.DroppedDown || scopes.DroppedDown) return;
+                if (Control.MouseButtons != MouseButtons.None || trayMenu.Visible || importPackMenu.Visible || managePackMenu.Visible || busy || !Enabled || themes.DroppedDown || scopes.DroppedDown) return;
                 dismissTimer.Stop(); Hide();
             };
             Deactivate += delegate { TraceFixture("Deactivated"); if (Visible) dismissTimer.Start(); };
@@ -265,7 +265,7 @@ namespace BetterIcon.Tray
                     if (!notified) { tray.ShowBalloonTip(2500, "BetterIcon is in the tray", "Click its tray icon to return. Choose Exit to stop the launcher.", ToolTipIcon.Info); notified = true; }
                 }
             };
-            FormClosed += delegate { if (hotkey != null) hotkey.Dispose(); signalTimer.Stop(); signalTimer.Dispose(); dismissTimer.Stop(); dismissTimer.Dispose(); tray.Visible = false; tray.Dispose(); trayMenu.Dispose(); pictures.Dispose(); packPictures.Dispose(); };
+            FormClosed += delegate { if (hotkey != null) hotkey.Dispose(); signalTimer.Stop(); signalTimer.Dispose(); dismissTimer.Stop(); dismissTimer.Dispose(); tray.Visible = false; tray.Dispose(); trayMenu.Dispose(); importPackMenu.Dispose(); managePackMenu.Dispose(); pictures.Dispose(); packPictures.Dispose(); };
             BuildTrayMenu();
         }
 
@@ -524,7 +524,7 @@ namespace BetterIcon.Tray
             finally { apps.EndUpdate(); }
         }
         void SetFilter(string value) { filterText = value; FilterApps(); }
-        bool CanFilter { get { return Enabled && pages.SelectedTab == launcherPage && !themes.DroppedDown && !scopes.DroppedDown && !trayMenu.Visible; } }
+        bool CanFilter { get { return Enabled && pages.SelectedTab == launcherPage && !themes.DroppedDown && !scopes.DroppedDown && !trayMenu.Visible && !importPackMenu.Visible && !managePackMenu.Visible; } }
         bool HandlePopupKey(Keys key)
         {
             if (key == Keys.Escape && Enabled && pages.SelectedTab == settingsPage && !themes.DroppedDown && !scopes.DroppedDown && !busy) { pages.SelectedTab = launcherPage; apps.Focus(); return true; }

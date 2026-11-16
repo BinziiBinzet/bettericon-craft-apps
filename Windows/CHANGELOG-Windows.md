@@ -1,5 +1,11 @@
 # Windows installer changelog
 
+## 1.8.0 - 2026-11-16
+
+- Organize Settings into Icon pack, Launcher, and Windows shortcuts sections with consistent spacing and automatically sized rows.
+- Replace the crowded pack toolbar with Import, New pack, and Pack actions. Retain all pack operations, with unavailable actions disabled.
+- Scroll the settings content vertically as needed and keep status and footer buttons in separate rows. Open pack menus retain focus and cannot trigger launcher filtering.
+
 ## 1.7.0 - 2026-11-16
 
 - Arrange launcher icons in a compact grid with centered app names underneath, retaining native selection, keyboard navigation, filtering, and launch behavior.
