@@ -1,6 +1,6 @@
 # BetterIcon-Craft Apps for Windows
 
-Windows version **1.10.0** includes a native tray launcher alongside the existing icon installer. It shares the repository's artwork and leaves Craft executables, app settings, file associations, and the registry unchanged.
+Windows version **1.11.0** includes a native tray launcher alongside the existing icon installer. It shares the repository's artwork and leaves Craft executables, app settings, file associations, and the registry unchanged.
 
 ## Start here
 
@@ -17,7 +17,7 @@ Choose **Exit** in Settings or the tray menu, or use **Windows/Stop-Tray.cmd** t
 
 Press **Ctrl+Alt+Shift+A** from any app to open the popup centered on your mouse cursor. Near an edge it moves just enough to stay within that monitor's working area, clear of the taskbar. Pressing the hotkey again repositions the existing popup at the current cursor. Tray clicks still open it above the tray and toggle it closed.
 
-The Launcher uses a compact grid with app names centered underneath their icons. In **Settings > Launcher**, move **Icon size** to choose 24–128 pixels. Both the Launcher and the icon pack preview in Settings update immediately and remember the size after restarting. **Reset** restores the 48-pixel default in both grids. Names wrap below the artwork, with full names available in tooltips; larger sizes can require scrolling. This changes only the app's display, leaving shortcut icons and pack artwork unchanged.
+The Launcher uses a compact grid with app names centered underneath their icons. In **Settings > Launcher**, move **Icon size** from 24 pixels up to the largest available artwork in the selected pack and installed-app previews. The bundled PNG artwork supports 1024–1254 pixels, and custom PNGs can use the existing 4096-pixel image limit. Both tabs use the original artwork at larger sizes and remember the size after restarting. **Reset** restores 48 pixels. Names wrap below the artwork, with full names in tooltips; larger icons require scrolling. Choosing a pack with smaller artwork adjusts the slider range and size to fit its available resolution. This changes the app's display; applying shortcut icons remains a separate operation.
 
 You can also hold **Ctrl** and turn the **mouse wheel** over the Launcher to resize icons: wheel up enlarges them, wheel down makes them smaller, in 8-pixel steps. This updates the same slider and saved size for both tabs. Scrolling without Ctrl scrolls the grid normally.
 
@@ -83,7 +83,7 @@ All **13 current themes** are available: seven by **OmegaDarling**, five in **Cr
 
 OmegaDarling's themes retain the legacy `Craft-Icons-Zach` folder and IDs so saved selections, applied icons, and restore records remain compatible. Their public author credit is **OmegaDarling** in the app and command-line theme listing.
 
-PNG artwork is converted locally to transparent Windows ICOs containing 16, 24, 32, 48, 64, 128, and 256-pixel frames. Aspect ratio is preserved. Source images are never rewritten. An existing ICO is preferred over a PNG for the same app; duplicate ICOs or duplicate PNGs are reported as ambiguous. ICNS/SVG-only artwork is not selectable.
+PNG artwork is converted locally to transparent Windows ICOs containing 16, 24, 32, 48, 64, 128, and 256-pixel frames for Windows shortcuts. The Windows ZIP also retains each original PNG for high-resolution Launcher and Settings previews. Aspect ratio is preserved and source images are never rewritten. An existing ICO is preferred for shortcut application; its matching PNG supplies the larger preview when available. Duplicate ICOs or duplicate PNGs remain ambiguous. ICNS/SVG-only artwork is not selectable.
 
 Theme discovery understands flat PNG folders, root-level pack artwork, and nested `ico/` folders. Use recognized app names such as `PhotoCraft.png`. A full `Pack/Theme` ID disambiguates identical theme names; the circleb theme uses `Craft-Icons-circleb/Root`. Overview sheets are ignored. Missing artwork is skipped when applying; the tray tries the shortcut's existing icon before its own fallback. ArtCraft Launcher is launch-only because the shared themes do not supply artwork for it. The command-line theme list covers repository artwork; the tray's Settings manages the personal library.
 

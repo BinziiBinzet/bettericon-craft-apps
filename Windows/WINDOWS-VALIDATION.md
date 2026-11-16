@@ -1,5 +1,13 @@
 # Windows validation
 
+## 1.11.0 larger artwork - 2026-11-16
+
+All 168 local native checks passed. New checks verify source-dependent slider limits, original PNG availability, native 512/1024-pixel images in both grids, complete icon bounds with labels underneath, exact one-pixel source detail and transparency, cache reuse, native handle recreation, right-click targeting above 256 pixels, clean scrolling Settings, range reduction when changing packs, and hidden startup with a saved 512-pixel size. Existing native wheel checks reach the actual bundled-artwork maximum instead of the former 128-pixel ceiling.
+
+The bundle contains 218 original PNG previews alongside 218 shortcut ICOs. All PNG bytes match their source artwork; source dimensions are 1024, 1083, or 1254 pixels square. Windows shortcut installation still uses the native ICO files. Personal PNGs retain the existing 4096-pixel limit. Native rendering is used above the WinForms ImageList limit, with explicit ownership and cleanup. Compact views start with small caches that grow only as needed.
+
+All 120 installer checks passed on both Windows PowerShell 5.1 and PowerShell 7, including installed shortcut copies with originals unchanged. All 18 JSON bridge checks passed. Builds, packaging, pixel checks, native event checks, and fixture restoration ran locally. No Computer Use or new visual inspection was performed for this version.
+
 ## 1.10.0 icon context menus - 2026-11-16
 
 All 155 local native checks passed. New checks dispatch native context-menu messages to both icon grids, verify the clicked app and location rather than an earlier selection, reject empty-space and busy requests, disable missing backups, support keyboard requests, and keep menu keys from filtering or switching tabs. Settings and default-pack previews use the selected shortcut locations.

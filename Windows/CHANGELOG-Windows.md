@@ -1,5 +1,12 @@
 # Windows installer changelog
 
+## 1.11.0 - 2026-11-16
+
+- Replace the 128-pixel display ceiling with a range based on available artwork, including the bundled 1024–1254-pixel PNGs and larger custom PNGs.
+- Use full-size native image lists above 256 pixels while retaining grid labels, keyboard selection, scrolling, filtering, and right-click restoration.
+- Grow preview caches as needed when zooming, reuse them for nearby slider/wheel steps, and retain larger saved sizes across restarts.
+- Include original PNGs alongside shortcut ICOs in the Windows ZIP. Prefer the larger preview when customizing a built-in pack.
+
 ## 1.10.0 - 2026-11-16
 
 - Right-click an icon in Launcher or the Settings preview to restore that app's ArtCraft default through the existing review and backup workflow.

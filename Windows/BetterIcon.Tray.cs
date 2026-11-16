@@ -29,7 +29,7 @@ namespace BetterIcon.Tray
         public int OriginalIconIndex { get; set; }
         public bool RestoreAvailable { get; set; }
     }
-    public sealed class ThemeIcon { public string Application { get; set; } public string Path { get; set; } }
+    public sealed class ThemeIcon { public string Application { get; set; } public string Path { get; set; } public string PreviewPath { get; set; } }
     public sealed class ThemeEntry
     {
         public const string DefaultThemeId = "ArtCraft/Default";
@@ -88,7 +88,7 @@ namespace BetterIcon.Tray
     public sealed class FixtureConfig { public string[] ShortcutDirectory { get; set; } public string StateDirectory { get; set; } public bool KeepOpenForAutomation { get; set; } }
     public sealed class Preferences
     {
-        public const int DefaultIconSize = 48, MinimumIconSize = 24, MaximumIconSize = 128;
+        public const int DefaultIconSize = 48, MinimumIconSize = 24, MaximumIconSize = 4096;
         int iconSize = DefaultIconSize;
         public string Theme { get; set; }
         public string Scope { get; set; }
@@ -175,14 +175,54 @@ namespace BetterIcon.Tray
     public sealed class IconGridView : ListView
     {
         [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
+        [DllImport("comctl32.dll")] static extern IntPtr ImageList_Create(int width, int height, uint flags, int initial, int grow);
+        [DllImport("comctl32.dll")] static extern int ImageList_ReplaceIcon(IntPtr list, int index, IntPtr icon);
+        [DllImport("comctl32.dll")] static extern bool ImageList_Destroy(IntPtr list);
+        [DllImport("user32.dll")] static extern bool DestroyIcon(IntPtr icon);
+        IntPtr largeArtwork;
         int iconSize = Preferences.DefaultIconSize;
         public event Action<int> IconSizeWheel;
         public event Action<Point?> IconMenuRequested;
         public Size GridCellSize { get { return new Size(Math.Max(112, iconSize + 24), iconSize + Font.Height * 2 + 16); } }
         public IconGridView() { View = View.LargeIcon; AutoArrange = true; Alignment = ListViewAlignment.Top; LabelWrap = true; DoubleBuffered = true; }
         public void SetIconSize(int size) { iconSize = size; UpdateSpacing(); }
-        protected override void OnHandleCreated(EventArgs e) { base.OnHandleCreated(e); UpdateSpacing(); }
+        protected override CreateParams CreateParams { get { CreateParams value = base.CreateParams; value.Style |= 0x0040; return value; } }
+        protected override void OnHandleCreated(EventArgs e) { base.OnHandleCreated(e); if (largeArtwork != IntPtr.Zero) SendMessage(Handle, 0x1003, IntPtr.Zero, largeArtwork); UpdateSpacing(); }
         protected override void OnFontChanged(EventArgs e) { base.OnFontChanged(e); UpdateSpacing(); }
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && largeArtwork != IntPtr.Zero) {
+                if (IsHandleCreated) SendMessage(Handle, 0x1003, IntPtr.Zero, IntPtr.Zero);
+                ImageList_Destroy(largeArtwork); largeArtwork = IntPtr.Zero;
+            }
+            base.Dispose(disposing);
+        }
+        public void SetArtwork(IList<Bitmap> artwork, int size)
+        {
+            // WinForms ImageList caps ImageSize at 256. Native lists retain full-sized
+            // artwork while keeping native labels, selection, scrolling and hit testing.
+            IntPtr replacement = IntPtr.Zero;
+            try {
+                if (size > 256 && artwork.Count != 0) {
+                    replacement = ImageList_Create(size, size, 0x0021, artwork.Count, 1);
+                    if (replacement == IntPtr.Zero) throw new OutOfMemoryException("Windows could not allocate the larger icons.");
+                    foreach (Bitmap source in artwork) using (Bitmap scaled = new Bitmap(size, size)) {
+                        using (Graphics canvas = Graphics.FromImage(scaled)) {
+                            canvas.Clear(Color.Transparent); canvas.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                            canvas.DrawImage(source, new Rectangle(0, 0, size, size));
+                        }
+                        IntPtr icon = scaled.GetHicon();
+                        try { if (ImageList_ReplaceIcon(replacement, -1, icon) < 0) throw new OutOfMemoryException("Windows could not load the larger icons."); }
+                        finally { DestroyIcon(icon); }
+                    }
+                }
+                IntPtr previous = largeArtwork; largeArtwork = replacement; replacement = IntPtr.Zero;
+                if (IsHandleCreated) SendMessage(Handle, 0x1003, IntPtr.Zero, largeArtwork != IntPtr.Zero ? largeArtwork : LargeImageList.Handle);
+                if (previous != IntPtr.Zero) ImageList_Destroy(previous);
+                SetIconSize(size);
+            }
+            finally { if (replacement != IntPtr.Zero) ImageList_Destroy(replacement); }
+        }
         protected override void WndProc(ref Message message)
         {
             // WM_CONTEXTMENU covers right-click, Shift+F10 and the menu key.
@@ -222,6 +262,9 @@ namespace BetterIcon.Tray
         readonly IconGridView apps = new IconGridView();
         readonly List<ListViewItem> appTiles = new List<ListViewItem>();
         readonly List<Bitmap> appArtwork = new List<Bitmap>();
+        sealed class ArtworkSource { public string Path; public int Index, MaximumSize; }
+        readonly List<ArtworkSource> appSources = new List<ArtworkSource>();
+        bool renderingArtwork;
         readonly Label filterHint = new Label();
         readonly Label status = new Label();
         readonly Label previewLabel = new Label();
@@ -328,7 +371,7 @@ namespace BetterIcon.Tray
             launcherPage.BackColor = Color.White; launcherPage.Padding = new Padding(18);
             settingsPage.BackColor = BackColor;
             pages.TabPages.AddRange(new[] { launcherPage, settingsPage }); Controls.Add(pages);
-            pictures.ImageSize = new Size(preferences.IconSize, preferences.IconSize); pictures.ColorDepth = ColorDepth.Depth32Bit;
+            pictures.ImageSize = new Size(Math.Min(256, preferences.IconSize), Math.Min(256, preferences.IconSize)); pictures.ColorDepth = ColorDepth.Depth32Bit;
             // Force native copies before temporary thumbnails are disposed at hidden startup.
             if (pictures.Handle == IntPtr.Zero) throw new InvalidOperationException("Could not create the app icon list.");
             apps.Dock = DockStyle.Fill; apps.SetIconSize(preferences.IconSize); apps.LargeImageList = pictures;
@@ -490,9 +533,69 @@ namespace BetterIcon.Tray
             catch (Exception) { using (Graphics canvas = Graphics.FromImage(image)) canvas.DrawIcon(fallback, new Rectangle(0, 0, size, size)); }
             return image;
         }
-        void ClearAppArtwork() { foreach (Bitmap image in appArtwork) image.Dispose(); appArtwork.Clear(); }
+        static string PreviewPath(ThemeIcon artwork) { return String.IsNullOrEmpty(artwork.PreviewPath) ? artwork.Path : artwork.PreviewPath; }
+        static ArtworkSource DescribeArtwork(string path, int index)
+        {
+            path = path ?? "";
+            int maximum = 128;
+            try {
+                string extension = Path.GetExtension(path).ToLowerInvariant();
+                if (extension == ".png") using (Image source = Image.FromFile(path)) maximum = Math.Max(source.Width, source.Height);
+                else if (extension == ".ico") using (BinaryReader reader = new BinaryReader(File.OpenRead(path))) {
+                    if (reader.ReadUInt16() == 0 && reader.ReadUInt16() == 1) {
+                        int count = reader.ReadUInt16();
+                        if (count > 1024) throw new IOException("Invalid icon directory.");
+                        for (int i = 0; i < count; i++) {
+                            int width = reader.ReadByte(), height = reader.ReadByte(); reader.ReadBytes(14);
+                            maximum = Math.Max(maximum, Math.Max(width == 0 ? 256 : width, height == 0 ? 256 : height));
+                        }
+                    }
+                }
+                else if (extension == ".exe" || extension == ".dll" || extension == ".icl") maximum = 256;
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            catch (ArgumentException) { }
+            catch (OutOfMemoryException) { }
+            catch (ExternalException) { }
+            return new ArtworkSource { Path = path, Index = index, MaximumSize = Math.Max(128, Math.Min(Preferences.MaximumIconSize, maximum)) };
+        }
+        void AddArtwork(List<Bitmap> images, List<ArtworkSource> sources, string path, int index)
+        {
+            sources.Add(DescribeArtwork(path, index)); images.Add(Thumbnail(path, Icon, 128, index));
+        }
+        void EnsureArtworkSize(List<Bitmap> images, List<ArtworkSource> sources, int size)
+        {
+            int requested = 128; while (requested < size) requested *= 2;
+            for (int i = 0; i < images.Count; i++) {
+                int needed = Math.Min(requested, sources[i].MaximumSize);
+                if (images[i].Width >= needed) continue;
+                Bitmap replacement = Thumbnail(sources[i].Path, Icon, needed, sources[i].Index);
+                images[i].Dispose(); images[i] = replacement;
+            }
+        }
+        void RenderSelection()
+        {
+            renderingArtwork = true;
+            try { RenderApps(); RenderPack(); }
+            finally { renderingArtwork = false; }
+            UpdateIconSizeLimit(); ResizeAppIcons(); ResizePackIcons();
+        }
+        void UpdateIconSizeLimit()
+        {
+            int maximum = appSources.Concat(packSources).Select(source => source.MaximumSize).DefaultIfEmpty(128).Max();
+            int previous = preferences.IconSize;
+            int requested = Math.Min(preferences.IconSize, maximum);
+            iconSizeSlider.Maximum = maximum; iconSizeSlider.Value = requested;
+            // TrackBar.Maximum can clamp Value without raising ValueChanged.
+            preferences.IconSize = iconSizeSlider.Value; iconSizeValue.Text = preferences.IconSize + " px";
+            if (previous != preferences.IconSize) SavePreferences();
+            iconSizeSlider.AccessibleDescription = "Size in pixels, from 24 to " + maximum + ", based on available artwork. Updates both tabs.";
+        }
+        void ClearAppArtwork() { foreach (Bitmap image in appArtwork) image.Dispose(); appArtwork.Clear(); appSources.Clear(); }
         static void ResizeArtwork(ImageList images, IEnumerable<Bitmap> artwork, int size)
         {
+            size = Math.Min(256, size);
             images.Images.Clear(); images.ImageSize = new Size(size, size);
             // ImageSize recreates the native list; materialize it before temporary bitmaps are disposed.
             if (images.Handle == IntPtr.Zero) throw new InvalidOperationException("Could not resize icons.");
@@ -515,12 +618,11 @@ namespace BetterIcon.Tray
                 foreach (AppEntry entry in catalog.Apps) {
                     bool original = (theme != null && theme.IsDefault) || (preferences.DefaultShortcuts ?? new string[0]).Contains(entry.Shortcut, StringComparer.OrdinalIgnoreCase);
                     ThemeIcon artwork = original || theme == null ? null : theme.Icons.FirstOrDefault(i => i.Application == entry.Application);
-                    // Cache at the maximum launcher size so dragging the slider never rereads artwork from disk.
-                    appArtwork.Add(Thumbnail(artwork == null ? Environment.ExpandEnvironmentVariables((original ? entry.OriginalIconPath : entry.IconPath) ?? "") : artwork.Path, Icon, Preferences.MaximumIconSize, artwork != null ? 0 : original ? entry.OriginalIconIndex : entry.IconIndex));
+                    AddArtwork(appArtwork, appSources, artwork == null ? Environment.ExpandEnvironmentVariables((original ? entry.OriginalIconPath : entry.IconPath) ?? "") : PreviewPath(artwork), artwork != null ? 0 : original ? entry.OriginalIconIndex : entry.IconIndex);
                     ListViewItem item = new ListViewItem(entry.Name, appArtwork.Count-1) { Tag = entry, ToolTipText = entry.Name + Environment.NewLine + entry.Shortcut };
                     appTiles.Add(item);
                 }
-                ResizeAppIcons();
+                if (!renderingArtwork) { UpdateIconSizeLimit(); ResizeAppIcons(); }
             }
             finally { apps.EndUpdate(); }
         }
@@ -530,7 +632,8 @@ namespace BetterIcon.Tray
             int size = preferences.IconSize;
             apps.BeginUpdate();
             try {
-                ResizeArtwork(pictures, appArtwork, size); apps.SetIconSize(size);
+                EnsureArtworkSize(appArtwork, appSources, size);
+                ResizeArtwork(pictures, appArtwork, size); apps.SetArtwork(appArtwork, size);
                 FilterApps();
                 if (selected != null && apps.Items.Contains(selected)) {
                     foreach (ListViewItem item in appTiles) item.Selected = item.Focused = false;

@@ -14,6 +14,8 @@ using BetterIcon.Tray;
 static class TrayTests
 {
     [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
+    [DllImport("comctl32.dll")] static extern bool ImageList_GetIconSize(IntPtr list, out int width, out int height);
+    [DllImport("comctl32.dll")] static extern bool ImageList_Draw(IntPtr list, int index, IntPtr dc, int x, int y, uint flags);
     static readonly List<object> checks = new List<object>();
     static void Check(bool ok, string name)
     {
@@ -51,6 +53,101 @@ static class TrayTests
             for (int x = 0; x < first.Width; x++)
                 if (first.GetPixel(x, y) != second.GetPixel(x, y)) return false;
         return true;
+    }
+    static Bitmap GridImage(ListView grid, int index)
+    {
+        IntPtr list = SendMessage(grid.Handle, 0x1002, IntPtr.Zero, IntPtr.Zero);
+        int width, height;
+        if (!ImageList_GetIconSize(list, out width, out height)) throw new Exception("No native icon list attached.");
+        Bitmap output = new Bitmap(width, height);
+        using (Graphics canvas = Graphics.FromImage(output)) {
+            canvas.Clear(Color.Lime); IntPtr dc = canvas.GetHdc();
+            try { if (!ImageList_Draw(list, index, dc, 0, 0, 1)) throw new Exception("Native icon drawing failed."); }
+            finally { canvas.ReleaseHdc(dc); }
+        }
+        return output;
+    }
+    static void CheckLargeArtwork(LauncherForm form, string root, string preferencesPath, JavaScriptSerializer json)
+    {
+        BindingFlags instance = BindingFlags.Instance | BindingFlags.NonPublic;
+        Func<string, object> field = name => typeof(LauncherForm).GetField(name, instance).GetValue(form);
+        PackLibrary library = (PackLibrary)field("library");
+        TrackBar slider = (TrackBar)field("iconSizeSlider");
+        ListView launcher = (ListView)field("apps"), preview = (ListView)field("packPreview");
+        List<Bitmap> cached = (List<Bitmap>)field("appArtwork");
+        ComboBox themes = (ComboBox)field("themes");
+        TabControl pages = (TabControl)field("pages");
+        string file = Path.Combine(root, "high-detail.png");
+        using (Bitmap bitmap = new Bitmap(1024, 1024)) {
+            using (Graphics canvas = Graphics.FromImage(bitmap)) {
+                canvas.Clear(Color.Transparent);
+                for (int x = 32; x < 992; x++) canvas.FillRectangle(x % 2 == 0 ? Brushes.Red : Brushes.Blue, x, 32, 1, 960);
+            }
+            bitmap.Save(file, System.Drawing.Imaging.ImageFormat.Png);
+        }
+        ThemeEntry high = library.Save("High detail fixture", new Dictionary<string, string> { { "PhotoCraft", file } }, null);
+        typeof(LauncherForm).GetMethod("ReloadLibrary", instance).Invoke(form, new object[] { high.Id });
+        Check(slider.Maximum == 1024 && cached.All(image => image.Width == 128), "The size limit follows available PNG resolution while compact startup keeps small caches");
+        slider.Value = 512;
+        using (Bitmap app = GridImage(launcher, 0)) using (Bitmap pack = GridImage(preview, 0))
+            Check(app.Size == new Size(512, 512) && pack.Size == app.Size, "Both native icon grids display actual 512-pixel images beyond the WinForms ImageList limit");
+        pages.SelectedIndex = 0;
+        Check(launcher.GetItemRect(0, ItemBoundsPortion.Icon).Width >= 512 && launcher.GetItemRect(0, ItemBoundsPortion.Label).Top >= launcher.GetItemRect(0, ItemBoundsPortion.Icon).Bottom,
+            "Large native icons keep their complete hit area and app names underneath");
+        slider.Value = 1024;
+        using (Bitmap app = GridImage(launcher, 0)) using (Bitmap pack = GridImage(preview, 0)) {
+            Check(app.Size == new Size(1024, 1024) && pack.Size == app.Size && cached[0].Width == 1024,
+                "Zooming loads full-resolution artwork into both grids");
+            Check(new[] { 258, 259, 610, 611 }.All(x => app.GetPixel(x, 200).ToArgb() == (x % 2 == 0 ? Color.Red : Color.Blue).ToArgb()
+                && pack.GetPixel(x, 200).ToArgb() == app.GetPixel(x, 200).ToArgb()) && app.GetPixel(0, 0).ToArgb() == Color.Lime.ToArgb(),
+                "Native 1024-pixel rendering preserves one-pixel source detail and transparency instead of enlarging a small thumbnail");
+        }
+        IntPtr before = SendMessage(launcher.Handle, 0x1002, IntPtr.Zero, IntPtr.Zero);
+        typeof(Control).GetMethod("RecreateHandle", instance).Invoke(launcher, null);
+        using (Bitmap app = GridImage(launcher, 0)) Check(SendMessage(launcher.Handle, 0x1002, IntPtr.Zero, IntPtr.Zero) == before && app.Width == 1024,
+            "Recreating a native grid handle retains ownership and full-size artwork");
+        Check(json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).IconSize == 1024, "Larger icon sizes persist without the former 128-pixel clamp");
+        Bitmap[] sources = cached.ToArray(); slider.Value = 512; slider.Value = 520;
+        Check(cached.SequenceEqual(sources), "Nearby zoom steps reuse the larger artwork cache");
+        RequestIconMenu(launcher, launcher.Items[0]);
+        ContextMenuStrip menu = (ContextMenuStrip)field("iconMenu");
+        Check(menu.Visible && ((AppEntry)field("iconMenuTarget")).Application == "PhotoCraft", "Right-click targeting remains correct above 256 pixels");
+        menu.Close();
+        pages.SelectedIndex = 1;
+        Panel scroll = (Panel)field("settingsScroll");
+        TableLayoutPanel content = (TableLayoutPanel)field("settingsContent");
+        form.PerformLayout(); content.PerformLayout();
+        Check(SettingsLayoutProblem(content) == null && content.Width <= scroll.ClientSize.Width && preview.Height >= 520,
+            "Larger previews grow within the scrolling Settings layout without overlapping controls");
+        themes.SelectedIndex = 0;
+        Check(slider.Maximum == 128 && slider.Value == 128 && json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).IconSize == 128 && (IntPtr)typeof(IconGridView).GetField("largeArtwork", instance).GetValue(launcher) == IntPtr.Zero,
+            "Switching to smaller artwork adjusts the range and releases the oversized native list");
+        typeof(LauncherForm).GetMethod("ReloadLibrary", instance).Invoke(form, new object[] { high.Id }); slider.Value = 512;
+    }
+    static void CheckLargeStartup(string root, string source)
+    {
+        using (EventWaitHandle show = new EventWaitHandle(false, EventResetMode.AutoReset))
+        using (EventWaitHandle stop = new EventWaitHandle(false, EventResetMode.AutoReset))
+        using (LauncherForm form = new LauncherForm(source, new FixtureConfig { ShortcutDirectory = new[] { root }, StateDirectory = Path.Combine(root, "state"), KeepOpenForAutomation = true }, true, show, stop))
+        using (LauncherContext context = new LauncherContext(form))
+        using (System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer { Interval = 50 }) {
+            Exception failure = null; int ticks = 0;
+            timer.Tick += delegate {
+                try {
+                    BindingFlags instance = BindingFlags.Instance | BindingFlags.NonPublic;
+                    if (++ticks > 600) throw new Exception("Large-icon startup did not finish.");
+                    if ((bool)typeof(LauncherForm).GetField("busy", instance).GetValue(form) || typeof(LauncherForm).GetField("catalog", instance).GetValue(form) == null) return;
+                    timer.Stop();
+                    TrackBar slider = (TrackBar)typeof(LauncherForm).GetField("iconSizeSlider", instance).GetValue(form);
+                    ListView launcher = (ListView)typeof(LauncherForm).GetField("apps", instance).GetValue(form), preview = (ListView)typeof(LauncherForm).GetField("packPreview", instance).GetValue(form);
+                    using (Bitmap app = GridImage(launcher, 0)) using (Bitmap pack = GridImage(preview, 0))
+                        Check(!form.Visible && slider.Value == 512 && slider.Maximum == 1024 && app.Width == 512 && pack.Width == 512, "Hidden startup restores large saved icons in both native grids without a 256-pixel initialization error");
+                    stop.Set();
+                }
+                catch (Exception error) { failure = error; timer.Stop(); context.ExitThread(); }
+            };
+            timer.Start(); Application.Run(context); if (failure != null) throw failure;
+        }
     }
     static void RequestIconMenu(ListView grid, ListViewItem item)
     {
@@ -215,10 +312,10 @@ static class TrayTests
             catalog.Apps[3].OriginalIconPath = original; catalog.Apps[3].OriginalIconIndex = 0;
             call("ReloadLibrary", new object[] { themed.Id });
             ThemeIcon themedPhoto = ((ThemeEntry)themes.SelectedItem).Icons.First(icon => icon.Application == "PhotoCraft");
-            string previousArtwork = themedPhoto.Path, previousCurrentIcon = catalog.Apps[0].IconPath;
+            string previousArtwork = themedPhoto.Path, previousPreview = themedPhoto.PreviewPath, previousCurrentIcon = catalog.Apps[0].IconPath;
             int previousIndex = catalog.Apps[0].IconIndex;
             try {
-                themedPhoto.Path = compressedIcon;
+                themedPhoto.Path = compressedIcon; themedPhoto.PreviewPath = null;
                 catalog.Apps[0].IconPath = shellLibrary; catalog.Apps[0].IconIndex = 2;
                 call("RenderApps", null); call("RenderPack", null);
                 int photoPreview = packPreview.Items.Cast<ListViewItem>().ToList().FindIndex(item => item.Text == "PhotoCraft");
@@ -226,7 +323,7 @@ static class TrayTests
                     "Pack ICO artwork ignores the current shortcut's native resource index in both grids");
             }
             finally {
-                themedPhoto.Path = previousArtwork;
+                themedPhoto.Path = previousArtwork; themedPhoto.PreviewPath = previousPreview;
                 catalog.Apps[0].IconPath = previousCurrentIcon; catalog.Apps[0].IconIndex = previousIndex;
                 call("RenderApps", null); call("RenderPack", null);
             }
@@ -391,7 +488,7 @@ static class TrayTests
             JavaScriptSerializer json = new JavaScriptSerializer();
             Preferences migrated = json.Deserialize<Preferences>("{\"Theme\":\"Satin\",\"Scope\":\"AllUsers\"}");
             Check(migrated.Hotkey.Enabled && migrated.Hotkey.ToString() == "Ctrl+Alt+Shift+A" && migrated.Theme == "Satin" && migrated.Scope == "AllUsers", "Old theme and scope preferences acquire the chosen default hotkey");
-            Check(migrated.IconSize == 48 && json.Deserialize<Preferences>("{\"IconSize\":1}").IconSize == 24 && json.Deserialize<Preferences>("{\"IconSize\":999}").IconSize == 128, "Older preferences keep 48-pixel icons and invalid saved sizes are bounded safely");
+            Check(migrated.IconSize == 48 && json.Deserialize<Preferences>("{\"IconSize\":1}").IconSize == 24 && json.Deserialize<Preferences>("{\"IconSize\":99999}").IconSize == 4096 && json.Deserialize<Preferences>("{\"IconSize\":1024}").IconSize == 1024, "Older preferences keep 48-pixel icons while larger saved sizes remain supported and invalid sizes are bounded");
             HotkeySettings first = new HotkeySettings { Key = (int)Keys.F23 }, second = new HotkeySettings { Key = (int)Keys.F22 };
             string hotkeyError;
             int received = 0;
@@ -511,7 +608,7 @@ static class TrayTests
                         Bitmap[] sources = cached.ToArray(), previewSources = previewCached.ToArray();
                         previewGrid.Items[1].Selected = true;
                         foreach (int size in new[] { 24, 128, 32, 96 }) slider.Value = size;
-                        Check(launcherImages.ImageSize == new Size(96, 96) && launcherImages.Images.Count == 3 && cached.SequenceEqual(sources) && list.GetItemRect(0, ItemBoundsPortion.Label).Top >= list.GetItemRect(0, ItemBoundsPortion.Icon).Bottom, "Resizing through the full range retains valid cached launcher artwork and labels below icons");
+                        Check(launcherImages.ImageSize == new Size(96, 96) && launcherImages.Images.Count == 3 && cached.SequenceEqual(sources) && list.GetItemRect(0, ItemBoundsPortion.Label).Top >= list.GetItemRect(0, ItemBoundsPortion.Icon).Bottom, "Resizing through compact sizes retains cached launcher artwork and labels below icons");
                         Check(previewImages.ImageSize == launcherImages.ImageSize && previewImages.Images.Count == previewGrid.Items.Count && previewCached.SequenceEqual(previewSources) && previewGrid.SelectedItems.Count == 1 && previewGrid.SelectedItems[0].Index == 1 && previewGrid.GetItemRect(0, ItemBoundsPortion.Label).Top >= previewGrid.GetItemRect(0, ItemBoundsPortion.Icon).Bottom, "The Settings preview resizes immediately from cached artwork while retaining its selection and labels below icons");
                         pages.SelectedIndex = 0; type("f"); list.Items[0].Selected = false; list.Items[1].Selected = true;
                         pages.SelectedIndex = 1; slider.Value = 64;
@@ -528,8 +625,8 @@ static class TrayTests
                         Check(slider.Value == 40, "Ctrl+wheel zooms out and waits for a complete fine-resolution wheel step");
                         wheel(60, true); wheel(120, false);
                         Check(slider.Value == 48, "Partial Ctrl+wheel steps accumulate while ordinary scrolling leaves size unchanged");
-                        wheel(2400, true); bool reachedMaximum = slider.Value == 128;
-                        wheel(-2400, true); bool reachedMinimum = slider.Value == 24;
+                        wheel(32760, true); bool reachedMaximum = slider.Value == slider.Maximum && slider.Maximum > 256;
+                        wheel(-32760, true); bool reachedMinimum = slider.Value == 24;
                         typeof(LauncherForm).GetMethod("SetBusy", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(form, new object[] { true, null });
                         wheel(120, true);
                         Check(reachedMaximum && reachedMinimum && slider.Value == 24, "Ctrl+wheel respects size bounds and cannot resize during a busy operation");
@@ -591,6 +688,7 @@ static class TrayTests
                         HotkeySettings off = second.Copy(); off.Enabled = false;
                         Check(saveHotkey.Invoke(form, new object[] { off }) == null && !json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).Hotkey.Enabled, "Disabled hotkey is saved for subsequent launches");
                         CheckDefaultAndIndividualRestore(form, root, preferencesPath, json);
+                        CheckLargeArtwork(form, root, preferencesPath, json);
                         stop.Set(); // Exercise normal shutdown through the same message loop.
                     }
                     catch (Exception error) { eventFailure = error; timer.Stop(); context.ExitThread(); }
@@ -598,6 +696,7 @@ static class TrayTests
                 timer.Start(); Application.Run(context);
                 if (eventFailure != null) throw eventFailure;
             }
+            CheckLargeStartup(root, args[1]);
             CheckContextRestore(root, args[1], json);
         }
         catch (Exception error) { failure = error.ToString(); Console.Error.WriteLine(failure); }

@@ -19,6 +19,9 @@ static class PackTests
         ThemeEntry[] omega = catalog.Themes.Where(t => t.Pack == "Craft-Icons-Zach").ToArray();
         check(omega.Length == 7 && omega.All(t => t.Author == "OmegaDarling" && t.ToString().Contains("OmegaDarling") && t.Id.StartsWith("Craft-Icons-Zach/")), "OmegaDarling credits are public while existing pack IDs stay stable");
         check(catalog.Themes.Length == 13 && catalog.Themes.Sum(t => t.IconCount) == 218 && !catalog.Themes.Any(t => t.Name == "OilSlick"), "Oil Slick is retired from the 13-theme, 218-icon catalog");
+        check(catalog.Themes.SelectMany(t => t.Icons).All(icon => !String.IsNullOrEmpty(icon.PreviewPath) && Path.GetExtension(icon.PreviewPath).Equals(".png", StringComparison.OrdinalIgnoreCase) && File.Exists(icon.PreviewPath))
+            && catalog.Themes.All(theme => { using (Image image = Image.FromFile(theme.Icons[0].PreviewPath)) return Math.Max(image.Width, image.Height) > 256; }),
+            "The catalog retains original high-resolution PNG previews alongside native shortcut artwork");
         check(library.VisibleThemes(catalog.Themes).Length == catalog.Themes.Length, "An empty personal library preserves all bundled packs");
         string input = Path.Combine(state, "Imported sample"); Directory.CreateDirectory(input);
         string png = Path.Combine(input, "PhotoCraft.png");

@@ -1,7 +1,7 @@
-# BetterIcon-Craft Apps Windows support, version 1.10.0.
+# BetterIcon-Craft Apps Windows support, version 1.11.0.
 # No network access, executable patching, registry changes, or Explorer restart.
 Set-StrictMode -Version Latest
-$script:Version = '1.10.0'
+$script:Version = '1.11.0'
 $script:RepositoryRoot = Split-Path -Parent $PSScriptRoot
 $script:Applications = @('PhotoCraft','VectorCraft','FilmCraft','LightCraft','PdfCraft',
     'EffectCraft','AniCraft','DesignCraft','FigCraft','TextureCraft','MaterialCraft',
@@ -165,8 +165,12 @@ function Get-BetterIconThemeIcon {
     param([Parameter(Mandatory)][string]$Theme, [string]$Repository = $script:RepositoryRoot)
     $selected = Resolve-Theme $Theme $Repository
     $map = Get-IconMap $selected
+    $previews = @(Get-RegularFiles $selected.Path '.png')
     foreach ($app in @($map.Keys | Sort-Object)) {
-        if (@($map[$app]).Count -eq 1) { [pscustomobject]@{ Application = $app; Path = $map[$app][0] } }
+        if (@($map[$app]).Count -eq 1) {
+            $png = @($previews | Where-Object { (Get-AppName $_.BaseName -Icon) -eq $app })
+            [pscustomobject]@{ Application = $app; Path = $map[$app][0]; PreviewPath = $(if ($png.Count -eq 1) { $png[0].FullName } else { $map[$app][0] }) }
+        }
     }
 }
 

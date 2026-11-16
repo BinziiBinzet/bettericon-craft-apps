@@ -36,7 +36,7 @@ namespace BetterIcon.Tray
             grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Artwork", HeaderText = "Artwork", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, ReadOnly = true });
             grid.Columns.Add(new DataGridViewButtonColumn { Name = "Choose", HeaderText = "", Text = "Choose...", UseColumnTextForButtonValue = true, Width = 90 });
             grid.Columns.Add(new DataGridViewButtonColumn { Name = "Clear", HeaderText = "", Text = "Clear", UseColumnTextForButtonValue = true, Width = 65 });
-            if (basis != null) foreach (ThemeIcon icon in basis.Icons) files[icon.Application] = icon.Path;
+            if (basis != null) foreach (ThemeIcon icon in basis.Icons) files[icon.Application] = String.IsNullOrEmpty(icon.PreviewPath) ? icon.Path : icon.PreviewPath;
             foreach (string app in PackLibrary.Applications.OrderBy(a => a)) grid.Rows.Add(app, files.ContainsKey(app) ? Path.GetFileName(files[app]) : "Not assigned");
             grid.CellContentClick += delegate(object sender, DataGridViewCellEventArgs e) {
                 if (e.RowIndex < 0) return;
@@ -72,6 +72,7 @@ namespace BetterIcon.Tray
         readonly IconGridView packPreview = new IconGridView();
         readonly ImageList packPictures = new ImageList();
         readonly List<Bitmap> packArtwork = new List<Bitmap>();
+        readonly List<ArtworkSource> packSources = new List<ArtworkSource>();
         readonly Panel settingsScroll = new Panel();
         readonly TableLayoutPanel settingsContent = new TableLayoutPanel();
         readonly ContextMenuStrip importPackMenu = new ContextMenuStrip(), managePackMenu = new ContextMenuStrip();
@@ -106,9 +107,16 @@ namespace BetterIcon.Tray
         }
         void ChangeIconSize()
         {
+            int previous = preferences.IconSize;
             preferences.IconSize = iconSizeSlider.Value;
             iconSizeValue.Text = preferences.IconSize + " px";
-            ResizeAppIcons(); ResizePackIcons();
+            try { ResizeAppIcons(); ResizePackIcons(); }
+            catch (Exception error) {
+                if (!(error is OutOfMemoryException) && !(error is System.Runtime.InteropServices.ExternalException)) throw;
+                previous = Math.Min(previous, iconSizeSlider.Maximum);
+                preferences.IconSize = previous; iconSizeSlider.Value = previous;
+                status.Text = "Could not display that size. Try a smaller size."; return;
+            }
             try { WritePreferences(); status.Text = "Icon size saved."; }
             catch (IOException) { status.Text = "Icon size changed for this session, but could not be saved."; }
             catch (UnauthorizedAccessException) { status.Text = "Icon size changed for this session, but could not be saved."; }
@@ -155,7 +163,7 @@ namespace BetterIcon.Tray
 
             TableLayoutPanel packs = SettingsSection("IconPackSection", "Icon pack");
             themes.DropDownStyle = ComboBoxStyle.DropDownList; themes.Dock = DockStyle.Top; themes.Margin = new Padding(0, 0, 0, 5); themes.AccessibleName = "Icon pack";
-            themes.SelectedIndexChanged += delegate { if (!fillingThemes) { RenderApps(); RenderPack(); SavePreferences(); BuildTrayMenu(); } };
+            themes.SelectedIndexChanged += delegate { if (!fillingThemes) { RenderSelection(); SavePreferences(); BuildTrayMenu(); } };
             SettingsRow(packs, themes);
             packDetails.AutoSize = true; packDetails.Dock = DockStyle.Top; packDetails.Margin = new Padding(0, 0, 0, 10);
             SettingsRow(packs, packDetails);
@@ -176,7 +184,7 @@ namespace BetterIcon.Tray
             manage.Click += delegate { UpdatePackButtons(); managePackMenu.Show(manage, new Point(0, manage.Height)); };
             int column = 0; foreach (Button button in new[] { import, create, manage }) { SettingsButton(button); actions.Controls.Add(button, column++, 0); }
             SettingsRow(packs, actions);
-            packPictures.ImageSize = new Size(preferences.IconSize, preferences.IconSize); packPictures.ColorDepth = ColorDepth.Depth32Bit;
+            packPictures.ImageSize = new Size(Math.Min(256, preferences.IconSize), Math.Min(256, preferences.IconSize)); packPictures.ColorDepth = ColorDepth.Depth32Bit;
             if (packPictures.Handle == IntPtr.Zero) throw new InvalidOperationException("Could not create pack previews.");
             packPreview.Dock = DockStyle.Top; packPreview.Height = 128; packPreview.Margin = Padding.Empty;
             packPreview.SetIconSize(preferences.IconSize); packPreview.LargeImageList = packPictures;
@@ -191,7 +199,7 @@ namespace BetterIcon.Tray
             sizing.Controls.Add(new Label { Text = "Icon size", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 0, 12, 0) }, 0, 0);
             iconSizeSlider.Minimum = Preferences.MinimumIconSize; iconSizeSlider.Maximum = Preferences.MaximumIconSize;
             iconSizeSlider.Value = preferences.IconSize; iconSizeSlider.SmallChange = 8; iconSizeSlider.LargeChange = 16; iconSizeSlider.TickStyle = TickStyle.None;
-            iconSizeSlider.Dock = DockStyle.Fill; iconSizeSlider.AccessibleName = "Icon size"; iconSizeSlider.AccessibleDescription = "Size in pixels, from 24 to 128. Updates the Launcher and Settings preview immediately.";
+            iconSizeSlider.Dock = DockStyle.Fill; iconSizeSlider.AccessibleName = "Icon size"; iconSizeSlider.AccessibleDescription = "Size in pixels, based on available artwork. Updates both tabs.";
             iconSizeValue.Text = preferences.IconSize + " px"; iconSizeValue.AutoSize = true; iconSizeValue.MinimumSize = new Size(60, 0); iconSizeValue.Anchor = AnchorStyles.None; iconSizeValue.TextAlign = ContentAlignment.MiddleCenter;
             resetIconSize.Text = "Reset"; SettingsButton(resetIconSize); resetIconSize.AccessibleName = "Reset icon size";
             resetIconSize.Click += delegate { iconSizeSlider.Value = Preferences.DefaultIconSize; };
@@ -244,7 +252,7 @@ namespace BetterIcon.Tray
             fillingThemes = true;
             try { themes.Items.Clear(); themes.Items.AddRange(catalog.Themes); themes.SelectedItem = catalog.Themes.FirstOrDefault(t => t.Id == chosen) ?? catalog.Themes.FirstOrDefault(t => t.Name == "Cardboard") ?? catalog.Themes.FirstOrDefault(); }
             finally { fillingThemes = false; }
-            RenderApps(); RenderPack(); UpdateRestoreApps(); SavePreferences(); BuildTrayMenu();
+            RenderSelection(); UpdateRestoreApps(); SavePreferences(); BuildTrayMenu();
         }
         void RenderPack()
         {
@@ -254,24 +262,25 @@ namespace BetterIcon.Tray
             try {
                 packPreview.Items.Clear(); packPictures.Images.Clear(); ClearPackArtwork();
                 if (theme != null && theme.IsDefault) foreach (AppEntry app in catalog.Apps.GroupBy(a => a.Application).Select(g => g.First()).OrderBy(a => a.Application)) {
-                    packArtwork.Add(Thumbnail(app.OriginalIconPath, Icon, Preferences.MaximumIconSize, app.OriginalIconIndex));
+                    AddArtwork(packArtwork, packSources, app.OriginalIconPath, app.OriginalIconIndex);
                     packPreview.Items.Add(new ListViewItem(app.Application, packArtwork.Count - 1) { Tag = app.Application, ToolTipText = app.Application + " - ArtCraft default" });
                 }
                 else if (theme != null) foreach (ThemeIcon icon in theme.Icons.OrderBy(i => i.Application)) {
-                    packArtwork.Add(Thumbnail(icon.Path, Icon, Preferences.MaximumIconSize));
+                    AddArtwork(packArtwork, packSources, PreviewPath(icon), 0);
                     packPreview.Items.Add(new ListViewItem(icon.Application, packArtwork.Count - 1) { Tag = icon.Application, ToolTipText = icon.Application });
                 }
-                ResizePackIcons();
+                if (!renderingArtwork) { UpdateIconSizeLimit(); ResizePackIcons(); }
             }
             finally { packPreview.EndUpdate(); }
             UpdatePackButtons();
         }
-        void ClearPackArtwork() { foreach (Bitmap image in packArtwork) image.Dispose(); packArtwork.Clear(); }
+        void ClearPackArtwork() { foreach (Bitmap image in packArtwork) image.Dispose(); packArtwork.Clear(); packSources.Clear(); }
         void ResizePackIcons()
         {
             packPreview.BeginUpdate();
             try {
-                ResizeArtwork(packPictures, packArtwork, preferences.IconSize); packPreview.SetIconSize(preferences.IconSize);
+                EnsureArtworkSize(packArtwork, packSources, preferences.IconSize);
+                ResizeArtwork(packPictures, packArtwork, preferences.IconSize); packPreview.SetArtwork(packArtwork, preferences.IconSize);
                 // Leave room for at least one complete row, including names, at the largest size.
                 packPreview.Height = Math.Max(128, packPreview.GridCellSize.Height + 12);
                 if (packPreview.SelectedItems.Count == 1) packPreview.SelectedItems[0].EnsureVisible();

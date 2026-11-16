@@ -21,7 +21,7 @@ $files = @('install.ps1','uninstall.ps1','BetterIcon.Windows.psm1','BetterIcon.S
 $repository = Get-BetterIconRepository
 $buildDirectory = Join-Path $output ('build-' + [guid]::NewGuid().ToString('N'))
 $build = & (Join-Path $PSScriptRoot 'Build-Tray.ps1') -OutputDirectory $buildDirectory
-$fileCount = 0; $iconCount = 0
+$fileCount = 0; $iconCount = 0; $previewCount = 0
 $temporary = Join-Path $output ('.bettericon-package-' + [guid]::NewGuid().ToString('N') + '.zip')
 try {
     $archive = [IO.Compression.ZipFile]::Open($temporary, [IO.Compression.ZipArchiveMode]::Create)
@@ -45,6 +45,10 @@ try {
                 try { $bytes = Get-BetterIconBytes $icon.Path; $stream.Write($bytes, 0, $bytes.Length) }
                 finally { $stream.Dispose() }
                 $fileCount++; $iconCount++
+                if ([IO.Path]::GetExtension($icon.PreviewPath) -ieq '.png') {
+                    $null = [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $icon.PreviewPath, $folder + '/' + $icon.Application + '.png', [IO.Compression.CompressionLevel]::Optimal)
+                    $fileCount++; $previewCount++
+                }
             }
         }
     }
@@ -52,6 +56,6 @@ try {
     [IO.File]::Move($temporary, $destination)
     $hash = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()
     [IO.File]::WriteAllText($destination + '.sha256', "$hash  $name" + [Environment]::NewLine)
-    [pscustomobject]@{ Package = $destination; Files = $fileCount; Icons = $iconCount; SHA256 = $hash; ExecutableSHA256 = $build.SHA256 }
+    [pscustomobject]@{ Package = $destination; Files = $fileCount; Icons = $iconCount; PreviewImages = $previewCount; SHA256 = $hash; ExecutableSHA256 = $build.SHA256 }
 }
 finally { if (Test-Path -LiteralPath $temporary) { [IO.File]::Delete($temporary) } }
