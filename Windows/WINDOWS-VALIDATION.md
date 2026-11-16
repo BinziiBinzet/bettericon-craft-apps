@@ -1,5 +1,13 @@
 # Windows validation
 
+## 1.10.0 icon context menus - 2026-11-16
+
+All 155 local native checks passed. New checks dispatch native context-menu messages to both icon grids, verify the clicked app and location rather than an earlier selection, reject empty-space and busy requests, disable missing backups, support keyboard requests, and keep menu keys from filtering or switching tabs. Settings and default-pack previews use the selected shortcut locations.
+
+A full native integration check applies a theme to two disposable shortcuts, invokes the icon's restore action while Settings points to a different scope, verifies the review contains only the clicked app, and accepts the fixture restoration. The selected shortcut returns byte-for-byte to its original state; the other shortcut and backup remain themed. The catalog and saved default refresh correctly without changing Settings locations. This is native event and fixture-dialog coverage, not a physical right-click or visual inspection. Test windows use the fixture-only focus-dismiss bypass to avoid unrelated focus changes disrupting the checks.
+
+Installer and worker logic is unchanged apart from the Windows version. The 1.9.0 baseline below remains applicable: 120 installer checks on Windows PowerShell 5.1 and PowerShell 7, plus 18 bridge checks. All builds, tests, and packaging ran locally.
+
 ## 1.9.0 ArtCraft defaults and individual restore - 2026-11-16
 
 All 138 local native checks passed, including default-first ordering and persistence, protection from pack-management actions, original artwork in both grids, EXE/DLL resource indices, compressed ICO decoding, scoped individual-restore availability, dropdown keyboard behavior, and successful-only per-shortcut default preferences. Existing layout, launcher, wheel, hotkey, and pack-sharing checks remain passing.

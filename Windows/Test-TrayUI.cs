@@ -52,6 +52,72 @@ static class TrayTests
                 if (first.GetPixel(x, y) != second.GetPixel(x, y)) return false;
         return true;
     }
+    static void RequestIconMenu(ListView grid, ListViewItem item)
+    {
+        item.EnsureVisible();
+        Rectangle icon = item.GetBounds(ItemBoundsPortion.Icon);
+        Point screen = grid.PointToScreen(new Point(icon.Left + icon.Width / 2, icon.Top + icon.Height / 2));
+        SendMessage(grid.Handle, 0x007B, grid.Handle, new IntPtr(unchecked((screen.Y << 16) | (screen.X & 0xffff))));
+    }
+    static void CheckIconContextMenus(LauncherForm form)
+    {
+        BindingFlags instance = BindingFlags.Instance | BindingFlags.NonPublic;
+        Func<string, object> field = name => typeof(LauncherForm).GetField(name, instance).GetValue(form);
+        ListView launcher = (ListView)field("apps"), preview = (ListView)field("packPreview");
+        ComboBox scopes = (ComboBox)field("scopes"), themes = (ComboBox)field("themes");
+        ContextMenuStrip menu = (ContextMenuStrip)field("iconMenu");
+        ToolStripMenuItem restore = (ToolStripMenuItem)field("restoreIconDefault");
+        TabControl pages = (TabControl)field("pages");
+        pages.SelectedIndex = 0; scopes.SelectedIndex = 0;
+        launcher.Items[0].Selected = true;
+        RequestIconMenu(launcher, launcher.Items[3]);
+        AppEntry target = (AppEntry)field("iconMenuTarget");
+        Check(menu.Visible && restore.Enabled && target.Application == "FigCraft" && target.Scope == "AllUsers" && launcher.Items[3].Selected,
+            "Right-click selects the clicked launcher app and its own shortcut scope instead of the previous selection or Settings scope");
+        string filter = (string)field("filterText");
+        typeof(LauncherForm).GetMethod("OnKeyPress", instance).Invoke(form, new object[] { new KeyPressEventArgs('p') });
+        KeyEventArgs escape = new KeyEventArgs(Keys.Escape);
+        typeof(LauncherForm).GetMethod("OnKeyDown", instance).Invoke(form, new object[] { escape });
+        Check((string)field("filterText") == filter && !escape.Handled && pages.SelectedIndex == 0 && form.Visible,
+            "An open icon menu owns keyboard input without filtering or closing the launcher");
+        menu.Close();
+        Point blank = launcher.PointToScreen(new Point(launcher.ClientSize.Width - 5, launcher.ClientSize.Height - 5));
+        SendMessage(launcher.Handle, 0x007B, launcher.Handle, new IntPtr(unchecked((blank.Y << 16) | (blank.X & 0xffff))));
+        Check(!menu.Visible && field("iconMenuTarget") == null, "Right-clicking empty launcher space cannot restore a stale selected app");
+        RequestIconMenu(launcher, launcher.Items[2]);
+        Check(menu.Visible && !restore.Enabled && ((AppEntry)field("iconMenuTarget")).Application == "FilmCraft",
+            "The icon menu disables restoration for an app with no verified backup");
+        menu.Close();
+        RequestIconMenu(launcher, launcher.Items[0]);
+        menu.Close();
+        SendMessage(launcher.Handle, 0x007B, launcher.Handle, new IntPtr(-1));
+        Check(menu.Visible && restore.Enabled && ((AppEntry)field("iconMenuTarget")).Application == "PhotoCraft",
+            "The keyboard context-menu request targets the selected app");
+        typeof(LauncherForm).GetMethod("SetBusy", instance).Invoke(form, new object[] { true, null });
+        Check(!menu.Visible && !restore.Enabled && field("iconMenuTarget") == null, "Starting an operation closes the icon menu and clears its restore target");
+        RequestIconMenu(launcher, launcher.Items[0]);
+        Check(!menu.Visible && field("iconMenuTarget") == null, "Busy operations cannot open a new icon restoration menu");
+        typeof(LauncherForm).GetMethod("SetBusy", instance).Invoke(form, new object[] { false, null });
+        pages.SelectedIndex = 1; scopes.SelectedIndex = 1;
+        RequestIconMenu(preview, preview.Items.Cast<ListViewItem>().First(item => item.Text == "FigCraft"));
+        Check(menu.Visible && restore.Enabled && ((AppEntry)field("iconMenuTarget")).Scope == "AllUsers",
+            "Settings icon previews restore the clicked canonical app in the selected locations");
+        escape = new KeyEventArgs(Keys.Escape);
+        typeof(LauncherForm).GetMethod("OnKeyDown", instance).Invoke(form, new object[] { escape });
+        Check(!escape.Handled && pages.SelectedIndex == 1, "Escape in the icon menu stays in Settings");
+        menu.Close();
+        RequestIconMenu(preview, preview.Items.Cast<ListViewItem>().First(item => item.Text == "PhotoCraft"));
+        Check(menu.Visible && !restore.Enabled, "A Settings preview cannot offer restoration from another shortcut scope");
+        menu.Close(); scopes.SelectedIndex = 0;
+        RequestIconMenu(preview, preview.Items.Cast<ListViewItem>().First(item => item.Text == "PhotoCraft"));
+        Check(menu.Visible && restore.Enabled && ((AppEntry)field("iconMenuTarget")).Scope == "CurrentUser",
+            "Changing locations makes the matching preview restoration available");
+        menu.Close(); themes.SelectedIndex = 0;
+        RequestIconMenu(preview, preview.Items.Cast<ListViewItem>().First(item => item.Text == "PhotoCraft"));
+        Check(menu.Visible && restore.Enabled && ((AppEntry)field("iconMenuTarget")).Application == "PhotoCraft",
+            "ArtCraft default previews retain the same per-app context action");
+        menu.Close();
+    }
     static void CheckDefaultAndIndividualRestore(LauncherForm form, string root, string preferencesPath, JavaScriptSerializer json)
     {
         // This runs after the existing launcher checks. Only the isolated catalog,
@@ -226,6 +292,71 @@ static class TrayTests
         call("RenderApps", null);
         Check(!appArtwork.Any(image => image.GetPixel(64, 64).ToArgb() == Color.Red.ToArgb()),
             "Themed launcher artwork returns after successful applications clear the overrides");
+        CheckIconContextMenus(form);
+    }
+    static void CheckContextRestore(string root, string source, JavaScriptSerializer json)
+    {
+        string links = Path.Combine(root, "context-links"), state = Path.Combine(root, "context-state");
+        Directory.CreateDirectory(links); Directory.CreateDirectory(state);
+        string photo = Path.Combine(links, "PhotoCraft.lnk"), film = Path.Combine(links, "FilmCraft.lnk");
+        File.Copy(Path.Combine(root, "PhotoCraft.lnk"), photo); File.Copy(photo, film);
+        byte[] originalPhoto = File.ReadAllBytes(photo), originalFilm = File.ReadAllBytes(film);
+        FixtureConfig fixture = new FixtureConfig { ShortcutDirectory = new[] { links }, StateDirectory = state, KeepOpenForAutomation = true };
+        WorkerClient worker = new WorkerClient(source, fixture);
+        WorkerReply plan = worker.Run(new WorkerRequest { Action = "Preview", Scope = "CurrentUser", Theme = "Craft-Icons-Zach/Satin" }, false).GetAwaiter().GetResult();
+        WorkerReply applied = worker.Run(new WorkerRequest { Action = "Apply", Scope = "CurrentUser", Theme = "Craft-Icons-Zach/Satin", ExpectedPlan = plan.Plan }, false).GetAwaiter().GetResult();
+        Check(applied.Results.Length == 2 && applied.Results.All(result => result.Status == "Applied"), "Context-menu integration prepares two isolated themed shortcuts");
+        byte[] themedFilm = File.ReadAllBytes(film);
+        string preferencesPath = Path.Combine(state, "tray-preferences.json");
+        File.WriteAllText(preferencesPath, json.Serialize(new Preferences { Theme = "Craft-Icons-Zach/Satin", Scope = "AllUsers", Hotkey = new HotkeySettings { Enabled = false } }));
+        using (EventWaitHandle show = new EventWaitHandle(false, EventResetMode.AutoReset))
+        using (EventWaitHandle stop = new EventWaitHandle(false, EventResetMode.AutoReset))
+        using (LauncherForm form = new LauncherForm(source, fixture, true, show, stop))
+        using (LauncherContext context = new LauncherContext(form))
+        using (System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer { Interval = 50 }) {
+            BindingFlags instance = BindingFlags.Instance | BindingFlags.NonPublic;
+            Func<string, object> field = name => typeof(LauncherForm).GetField(name, instance).GetValue(form);
+            Exception failure = null; int ticks = 0, phase = 0;
+            timer.Tick += delegate {
+                try {
+                    if (++ticks > 600) throw new Exception("Context restore did not finish within 30 seconds.");
+                    if (phase == 0 && !(bool)field("busy") && field("catalog") != null) {
+                        phase = 1; form.ShowManager();
+                        ListView launcher = (ListView)field("apps");
+                        RequestIconMenu(launcher, launcher.Items.Cast<ListViewItem>().First(item => ((AppEntry)item.Tag).Application == "PhotoCraft"));
+                        ((ToolStripMenuItem)field("restoreIconDefault")).PerformClick();
+                    }
+                    else if (phase == 1) {
+                        Form review = Application.OpenForms.Cast<Form>().FirstOrDefault(dialog => dialog.Text == "Review restoration");
+                        if (review == null) return;
+                        ListView rows = review.Controls[0].Controls.OfType<ListView>().Single();
+                        Check(rows.Items.Count == 1 && rows.Items[0].SubItems[1].Text == photo,
+                            "Clicking Restore ArtCraft default reviews only the clicked app in its scope despite different Settings locations");
+                        phase = 2; review.DialogResult = DialogResult.OK;
+                    }
+                    else if (phase == 2) {
+                        Form results = Application.OpenForms.Cast<Form>().FirstOrDefault(dialog => dialog.Text == "Operation results");
+                        if (results == null) return;
+                        ListView rows = results.Controls[0].Controls.OfType<ListView>().Single();
+                        Check(rows.Items.Count == 1 && rows.Items[0].Text == "Restored", "The icon context action completes its reviewed restore successfully");
+                        phase = 3; results.DialogResult = DialogResult.OK;
+                    }
+                    else if (phase == 3 && !(bool)field("busy")) {
+                        Catalog updated = (Catalog)field("catalog");
+                        Preferences preferences = json.Deserialize<Preferences>(File.ReadAllText(preferencesPath));
+                        Check(File.ReadAllBytes(photo).SequenceEqual(originalPhoto) && File.ReadAllBytes(film).SequenceEqual(themedFilm) && !themedFilm.SequenceEqual(originalFilm),
+                            "Right-click restore returns only the selected app to its exact original bytes");
+                        Check(!updated.Apps.Single(app => app.Application == "PhotoCraft").RestoreAvailable && updated.Apps.Single(app => app.Application == "FilmCraft").RestoreAvailable
+                            && preferences.DefaultShortcuts.SequenceEqual(new[] { photo }) && preferences.Scope == "AllUsers",
+                            "The completed context restore refreshes availability and remembers the default without changing Settings locations or other backups");
+                        timer.Stop(); stop.Set();
+                    }
+                }
+                catch (Exception error) { failure = error; timer.Stop(); context.ExitThread(); }
+            };
+            timer.Start(); Application.Run(context);
+            if (failure != null) throw failure;
+        }
     }
     [STAThread]
     static int Main(string[] args)
@@ -297,7 +428,7 @@ static class TrayTests
             File.WriteAllText(preferencesPath, json.Serialize(new Preferences { Theme = "Craft-Icons-Zach/Satin", Scope = "CurrentUser", IconSize = 72, Hotkey = new HotkeySettings { Enabled = false } }));
             using (EventWaitHandle show = new EventWaitHandle(false, EventResetMode.AutoReset))
             using (EventWaitHandle stop = new EventWaitHandle(false, EventResetMode.AutoReset))
-            using (LauncherForm form = new LauncherForm(args[1], new FixtureConfig { ShortcutDirectory = new[] { root }, StateDirectory = Path.Combine(root, "state") }, true, show, stop))
+            using (LauncherForm form = new LauncherForm(args[1], new FixtureConfig { ShortcutDirectory = new[] { root }, StateDirectory = Path.Combine(root, "state"), KeepOpenForAutomation = true }, true, show, stop))
             using (LauncherContext context = new LauncherContext(form))
             using (System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer { Interval = 50 }) {
                 // Exercise the actual NotifyIcon MouseUp subscription. This is an
@@ -467,6 +598,7 @@ static class TrayTests
                 timer.Start(); Application.Run(context);
                 if (eventFailure != null) throw eventFailure;
             }
+            CheckContextRestore(root, args[1], json);
         }
         catch (Exception error) { failure = error.ToString(); Console.Error.WriteLine(failure); }
         finally { File.WriteAllText(Path.Combine(root, "results.json"), new JavaScriptSerializer().Serialize(new { Passed = failure == null, Error = failure, Checks = checks, ArtifactDirectory = root })); }

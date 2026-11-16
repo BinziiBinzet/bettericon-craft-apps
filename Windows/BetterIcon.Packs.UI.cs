@@ -255,11 +255,11 @@ namespace BetterIcon.Tray
                 packPreview.Items.Clear(); packPictures.Images.Clear(); ClearPackArtwork();
                 if (theme != null && theme.IsDefault) foreach (AppEntry app in catalog.Apps.GroupBy(a => a.Application).Select(g => g.First()).OrderBy(a => a.Application)) {
                     packArtwork.Add(Thumbnail(app.OriginalIconPath, Icon, Preferences.MaximumIconSize, app.OriginalIconIndex));
-                    packPreview.Items.Add(new ListViewItem(app.Application, packArtwork.Count - 1) { ToolTipText = app.Application + " - ArtCraft default" });
+                    packPreview.Items.Add(new ListViewItem(app.Application, packArtwork.Count - 1) { Tag = app.Application, ToolTipText = app.Application + " - ArtCraft default" });
                 }
                 else if (theme != null) foreach (ThemeIcon icon in theme.Icons.OrderBy(i => i.Application)) {
                     packArtwork.Add(Thumbnail(icon.Path, Icon, Preferences.MaximumIconSize));
-                    packPreview.Items.Add(new ListViewItem(icon.Application, packArtwork.Count - 1) { ToolTipText = icon.Application });
+                    packPreview.Items.Add(new ListViewItem(icon.Application, packArtwork.Count - 1) { Tag = icon.Application, ToolTipText = icon.Application });
                 }
                 ResizePackIcons();
             }

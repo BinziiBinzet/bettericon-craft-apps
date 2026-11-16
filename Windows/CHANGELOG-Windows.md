@@ -1,5 +1,11 @@
 # Windows installer changelog
 
+## 1.10.0 - 2026-11-16
+
+- Right-click an icon in Launcher or the Settings preview to restore that app's ArtCraft default through the existing review and backup workflow.
+- Target the clicked launch shortcut's locations independently of the Settings selection. Preview icons use the selected Settings locations; unavailable backups disable the action.
+- Support Shift+F10 and the keyboard menu key, keep the popup open while its icon menu is in use, and prevent menu keys from changing the launcher filter.
+
 ## 1.9.0 - 2026-11-16
 
 - Put ArtCraft default first in the pack menu, with original installed-app icons and a reviewed restore-all action. Keep this option available independently of hidden or personal packs.
