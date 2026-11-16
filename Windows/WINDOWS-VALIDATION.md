@@ -1,5 +1,11 @@
 # Windows validation
 
+## 1.14.2 borderless resizing - 2026-11-16
+
+All 250 local native checks passed from source. New checks verify all eight resize hit targets, that child controls leave those targets reachable, native sizing support without a caption or window buttons, a full client area, and ordinary client interaction in the interior. Existing Settings layout, placement, keyboard, pack, appearance and shortcut checks remain passing.
+
+With the user's permission, Computer Use inspected an isolated window containing 14 disposable probe shortcuts. A bottom-right drag changed its bounds from 900x690 to 815x615; a left-edge drag stopped at the 790-pixel minimum width; another corner drag enlarged it to 793x618. Settings reflowed without overlap and no title bar appeared. The fixture used its own settings with the global hotkey disabled. No installed shortcut or production preference was changed by inspection. This does not verify per-monitor DPI transitions or Windows 10.
+
 ## 1.14.1 borderless popup - 2026-11-16
 
 All 239 existing local native checks passed from source after removing the main popup frame. Coverage includes tray toggling, hidden startup, cursor/tray placement and screen clamping, Escape handling, Settings layout at both tested sizes, loading feedback, icon-only mode, large images, pack changes, hotkeys, and restoration. The popup keeps its 900x690 content area while its title bar and frame are removed. No new tests were added for this small appearance change; native window-style metadata provides a direct caption/control check after installation. No Computer Use was performed. All builds, tests, and package validation run locally.

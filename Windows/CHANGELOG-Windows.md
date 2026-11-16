@@ -1,5 +1,10 @@
 # Windows installer changelog
 
+## 1.14.2 - 2026-11-16
+
+- Restore resizing from all four edges and corners while keeping the main popup's title bar and window buttons hidden.
+- Keep native minimum-size tracking and a narrow resize margin clear of child controls; update tab widths after resizing finishes.
+
 ## 1.14.1 - 2026-11-16
 
 - Remove the main popup's title bar, frame, and window buttons so Launcher and Settings begin at the top of the window.

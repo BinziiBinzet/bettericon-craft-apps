@@ -310,6 +310,9 @@ namespace BetterIcon.Tray
             Font = new Font("Segoe UI", 10F); ForeColor = ink; BackColor = Color.FromArgb(244, 247, 251);
             AutoScaleMode = AutoScaleMode.Font; FormBorderStyle = FormBorderStyle.None;
             ClientSize = new Size(900, 690); MinimumSize = new Size(790, 570);
+            // Keep a small exposed client margin so child controls cannot consume
+            // the native edge hit tests. Font autoscaling scales this margin too.
+            Padding = new Padding(8);
             StartPosition = FormStartPosition.Manual; ControlBox = false; MaximizeBox = false; MinimizeBox = false;
             KeyPreview = true; Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
             BuildWindow(fixture != null);
@@ -356,6 +359,37 @@ namespace BetterIcon.Tray
             BeginInvoke(new Action(async delegate { if (!startInTray) ShowManager(); await RefreshCatalog(); }));
         }
 
+        protected override CreateParams CreateParams
+        {
+            get {
+                CreateParams value = base.CreateParams;
+                // Native sizing and minimum-size tracking, without a caption.
+                value.Style = (value.Style | 0x00040000) & ~0x00C00000;
+                return value;
+            }
+        }
+
+        protected override void WndProc(ref Message message)
+        {
+            if (message.Msg == 0x0083) { // WM_NCCALCSIZE: all of the window is client area.
+                message.Result = IntPtr.Zero;
+                return;
+            }
+            if (message.Msg == 0x0084 && WindowState == FormWindowState.Normal) { // WM_NCHITTEST
+                long position = message.LParam.ToInt64();
+                Point point = PointToClient(new Point(unchecked((short)(position & 0xFFFF)), unchecked((short)((position >> 16) & 0xFFFF))));
+                int border = Math.Max(6, Padding.Left);
+                if (ClientRectangle.Contains(point)) {
+                    bool left = point.X < border, right = point.X >= ClientSize.Width - border;
+                    bool top = point.Y < border, bottom = point.Y >= ClientSize.Height - border;
+                    int hit = top ? (left ? 13 : right ? 14 : 12) : bottom ? (left ? 16 : right ? 17 : 15) : left ? 10 : right ? 11 : 1;
+                    message.Result = new IntPtr(hit);
+                    return;
+                }
+            }
+            base.WndProc(ref message);
+        }
+
         protected override void Dispose(bool disposing)
         {
             if (disposing) { if (hotkey != null) hotkey.Dispose(); DisposeAppearance(); ClearAppArtwork(); ClearPackArtwork(); }
@@ -380,7 +414,7 @@ namespace BetterIcon.Tray
             pages.DrawMode = TabDrawMode.OwnerDrawFixed; pages.DrawItem += DrawPageTab;
             // Updating ItemSize from TabControl.SizeChanged re-enters native layout.
             // Resize only once layout settles, after showing or a user resize.
-            ResizeEnd += delegate { SizeTabs(); };
+            ResizeEnd += delegate { SizeTabs(); TraceFixture("Resized"); };
             launcherPage.BackColor = Color.White; launcherPage.Padding = new Padding(18);
             settingsPage.BackColor = BackColor;
             pages.TabPages.AddRange(new[] { launcherPage, settingsPage }); Controls.Add(pages);

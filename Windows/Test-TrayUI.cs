@@ -14,6 +14,8 @@ using BetterIcon.Tray;
 static class TrayTests
 {
     [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr window, int index);
+    [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(Point point);
     [DllImport("comctl32.dll")] static extern bool ImageList_GetIconSize(IntPtr list, out int width, out int height);
     [DllImport("comctl32.dll")] static extern bool ImageList_Draw(IntPtr list, int index, IntPtr dc, int x, int y, uint flags);
     static readonly List<object> checks = new List<object>();
@@ -22,6 +24,26 @@ static class TrayTests
         checks.Add(new { Test = name, Passed = ok });
         if (!ok) throw new Exception(name);
         Console.WriteLine("PASS: " + name);
+    }
+    static void CheckWindowResizing(LauncherForm form)
+    {
+        int style = GetWindowLong(form.Handle, -16);
+        Check((style & 0x00040000) != 0 && (style & (0x00C00000 | 0x00080000)) == 0,
+            "The popup supports native resizing without a caption or window buttons");
+        Check(form.ClientSize == form.Size, "The resize frame adds no nonclient inset or title bar");
+        int lastX = form.ClientSize.Width - 2, lastY = form.ClientSize.Height - 2;
+        Point[] points = { new Point(1, lastY / 2), new Point(lastX, lastY / 2), new Point(lastX / 2, 1), new Point(lastX / 2, lastY),
+            new Point(1, 1), new Point(lastX, 1), new Point(1, lastY), new Point(lastX, lastY) };
+        int[] expected = { 10, 11, 12, 15, 13, 14, 16, 17 };
+        for (int i = 0; i < points.Length; i++) {
+            Point screen = form.PointToScreen(points[i]);
+            IntPtr position = new IntPtr(unchecked((screen.X & 0xFFFF) | ((screen.Y & 0xFFFF) << 16)));
+            Check(SendMessage(form.Handle, 0x0084, IntPtr.Zero, position).ToInt32() == expected[i] && WindowFromPoint(screen) == form.Handle,
+                "Native resize direction " + expected[i] + " remains reachable outside child controls");
+        }
+        Point center = form.PointToScreen(new Point(form.ClientSize.Width / 2, form.ClientSize.Height / 2));
+        Check(SendMessage(form.Handle, 0x0084, IntPtr.Zero, new IntPtr(unchecked((center.X & 0xFFFF) | ((center.Y & 0xFFFF) << 16)))).ToInt32() == 1,
+            "The popup interior stays client content rather than a draggable title bar");
     }
     static string SettingsLayoutProblem(Control parent)
     {
@@ -629,6 +651,7 @@ static class TrayTests
                         mouseUp.Invoke(tray, new object[] { new MouseEventArgs(MouseButtons.Right, 1, 0, 0, 0) });
                         Check(!form.Visible, "Right tray release does not toggle the popup");
                         form.ShowManager(); Check(form.Visible, "Explicit open reopens the existing popup");
+                        CheckWindowResizing(form);
                         form.Hide(); Check(!form.Visible, "Hide retains the launcher for another tray click");
                         Point center = new Point(Screen.PrimaryScreen.WorkingArea.Left + Screen.PrimaryScreen.WorkingArea.Width / 2, Screen.PrimaryScreen.WorkingArea.Top + Screen.PrimaryScreen.WorkingArea.Height / 2);
                         form.ShowAtCursor(center);
