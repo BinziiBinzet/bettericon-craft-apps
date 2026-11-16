@@ -1,5 +1,13 @@
 # Windows validation
 
+## 1.4.0 tabs and personal packs - 2026-11-16
+
+All 76 local native checks passed: the prior startup, tray, hotkey, filtering, and worker coverage plus 24 checks for tabs and pack management. These cover an app-only Launcher, Settings keyboard isolation, creating and reopening personal packs, immutable edits, applying previously reviewed artwork, removal without breaking applied icons, byte-exact shortcut restoration, hiding/restoring built-ins, folder/ZIP imports, duplicate names, ambiguous files, unsafe ZIP paths, invalid images, unsupported apps, removed-pack edits, and oversized PNG dimensions. The 12 existing JSON bridge checks also passed.
+
+The actual native UI displayed all 14 fixture app names in the clean Launcher grid. Typing `f` still narrowed it to FigCraft and FilmCraft. In Settings, Customize opened the per-app artwork editor; naming and saving a copy added a 19-icon personal pack, selected it, enabled Edit pack, and persisted its metadata and copied artwork. Settings remains scrollable when the popup is made smaller. These UI checks used isolated preferences, artwork, and disposable launch-probe shortcuts; no installed app or document was opened.
+
+Personal packs use the existing installer through a worker request carrying the original user's pack directory, including when shared writes are elevated. Actual elevated shared-folder writes remain untested. The broader 104-check installer results below remain the baseline; the installer implementation changed only its version number for this update.
+
 ## 1.3.0 type-to-filter launcher - 2026-11-16
 
 All 52 local native checks passed, including 14 new keyboard/filter checks. Coverage includes typing from a focused button, case-insensitive prefix narrowing, selection, Backspace, empty results, Escape clearing versus closing, fresh results after reopening, dropdown/modal isolation, and Ctrl+Backspace. Enter launched a disposable probe through its original fixture shortcut exactly once; Enter with no results launched nothing. Filtering reuses the loaded artwork.

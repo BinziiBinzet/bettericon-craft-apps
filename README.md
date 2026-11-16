@@ -29,7 +29,7 @@ Supports all official Artcraft Crafting Apps.
 ### Windows
 
 - Open `Windows/Start-Tray.cmd` in a source checkout, or `Windows/BetterIcon-Tray.exe` in a locally built Windows ZIP.
-- Click the tray icon to open the launcher above the system tray; click it again to close the popup. Double-click an app to launch it, or preview a theme and choose **Apply theme**.
+- Click the tray icon to open the launcher above the system tray; click it again to close the popup. The **Launcher** tab shows app icons and names; type to narrow the list, then press Enter or double-click to launch. The **Settings** tab manages icon packs, custom artwork, apply/restore, and the configurable global hotkey.
 - **Restore original icons** restores the saved shortcuts. Shared shortcuts request administrator access only when applying or restoring.
 - The command-line installers remain available as `Windows/Install-Windows.cmd` and `Windows/Restore-Windows.cmd`.
 - Windows PowerShell and .NET Framework are included with supported Windows installations; no Python or downloaded modules are required.

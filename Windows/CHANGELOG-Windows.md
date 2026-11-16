@@ -1,5 +1,12 @@
 # Windows installer changelog
 
+## 1.4.0 - 2026-11-16
+
+- Separate the popup into Launcher and Settings tabs. Keep Launcher limited to app icons and names, with direct typing, arrow navigation, and Enter to launch.
+- Manage packs in Settings: import a theme folder or ZIP, create a custom pack, copy a built-in pack, edit personal artwork, remove packs, and restore hidden built-ins.
+- Store personal artwork locally in immutable revisions. Removing a pack preserves already-applied icons and prior previews; original repository artwork stays unchanged.
+- Keep icon previews, shortcut scope, apply/restore, hotkey configuration, refresh, and exit controls together in Settings. Apply personal packs through the existing preview and shortcut-preservation workflow.
+
 ## 1.3.0 - 2026-11-16
 
 - Type directly in the popup to filter by app-name prefix, with automatic result selection, arrow navigation, and Enter to launch.

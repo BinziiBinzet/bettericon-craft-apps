@@ -32,8 +32,10 @@ namespace BetterIcon.Tray
         public string Name { get; set; }
         public string Pack { get; set; }
         public int IconCount { get; set; }
+        public bool Managed { get; set; }
+        public string LibraryId { get; set; }
         public ThemeIcon[] Icons { get; set; }
-        public override string ToString() { return Name == "Root" ? Pack.Replace("Craft-Icons-", "") : Name + " / " + Pack.Replace("Craft-Icons-", ""); }
+        public override string ToString() { return Managed ? Name + " (personal)" : Name == "Root" ? Pack.Replace("Craft-Icons-", "") : Name + " / " + Pack.Replace("Craft-Icons-", ""); }
     }
     public sealed class Catalog { public string Version { get; set; } public AppEntry[] Apps { get; set; } public ThemeEntry[] Themes { get; set; } }
     public sealed class PlanItem
@@ -56,6 +58,7 @@ namespace BetterIcon.Tray
         public string StateDirectory { get; set; }
         public PlanItem[] ExpectedPlan { get; set; }
         public string ExpectedStateHash { get; set; }
+        public string PackDirectory { get; set; }
     }
     public sealed class WorkerReply
     {
@@ -91,6 +94,7 @@ namespace BetterIcon.Tray
         public Task<WorkerReply> Run(WorkerRequest request, bool elevate)
         {
             if (fixture != null) { request.ShortcutDirectory = fixture.ShortcutDirectory; request.StateDirectory = fixture.StateDirectory; }
+            request.PackDirectory = Path.Combine(fixture == null ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BetterIcon-Craft Apps") : fixture.StateDirectory, "packs");
             return Task.Run(delegate {
                 string folder = Path.Combine(Path.GetTempPath(), "BetterIcon-Tray-" + Guid.NewGuid().ToString("N"));
                 Directory.CreateDirectory(folder);
@@ -149,7 +153,7 @@ namespace BetterIcon.Tray
         }
     }
 
-    public sealed class LauncherForm : Form
+    public sealed partial class LauncherForm : Form
     {
         const int AppIconSize = 48;
         [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr window, int command);
@@ -185,6 +189,7 @@ namespace BetterIcon.Tray
             worker = new WorkerClient(source, fixture); startInTray = hidden; showEvent = show; stopEvent = stop;
             string state = fixture == null ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BetterIcon-Craft Apps") : fixture.StateDirectory;
             preferencesPath = Path.Combine(state, "tray-preferences.json");
+            library = new PackLibrary(Path.Combine(state, "packs"));
             if (fixture != null) fixtureLog = Path.Combine(state, "tray-events.jsonl");
             try { if (File.Exists(preferencesPath)) preferences = new JavaScriptSerializer().Deserialize<Preferences>(File.ReadAllText(preferencesPath)) ?? preferences; } catch (Exception) { }
             if (preferences.Hotkey == null) preferences.Hotkey = new HotkeySettings();
@@ -221,7 +226,7 @@ namespace BetterIcon.Tray
                     if (!notified) { tray.ShowBalloonTip(2500, "BetterIcon is in the tray", "Click its tray icon to return. Choose Exit to stop the launcher.", ToolTipIcon.Info); notified = true; }
                 }
             };
-            FormClosed += delegate { if (hotkey != null) hotkey.Dispose(); signalTimer.Stop(); signalTimer.Dispose(); dismissTimer.Stop(); dismissTimer.Dispose(); tray.Visible = false; tray.Dispose(); trayMenu.Dispose(); pictures.Dispose(); };
+            FormClosed += delegate { if (hotkey != null) hotkey.Dispose(); signalTimer.Stop(); signalTimer.Dispose(); dismissTimer.Stop(); dismissTimer.Dispose(); tray.Visible = false; tray.Dispose(); trayMenu.Dispose(); pictures.Dispose(); packPictures.Dispose(); };
             BuildTrayMenu();
         }
 
@@ -257,58 +262,25 @@ namespace BetterIcon.Tray
         static Button Button(string text, int width) { return new Button { Text = text, Width = width, Height = 34, FlatStyle = FlatStyle.Flat, UseVisualStyleBackColor = true, Margin = new Padding(4) }; }
         void BuildWindow(bool testing)
         {
-            TableLayoutPanel layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(24), ColumnCount = 1, RowCount = 6, AutoScroll = true };
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 91));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 51));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 49));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 45));
-            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 59));
-            Controls.Add(layout);
-            Panel heading = new Panel { Dock = DockStyle.Fill };
-            Label title = new Label { Text = "Your ArtCraft apps", Font = new Font("Segoe UI", 23F, FontStyle.Bold), AutoSize = true, Location = new Point(0, 0) };
-            subtitle.AutoSize = true; subtitle.Location = new Point(2, 48); subtitle.ForeColor = Color.FromArgb(83, 98, 119);
-            heading.Controls.Add(title); heading.Controls.Add(subtitle); layout.Controls.Add(heading, 0, 0);
-            FlowLayoutPanel themeRow = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false };
-            themeRow.Controls.Add(new Label { Text = "Icon theme", AutoSize = true, Margin = new Padding(0, 10, 12, 0) });
-            themes.DropDownStyle = ComboBoxStyle.DropDownList; themes.Width = 310; themes.Margin = new Padding(0, 5, 16, 0);
-            themes.SelectedIndexChanged += delegate { RenderApps(); SavePreferences(); BuildTrayMenu(); };
-            themeRow.Controls.Add(themes);
-            scopes.DropDownStyle = ComboBoxStyle.DropDownList; scopes.Width = 248; scopes.Margin = new Padding(0, 5, 10, 0);
-            scopes.Items.AddRange(new object[] { "My Desktop and Start menu", "Shared shortcuts (administrator)" });
-            scopes.SelectedIndex = preferences.Scope == "AllUsers" ? 1 : 0;
-            scopes.SelectedIndexChanged += delegate { SavePreferences(); };
-            themeRow.Controls.Add(scopes); layout.Controls.Add(themeRow, 0, 1);
-            FlowLayoutPanel actions = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false };
-            apply.Text = "Apply theme..."; apply.Width = 155; apply.Height = 34; apply.BackColor = accent; apply.ForeColor = Color.White; apply.FlatStyle = FlatStyle.Flat;
-            apply.Click += async delegate { await ApplyTheme(); };
-            restore.Text = "Restore original icons..."; restore.Width = 198; restore.Height = 34; restore.Margin = new Padding(10, 0, 15, 0);
-            restore.Click += async delegate { await RestoreIcons(); };
-            previewLabel.AutoSize = true; previewLabel.Margin = new Padding(4, 8, 0, 0); previewLabel.ForeColor = Color.FromArgb(83, 98, 119);
-            previewLabel.Text = "Preview only until you apply.";
-            actions.Controls.Add(apply); actions.Controls.Add(restore); actions.Controls.Add(previewLabel); layout.Controls.Add(actions, 0, 2);
-            Panel tools = new Panel { Dock = DockStyle.Fill };
-            filterHint.Text = "Type an app name to filter. Enter opens; Esc closes.";
-            filterHint.Dock = DockStyle.Fill; filterHint.TextAlign = ContentAlignment.MiddleLeft; filterHint.AutoEllipsis = true;
-            settings.Text = "Settings..."; settings.Width = 100; settings.Dock = DockStyle.Right; settings.Click += delegate { ShowSettings(); };
-            tools.Controls.Add(filterHint); tools.Controls.Add(settings); layout.Controls.Add(tools, 0, 3);
+            pages.Dock = DockStyle.Fill; pages.SizeMode = TabSizeMode.Fixed; pages.ItemSize = new Size(420, 38);
+            // Updating ItemSize from TabControl.SizeChanged re-enters native layout.
+            // Resize only once layout settles, after showing or a user resize.
+            ResizeEnd += delegate { SizeTabs(); };
+            launcherPage.BackColor = Color.White; launcherPage.Padding = new Padding(18);
+            settingsPage.BackColor = BackColor;
+            pages.TabPages.AddRange(new[] { launcherPage, settingsPage }); Controls.Add(pages);
             pictures.ImageSize = new Size(AppIconSize, AppIconSize); pictures.ColorDepth = ColorDepth.Depth32Bit;
-            // Hidden startup loads artwork before the ListView has a handle.
-            // Create the native image list now so Add copies each bitmap before
-            // the temporary thumbnail is disposed, rather than retaining it.
+            // Force native copies before temporary thumbnails are disposed at hidden startup.
             if (pictures.Handle == IntPtr.Zero) throw new InvalidOperationException("Could not create the app icon list.");
             apps.Dock = DockStyle.Fill; apps.View = View.Tile; apps.TileSize = new Size(260, 64); apps.LargeImageList = pictures;
             apps.Columns.Add("App", 200); apps.MultiSelect = false; apps.HideSelection = false;
             apps.BorderStyle = BorderStyle.None; apps.BackColor = Color.White; apps.ShowItemToolTips = true; apps.AccessibleName = "Installed ArtCraft apps";
-            apps.ItemActivate += delegate { LaunchSelected(); }; layout.Controls.Add(apps, 0, 4);
-            Panel footer = new Panel { Dock = DockStyle.Fill, Padding = new Padding(0, 12, 0, 0) };
-            FlowLayoutPanel footerButtons = new FlowLayoutPanel { Dock = DockStyle.Right, Width = 225, WrapContents = false };
-            Button hide = Button("Hide to tray", 118); hide.Click += delegate { Hide(); };
-            exit.Text = "Exit"; exit.Width = 86; exit.Height = 34; exit.Margin = new Padding(4); exit.Click += delegate { ExitLauncher(); };
-            footerButtons.Controls.Add(hide); footerButtons.Controls.Add(exit); footer.Controls.Add(footerButtons);
-            status.Dock = DockStyle.Fill; status.Padding = new Padding(0, 5, 5, 0); status.Text = testing ? "Test location: disposable shortcuts only." : "Finding installed apps...";
-            footer.Controls.Add(status); layout.Controls.Add(footer, 0, 5);
-            themes.AccessibleName = "Icon theme"; scopes.AccessibleName = "Shortcut locations";
+            apps.ItemActivate += delegate { LaunchSelected(); };
+            filterHint.Dock = DockStyle.Top; filterHint.Height = 42; filterHint.Text = "Finding installed apps...";
+            filterHint.TextAlign = ContentAlignment.MiddleLeft;
+            launcherPage.Controls.Add(apps); launcherPage.Controls.Add(filterHint);
+            BuildSettingsPage(testing);
+            pages.SelectedIndexChanged += delegate { if (pages.SelectedTab == launcherPage) apps.Focus(); };
         }
         string Scope { get { return scopes.SelectedIndex == 1 ? "AllUsers" : "CurrentUser"; } }
         ThemeEntry SelectedTheme { get { return themes.SelectedItem as ThemeEntry; } }
@@ -316,6 +288,7 @@ namespace BetterIcon.Tray
         void SetBusy(bool value, string message)
         {
             busy = value; apply.Enabled = restore.Enabled = themes.Enabled = scopes.Enabled = exit.Enabled = settings.Enabled = !value;
+            UpdatePackButtons();
             if (!String.IsNullOrEmpty(message)) status.Text = message;
             UseWaitCursor = value; BuildTrayMenu();
         }
@@ -339,6 +312,7 @@ namespace BetterIcon.Tray
         {
             if (!Enabled) { ActivateDialog(); return; }
             if (!Visible) SetFilter("");
+            pages.SelectedTab = launcherPage;
             dismissTimer.Stop();
             Rectangle work = Screen.FromPoint(anchor).WorkingArea;
             WindowState = FormWindowState.Normal;
@@ -347,13 +321,13 @@ namespace BetterIcon.Tray
             Bounds = bounds; Show();
             // Also works when launched with STARTUPINFO's initial hidden state.
             ShowWindow(Handle, 1);
-            Bounds = centered ? PopupPlacement.CenteredOnCursor(Size, anchor, work) : PopupPlacement.AboveTray(Size, anchor, work); Activate(); apps.Focus();
+            Bounds = centered ? PopupPlacement.CenteredOnCursor(Size, anchor, work) : PopupPlacement.AboveTray(Size, anchor, work); SizeTabs(); Activate(); apps.Focus();
             TraceFixture(centered ? "Hotkey positioned" : "Positioned", anchor);
         }
         void ExitLauncher() { if (busy) { ShowManager(); MessageBox.Show(this, "Please wait for the current operation to finish.", Text); return; } exiting = true; Close(); }
         void UpdateHotkeyHint()
         {
-            string hint = !preferences.Hotkey.Enabled ? "Hotkey disabled. Change it in Settings." : hotkey != null && hotkey.IsRegistered ? preferences.Hotkey + " opens at your cursor. Change it in Settings." : "Hotkey unavailable. Choose another combination in Settings.";
+            string hint = !preferences.Hotkey.Enabled ? "Global hotkey disabled." : hotkey != null && hotkey.IsRegistered ? preferences.Hotkey + " opens at your cursor." : "Hotkey unavailable. Choose another combination.";
             subtitle.Text = (fixtureLog == null ? "" : "Test shortcuts only. ") + hint;
         }
         void ShowSettings()
@@ -361,7 +335,7 @@ namespace BetterIcon.Tray
             if (busy || hotkey == null) return;
             if (!Enabled) { ActivateDialog(); return; }
             if (!Visible) ShowManager();
-            using (HotkeySettingsDialog dialog = new HotkeySettingsDialog(preferences.Hotkey, hotkey.IsRegistered, SaveHotkey)) dialog.ShowDialog(this);
+            pages.SelectedTab = settingsPage;
         }
         string SaveHotkey(HotkeySettings requested)
         {
@@ -407,11 +381,8 @@ namespace BetterIcon.Tray
             try {
                 WorkerReply reply = await worker.Run(new WorkerRequest { Action = "Catalog", Scope = Scope }, false);
                 catalog = reply.Catalog;
-                string chosen = SelectedTheme == null ? preferences.Theme : SelectedTheme.Id;
-                themes.Items.Clear(); themes.Items.AddRange(catalog.Themes);
-                ThemeEntry selected = catalog.Themes.FirstOrDefault(t => t.Id == chosen) ?? catalog.Themes.FirstOrDefault(t => t.Name == "Cardboard") ?? catalog.Themes.FirstOrDefault();
-                if (selected != null) themes.SelectedItem = selected;
-                RenderApps();
+                bundledThemes = catalog.Themes;
+                ReloadLibrary(null);
                 status.Text = catalog.Apps.Select(a => a.Application).Distinct().Count() + " installed apps / " + catalog.Apps.Length + " launch shortcuts. Enter or double-click to open.";
                 if (catalog.Apps.Length == 0) status.Text = "No ArtCraft shortcuts found. Install an app, then refresh from the tray menu.";
                 Text = "BetterIcon for ArtCraft  " + catalog.Version;
@@ -451,7 +422,7 @@ namespace BetterIcon.Tray
                 ThemeEntry theme = SelectedTheme;
                 foreach (AppEntry entry in catalog.Apps) {
                     ThemeIcon artwork = theme == null ? null : theme.Icons.FirstOrDefault(i => i.Application == entry.Application);
-                    using (Bitmap picture = Thumbnail(artwork == null ? null : artwork.Path, Icon)) pictures.Images.Add(picture);
+                    using (Bitmap picture = Thumbnail(artwork == null ? Environment.ExpandEnvironmentVariables(entry.IconPath ?? "") : artwork.Path, Icon)) pictures.Images.Add(picture);
                     ListViewItem item = new ListViewItem(entry.Name, pictures.Images.Count-1) { Tag = entry, ToolTipText = entry.Name + Environment.NewLine + entry.Shortcut };
                     appTiles.Add(item);
                 }
@@ -473,15 +444,17 @@ namespace BetterIcon.Tray
                     apps.Items[0].Selected = apps.Items[0].Focused = true;
                     if (apps.IsHandleCreated) apps.Items[0].EnsureVisible();
                 }
-                filterHint.Text = filterText.Length == 0 ? "Type an app name to filter. Enter opens; Esc closes." :
-                    "Filter: " + filterText + "   |   " + apps.Items.Count + (apps.Items.Count == 1 ? " match" : " matches") + "   |   Backspace edits; Esc clears";
+                filterHint.Text = catalog == null ? "Finding installed apps..." : filterText.Length == 0 ? "No ArtCraft apps found. Open Settings to refresh." : "No apps match '" + filterText + "'. Backspace edits; Esc clears.";
+                filterHint.Visible = apps.Items.Count == 0;
+                apps.AccessibleDescription = filterText.Length == 0 ? "Type an app name to filter. Enter opens. Escape closes." : "Filter: " + filterText + ". " + apps.Items.Count + " matches. Escape clears.";
             }
             finally { apps.EndUpdate(); }
         }
         void SetFilter(string value) { filterText = value; FilterApps(); }
-        bool CanFilter { get { return Enabled && !themes.DroppedDown && !scopes.DroppedDown && !trayMenu.Visible; } }
+        bool CanFilter { get { return Enabled && pages.SelectedTab == launcherPage && !themes.DroppedDown && !scopes.DroppedDown && !trayMenu.Visible; } }
         bool HandlePopupKey(Keys key)
         {
+            if (key == Keys.Escape && Enabled && pages.SelectedTab == settingsPage && !themes.DroppedDown && !scopes.DroppedDown && !busy) { pages.SelectedTab = launcherPage; apps.Focus(); return true; }
             if (!CanFilter) return false;
             if (key == Keys.Escape) {
                 if (filterText.Length > 0) { SetFilter(""); apps.Focus(); }
@@ -542,11 +515,11 @@ namespace BetterIcon.Tray
             if (catalog != null) foreach (ThemeEntry theme in catalog.Themes) {
                 ThemeEntry captured = theme;
                 ToolStripMenuItem item = new ToolStripMenuItem(theme.ToString());
-                item.Click += delegate { ShowManager(); themes.SelectedItem = captured; status.Text = "Theme preview selected. Choose locations, then Apply theme."; }; themeMenu.DropDownItems.Add(item);
+                item.Click += delegate { ShowSettings(); themes.SelectedItem = captured; status.Text = "Pack preview selected. Choose locations, then Apply icons."; }; themeMenu.DropDownItems.Add(item);
             }
             trayMenu.Items.Add(themeMenu); trayMenu.Items.Add(new ToolStripSeparator());
             ToolStripMenuItem reload = new ToolStripMenuItem("Refresh installed apps") { Enabled = !busy }; reload.Click += async delegate { await RefreshCatalog(); }; trayMenu.Items.Add(reload);
-            ToolStripMenuItem restoreItem = new ToolStripMenuItem("Restore original icons...") { Enabled = !busy }; restoreItem.Click += async delegate { ShowManager(); await RestoreIcons(); }; trayMenu.Items.Add(restoreItem);
+            ToolStripMenuItem restoreItem = new ToolStripMenuItem("Restore original icons...") { Enabled = !busy }; restoreItem.Click += async delegate { ShowSettings(); await RestoreIcons(); }; trayMenu.Items.Add(restoreItem);
             ToolStripMenuItem settingsItem = new ToolStripMenuItem("Settings...") { Enabled = !busy }; settingsItem.Click += delegate { ShowSettings(); }; trayMenu.Items.Add(settingsItem);
             trayMenu.Items.Add(new ToolStripSeparator());
             ToolStripMenuItem quit = new ToolStripMenuItem("Exit BetterIcon") { Enabled = !busy }; quit.Click += delegate { ExitLauncher(); }; trayMenu.Items.Add(quit);
@@ -576,7 +549,7 @@ namespace BetterIcon.Tray
             try {
                 WorkerReply preview = await worker.Run(new WorkerRequest { Action = "Preview", Theme = theme, Scope = scope }, false);
                 int count = preview.Plan.Count(p => p.Status == "Ready");
-                string note = "Apply " + theme + " to " + count + " shortcut(s) in " + (fixtureLog != null ? "the test shortcut folders" : scope == "AllUsers" ? "the shared Desktop and Start menu" : "your Desktop and Start menu") + ". Original shortcuts are backed up.\r\n" +
+                string note = "Apply " + SelectedTheme + " to " + count + " shortcut(s) in " + (fixtureLog != null ? "the test shortcut folders" : scope == "AllUsers" ? "the shared Desktop and Start menu" : "your Desktop and Start menu") + ". Original shortcuts are backed up.\r\n" +
                     (scope == "AllUsers" ? "Windows will request administrator access. " : "") + "Missing or ambiguous artwork is skipped. Existing taskbar pins may need re-pinning.";
                 if (!Review("Review icon changes", note, preview.Plan.Select(p => new[] { p.Status, p.Shortcut, p.Reason }), count > 0, "Apply theme")) { status.Text = "Cancelled. No icons changed."; return; }
                 status.Text = "Applying theme...";
@@ -612,7 +585,7 @@ namespace BetterIcon.Tray
         {
             System.ComponentModel.Win32Exception native = error as System.ComponentModel.Win32Exception;
             string message = native != null && native.NativeErrorCode == 1223 ? "Administrator request cancelled. No icons changed." : error.Message;
-            status.Text = message; ShowManager(); MessageBox.Show(this, message, "BetterIcon", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            status.Text = message; if (!Visible) ShowManager(); pages.SelectedTab = settingsPage; MessageBox.Show(this, message, "BetterIcon", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
     }
 

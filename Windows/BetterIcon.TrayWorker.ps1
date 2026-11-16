@@ -12,6 +12,13 @@ try {
     $options = @{ Scope = $scope }
     if ($request.StateDirectory) { $options.StateDirectory = [string]$request.StateDirectory }
     $directories = @($request.ShortcutDirectory | Where-Object { $_ })
+    $themeOptions = @{}
+    if ($request.Theme -and ([string]$request.Theme).StartsWith('User/')) {
+        if ([string]$request.Theme -cnotmatch '^User/([a-f0-9]{32})/([a-f0-9]{32})$') { throw 'Invalid personal pack identity.' }
+        if (-not $request.PackDirectory -or -not [IO.Path]::IsPathRooted([string]$request.PackDirectory)) { throw 'Personal pack library path is missing.' }
+        $themeOptions.Repository = [string]$request.PackDirectory
+        $request.Theme = ([string]$request.Theme).Substring(5)
+    }
     switch ($request.Action) {
         'Catalog' {
             $themes = @(Get-BetterIconTheme | ForEach-Object {
@@ -22,13 +29,13 @@ try {
                 Apps = @(Get-BetterIconApplication -ShortcutDirectory $directories | Sort-Object Name,Scope,Shortcut) }
         }
         'Preview' {
-            $reply.Plan = @(Get-BetterIconPlan -Theme $request.Theme -Scope $scope -ShortcutDirectory $directories)
+            $reply.Plan = @(Get-BetterIconPlan -Theme $request.Theme -Scope $scope -ShortcutDirectory $directories @themeOptions)
         }
         'Apply' {
             $options.Theme = [string]$request.Theme
             $options.ShortcutDirectory = $directories
             $options.ExpectedPlan = @($request.ExpectedPlan)
-            $reply.Results = @(Install-BetterIconTheme @options -Confirm:$false)
+            $reply.Results = @(Install-BetterIconTheme @options @themeOptions -Confirm:$false)
         }
         { $_ -in 'RestorePreview','Restore' } {
             $state = if ($request.StateDirectory) { [string]$request.StateDirectory } else { Get-BetterIconStateDirectory $scope }
