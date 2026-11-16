@@ -115,6 +115,21 @@ namespace BetterIcon.Tray
             if ((required && value.Length == 0) || value.Length > 64 || value.Any(Char.IsControl)) throw new ArgumentException(field + " must be " + (required ? "between 1 and 64" : "at most 64") + " characters without control characters.");
             return value;
         }
+        public ThemeEntry ReplaceAppIcon(ThemeEntry basis, string application, string path)
+        {
+            if (!Applications.Contains(application)) throw new ArgumentException("Unsupported app: " + application);
+            Dictionary<string, string> files = basis == null || basis.IsDefault ? new Dictionary<string, string>() : basis.Icons.ToDictionary(icon => icon.Application, icon => String.IsNullOrEmpty(icon.PreviewPath) ? icon.Path : icon.PreviewPath);
+            files[application] = path;
+            if (basis != null && basis.Managed) return Save(basis.Name, files, basis.LibraryId, basis.Author);
+            string stem = basis == null || basis.IsDefault ? "My icon pack" : basis.Name + " custom";
+            string name = stem.Substring(0, Math.Min(64, stem.Length));
+            HashSet<string> names = new HashSet<string>(Read().Packs.Where(pack => !pack.Removed).Select(pack => pack.Name), StringComparer.OrdinalIgnoreCase);
+            for (int number = 2; names.Contains(name); number++) {
+                string suffix = " (" + number + ")";
+                name = stem.Substring(0, Math.Min(64 - suffix.Length, stem.Length)) + suffix;
+            }
+            return Save(name, files, null, basis == null ? null : basis.Author);
+        }
         ThemeEntry SaveBytes(string name, Dictionary<string, byte[]> images, Dictionary<string, string> extensions, string editId, string author)
         {
             name = Label(name, "Pack name", true);

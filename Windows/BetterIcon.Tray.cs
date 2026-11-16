@@ -267,6 +267,7 @@ namespace BetterIcon.Tray
         readonly NotifyIcon tray;
         readonly ContextMenuStrip trayMenu = new ContextMenuStrip();
         readonly ContextMenuStrip iconMenu = new ContextMenuStrip();
+        readonly ToolStripMenuItem chooseAppIcon = new ToolStripMenuItem("Choose icon...");
         readonly ToolStripMenuItem restoreIconDefault = new ToolStripMenuItem("Restore ArtCraft default...");
         AppEntry iconMenuTarget;
         readonly ComboBox themes = new AppearanceComboBox();
@@ -328,7 +329,7 @@ namespace BetterIcon.Tray
             dismissTimer.Tick += delegate {
                 if (ContainsFocus) { dismissTimer.Stop(); return; }
                 if (fixture != null && fixture.KeepOpenForAutomation) { dismissTimer.Stop(); return; }
-                if (Control.MouseButtons != MouseButtons.None || trayMenu.Visible || iconMenu.Visible || importPackMenu.Visible || managePackMenu.Visible || busy || !Enabled || themes.DroppedDown || scopes.DroppedDown || restoreAppPicker.DroppedDown || AppearanceMenuOpen) return;
+                if (Control.MouseButtons != MouseButtons.None || trayMenu.Visible || iconMenu.Visible || importPackMenu.Visible || managePackMenu.Visible || busy || !Enabled || themes.DroppedDown || scopes.DroppedDown || AppearanceMenuOpen) return;
                 dismissTimer.Stop(); Hide();
             };
             Deactivate += delegate { TraceFixture("Deactivated"); if (Visible) dismissTimer.Start(); };
@@ -431,7 +432,8 @@ namespace BetterIcon.Tray
             launcherPage.Controls.Add(apps); launcherPage.Controls.Add(filterHint);
             BuildSettingsPage(testing);
             BuildLoadingIndicator();
-            iconMenu.ShowItemToolTips = true; iconMenu.Items.Add(restoreIconDefault);
+            iconMenu.ShowItemToolTips = true; iconMenu.Items.Add(chooseAppIcon); iconMenu.Items.Add(restoreIconDefault);
+            chooseAppIcon.Click += async delegate { AppEntry target = iconMenuTarget; if (!busy && target != null) await ChooseAppIcon(target); };
             restoreIconDefault.Click += async delegate {
                 AppEntry target = iconMenuTarget;
                 if (!busy && target != null && target.CanRestoreDefault) await RestoreIcons(target.Application, target.Scope);
@@ -446,7 +448,7 @@ namespace BetterIcon.Tray
         void SetBusy(bool value, string message)
         {
             busy = value; apply.Enabled = restore.Enabled = themes.Enabled = scopes.Enabled = exit.Enabled = settings.Enabled = !value;
-            if (value) { iconMenu.Close(); iconMenuTarget = null; restoreIconDefault.Enabled = false; }
+            if (value) { iconMenu.Close(); iconMenuTarget = null; chooseAppIcon.Enabled = restoreIconDefault.Enabled = false; }
             iconSizeSlider.Enabled = resetIconSize.Enabled = !value;
             showAppNames.Enabled = !value;
             appearanceModePicker.Enabled = appIconStylePicker.Enabled = appIconVariantPicker.Enabled = !value;
@@ -717,10 +719,10 @@ namespace BetterIcon.Tray
             finally { apps.EndUpdate(); }
         }
         void SetFilter(string value) { filterText = value; FilterApps(); }
-        bool CanFilter { get { return Enabled && !busy && pages.SelectedTab == launcherPage && !themes.DroppedDown && !scopes.DroppedDown && !restoreAppPicker.DroppedDown && !AppearanceMenuOpen && !trayMenu.Visible && !iconMenu.Visible && !importPackMenu.Visible && !managePackMenu.Visible; } }
+        bool CanFilter { get { return Enabled && !busy && pages.SelectedTab == launcherPage && !themes.DroppedDown && !scopes.DroppedDown && !AppearanceMenuOpen && !trayMenu.Visible && !iconMenu.Visible && !importPackMenu.Visible && !managePackMenu.Visible; } }
         bool HandlePopupKey(Keys key)
         {
-            if (key == Keys.Escape && Enabled && pages.SelectedTab == settingsPage && !themes.DroppedDown && !scopes.DroppedDown && !restoreAppPicker.DroppedDown && !AppearanceMenuOpen && !iconMenu.Visible && !busy) { pages.SelectedTab = launcherPage; apps.Focus(); return true; }
+            if (key == Keys.Escape && Enabled && pages.SelectedTab == settingsPage && !themes.DroppedDown && !scopes.DroppedDown && !AppearanceMenuOpen && !iconMenu.Visible && !busy) { pages.SelectedTab = launcherPage; apps.Focus(); return true; }
             if (!CanFilter) return false;
             if (key == Keys.Escape) {
                 if (filterText.Length > 0) { SetFilter(""); apps.Focus(); }
@@ -758,6 +760,7 @@ namespace BetterIcon.Tray
         void ShowIconMenu(IconGridView grid, Point? point)
         {
             iconMenu.Close(); iconMenuTarget = null;
+            chooseAppIcon.Enabled = restoreIconDefault.Enabled = false;
             if (busy || !Enabled || catalog == null) return;
             ListViewItem item = point.HasValue ? grid.GetItemAt(point.Value.X, point.Value.Y) : grid.SelectedItems.Cast<ListViewItem>().FirstOrDefault();
             if (item == null) return;
@@ -773,6 +776,8 @@ namespace BetterIcon.Tray
             item.Selected = item.Focused = true; grid.Focus();
             if (!point.HasValue) item.EnsureVisible();
             iconMenuTarget = target;
+            chooseAppIcon.Enabled = PackLibrary.Applications.Contains(target.Application);
+            chooseAppIcon.ToolTipText = "Choose a PNG or ICO for " + target.Application + ". Built-in packs are saved as a personal copy.";
             restoreIconDefault.Enabled = target.CanRestoreDefault;
             restoreIconDefault.ToolTipText = target.RestoreAvailable ? "Restore only " + target.Application + " in " + (target.Scope == "AllUsers" ? "shared shortcut locations (administrator)" : "your shortcut locations") + "." : target.UsingDefaultIcon ? "The shortcut already uses its default. Show that icon in Launcher." : "No BetterIcon backup to restore for this app in these locations.";
             Point anchor = point ?? new Point(item.Bounds.Left + item.Bounds.Width / 2, item.Bounds.Bottom);

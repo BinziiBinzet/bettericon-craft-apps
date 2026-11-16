@@ -1,5 +1,11 @@
 # Windows installer changelog
 
+## 1.15.0 - 2026-11-16
+
+- Remove the redundant Restore one app section from Settings; keep individual restoration in either icon grid's right-click menu.
+- Add Choose icon to that menu. Pick PNG or ICO artwork, update both grids, and save the assignment in a personal pack. Built-ins get a custom copy; personal packs retain their name, author, and other assignments.
+- Keep artwork edits separate from reviewed Windows shortcut application, with loading feedback and image validation.
+
 ## 1.14.2 - 2026-11-16
 
 - Restore resizing from all four edges and corners while keeping the main popup's title bar and window buttons hidden.

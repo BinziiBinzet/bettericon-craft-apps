@@ -1,5 +1,11 @@
 # Windows validation
 
+## 1.15.0 per-app icon editing - 2026-11-16
+
+All 253 local native checks passed from source. Coverage replaces the removed Settings restore-picker checks with per-app artwork editing: context actions remain available without a restore backup, empty-space and busy states clear both actions, built-ins become complete personal copies, only the chosen assignment changes, both grids update immediately, and personal edits retain names, authors, other assignments and immutable earlier revisions. The selected pack and per-app default choices persist without altering unrelated preferences or Windows shortcuts. Invalid artwork preserves the library and preferences and clears loading. Repeated built-in copies get unique names, and editing from ArtCraft default creates a personal pack without modifying the default.
+
+Existing right-click restoration, Settings layout, resizing, pack sharing, appearance, loading and launcher checks remain passing. Eight checks for the removed individual restore controls were retired; their selective-restore backend and context-menu coverage remains. The native tests exercise the assignment command directly; the Windows file-picker click-through has not been visually inspected for this version. All builds and validation run locally.
+
 ## 1.14.2 borderless resizing - 2026-11-16
 
 All 250 local native checks passed from source. New checks verify all eight resize hit targets, that child controls leave those targets reachable, native sizing support without a caption or window buttons, a full client area, and ordinary client interaction in the interior. Existing Settings layout, placement, keyboard, pack, appearance and shortcut checks remain passing.
