@@ -1,10 +1,13 @@
 #!/bin/bash
 
-# BetterIcon-Craft Apps - Universal Linux Installer v7.0
+# BetterIcon-Craft Apps - Universal Linux Installer v7.1
+# FIXED: Path scanning for scripts inside 'linux/' subfolder
 # FIXED: Bash arithmetic crash bug & Icon cache collision
-# FEATURE: Unique icon naming per theme to prevent cache issues
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# FIX: Go up one level to the repository root
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
 DESKTOP_DIR="$HOME/.local/share/applications"
 SYSTEM_DESKTOP_DIR="/usr/share/applications"
 LOCAL_ICON_DIR="$HOME/.local/share/icons/hicolor/256x256/apps"
@@ -40,22 +43,24 @@ APP_LIST=(
 )
 
 echo -e "${BLUE}╔════════════════════════════════════════════════════╗${NC}"
-echo -e "${BLUE}║   🎨 BetterIcon-Craft Apps Installer v7.0          ║${NC}"
+echo -e "${BLUE}║   🎨 BetterIcon-Craft Apps Installer v7.1          ║${NC}"
 echo -e "${BLUE}║   Anti-Crash & Cache-Safe Naming                   ║${NC}"
 echo -e "${BLUE}╚════════════════════════════════════════════════════╝${NC}"
 echo ""
 
-# --- STEP 1: Scan for Icon Pack Folders ---
+# --- STEP 1: Scan for Icon Pack Folders (Using ROOT_DIR) ---
 PACKS=()
-for d in "$SCRIPT_DIR"/*/; do
+for d in "$ROOT_DIR"/*/; do
     [ -d "$d" ] || continue
     dirname=$(basename "$d")
     [[ "$dirname" == .* ]] && continue
+    # Skip platform folders so they don't appear as icon packs
+    [[ "$dirname" == "linux" || "$dirname" == "Linux" || "$dirname" == "windows" || "$dirname" == "Windows" || "$dirname" == "mac" || "$dirname" == "Mac" ]] && continue
     PACKS+=("$dirname")
 done
 
 if [ ${#PACKS[@]} -eq 0 ]; then
-    echo -e "${RED}❌ Error: No folders found next to install.sh!${NC}"
+    echo -e "${RED}❌ Error: No icon pack folders found in $ROOT_DIR!${NC}"
     exit 1
 fi
 
@@ -71,7 +76,8 @@ if ! [[ "$pack_choice" =~ ^[0-9]+$ ]] || [ "$pack_choice" -lt 1 ] || [ "$pack_ch
     exit 1
 fi
 
-PACK_DIR="$SCRIPT_DIR/${PACKS[$((pack_choice-1))]}"
+# FIX: Use ROOT_DIR to define PACK_DIR
+PACK_DIR="$ROOT_DIR/${PACKS[$((pack_choice-1))]}"
 echo -e "${GREEN}✅ Selected Pack: ${BOLD}${PACKS[$((pack_choice-1))]}${NC}"
 
 # --- STEP 2: Check for Theme Subfolders ---
@@ -201,7 +207,7 @@ for app_lower in "${APPS_TO_INSTALL[@]}"; do
         icon_source="${icon_matches[0]}"
         icon_ext="${icon_source##*.}"
 
-        # ✅ FIX 2: Unique naming per theme to prevent cache collision
+        # Unique naming per theme to prevent cache collision
         icon_name="${app_lower}-bettericon-${THEME_TAG}"
 
         cp "$icon_source" "$LOCAL_ICON_DIR/${icon_name}.${icon_ext}"
@@ -213,7 +219,7 @@ for app_lower in "${APPS_TO_INSTALL[@]}"; do
         fi
 
         echo -e "   ${GREEN}✅ Updated:${NC} $(basename "$desktop_file")"
-        INSTALLED_COUNT=$((INSTALLED_COUNT + 1)) # ✅ FIX 1: Safe arithmetic
+        INSTALLED_COUNT=$((INSTALLED_COUNT + 1))
 
     done < <(find "$DESKTOP_DIR" "$SYSTEM_DESKTOP_DIR" -maxdepth 1 -iname "*${app_lower}*.desktop" -print0 2>/dev/null)
 done
