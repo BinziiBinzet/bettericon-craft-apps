@@ -24,10 +24,16 @@ namespace BetterIcon.Tray
         public string Shortcut { get; set; }
         public string Scope { get; set; }
         public string IconPath { get; set; }
+        public int IconIndex { get; set; }
+        public string OriginalIconPath { get; set; }
+        public int OriginalIconIndex { get; set; }
+        public bool RestoreAvailable { get; set; }
     }
     public sealed class ThemeIcon { public string Application { get; set; } public string Path { get; set; } }
     public sealed class ThemeEntry
     {
+        public const string DefaultThemeId = "ArtCraft/Default";
+        public bool IsDefault { get; set; }
         public string Id { get; set; }
         public string Name { get; set; }
         public string Pack { get; set; }
@@ -38,6 +44,7 @@ namespace BetterIcon.Tray
         public ThemeIcon[] Icons { get; set; }
         public override string ToString()
         {
+            if (IsDefault) return "ArtCraft default";
             string author = Author ?? (Managed ? "" : (Pack ?? "").Replace("Craft-Icons-", ""));
             string title = Name == "Root" && !Managed ? author : Name + (String.IsNullOrWhiteSpace(author) ? "" : " / " + author);
             return title + (Managed ? " (personal)" : "");
@@ -58,6 +65,7 @@ namespace BetterIcon.Tray
     public sealed class WorkerRequest
     {
         public string Action { get; set; }
+        public string Application { get; set; }
         public string Theme { get; set; }
         public string Scope { get; set; }
         public string[] ShortcutDirectory { get; set; }
@@ -85,8 +93,9 @@ namespace BetterIcon.Tray
         public string Theme { get; set; }
         public string Scope { get; set; }
         public HotkeySettings Hotkey { get; set; }
+        public string[] DefaultShortcuts { get; set; }
         public int IconSize { get { return iconSize; } set { iconSize = Math.Max(MinimumIconSize, Math.Min(MaximumIconSize, value)); } }
-        public Preferences() { Hotkey = new HotkeySettings(); }
+        public Preferences() { Hotkey = new HotkeySettings(); DefaultShortcuts = new string[0]; }
     }
 
     public sealed class WorkerClient
@@ -250,7 +259,7 @@ namespace BetterIcon.Tray
             dismissTimer.Tick += delegate {
                 if (ContainsFocus) { dismissTimer.Stop(); return; }
                 if (fixture != null && fixture.KeepOpenForAutomation) { dismissTimer.Stop(); return; }
-                if (Control.MouseButtons != MouseButtons.None || trayMenu.Visible || importPackMenu.Visible || managePackMenu.Visible || busy || !Enabled || themes.DroppedDown || scopes.DroppedDown) return;
+                if (Control.MouseButtons != MouseButtons.None || trayMenu.Visible || importPackMenu.Visible || managePackMenu.Visible || busy || !Enabled || themes.DroppedDown || scopes.DroppedDown || restoreAppPicker.DroppedDown) return;
                 dismissTimer.Stop(); Hide();
             };
             Deactivate += delegate { TraceFixture("Deactivated"); if (Visible) dismissTimer.Start(); };
@@ -432,16 +441,24 @@ namespace BetterIcon.Tray
             catch (Exception error) { Report(error); }
             finally { SetBusy(false, null); }
         }
-        static Bitmap Thumbnail(string path, Icon fallback, int size = 48)
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+        static extern int SHDefExtractIconW(string file, int index, uint flags, out IntPtr large, IntPtr small, uint size);
+        [DllImport("user32.dll")]
+        static extern bool DestroyIcon(IntPtr icon);
+        static Bitmap Thumbnail(string path, Icon fallback, int size = 48, int iconIndex = 0)
         {
             Bitmap image = new Bitmap(size, size);
             try {
                 if (String.IsNullOrEmpty(path) || !File.Exists(path)) throw new IOException();
                 Image loaded;
-                if (Path.GetExtension(path).Equals(".ico", StringComparison.OrdinalIgnoreCase)) {
-                    loaded = new Bitmap(size, size);
-                    using (Icon icon = new Icon(path, size, size))
-                    using (Graphics canvas = Graphics.FromImage(loaded)) { canvas.Clear(Color.Transparent); canvas.DrawIcon(icon, new Rectangle(0, 0, size, size)); }
+                // The Shell decodes compressed ICO frames as well as indexed EXE/DLL resources.
+                if (new[] { ".ico", ".exe", ".dll", ".icl" }.Contains(Path.GetExtension(path).ToLowerInvariant())) {
+                    IntPtr handle = IntPtr.Zero;
+                    try {
+                        if (SHDefExtractIconW(path, iconIndex, 0, out handle, IntPtr.Zero, (uint)size) != 0 || handle == IntPtr.Zero) throw new IOException("No native icon available.");
+                        using (Icon icon = Icon.FromHandle(handle)) loaded = icon.ToBitmap();
+                    }
+                    finally { if (handle != IntPtr.Zero) DestroyIcon(handle); }
                 }
                 else loaded = Image.FromFile(path);
                 using (Image source = loaded)
@@ -478,9 +495,10 @@ namespace BetterIcon.Tray
                 ClearAppArtwork();
                 ThemeEntry theme = SelectedTheme;
                 foreach (AppEntry entry in catalog.Apps) {
-                    ThemeIcon artwork = theme == null ? null : theme.Icons.FirstOrDefault(i => i.Application == entry.Application);
+                    bool original = (theme != null && theme.IsDefault) || (preferences.DefaultShortcuts ?? new string[0]).Contains(entry.Shortcut, StringComparer.OrdinalIgnoreCase);
+                    ThemeIcon artwork = original || theme == null ? null : theme.Icons.FirstOrDefault(i => i.Application == entry.Application);
                     // Cache at the maximum launcher size so dragging the slider never rereads artwork from disk.
-                    appArtwork.Add(Thumbnail(artwork == null ? Environment.ExpandEnvironmentVariables(entry.IconPath ?? "") : artwork.Path, Icon, Preferences.MaximumIconSize));
+                    appArtwork.Add(Thumbnail(artwork == null ? Environment.ExpandEnvironmentVariables((original ? entry.OriginalIconPath : entry.IconPath) ?? "") : artwork.Path, Icon, Preferences.MaximumIconSize, artwork != null ? 0 : original ? entry.OriginalIconIndex : entry.IconIndex));
                     ListViewItem item = new ListViewItem(entry.Name, appArtwork.Count-1) { Tag = entry, ToolTipText = entry.Name + Environment.NewLine + entry.Shortcut };
                     appTiles.Add(item);
                 }
@@ -524,10 +542,10 @@ namespace BetterIcon.Tray
             finally { apps.EndUpdate(); }
         }
         void SetFilter(string value) { filterText = value; FilterApps(); }
-        bool CanFilter { get { return Enabled && pages.SelectedTab == launcherPage && !themes.DroppedDown && !scopes.DroppedDown && !trayMenu.Visible && !importPackMenu.Visible && !managePackMenu.Visible; } }
+        bool CanFilter { get { return Enabled && pages.SelectedTab == launcherPage && !themes.DroppedDown && !scopes.DroppedDown && !restoreAppPicker.DroppedDown && !trayMenu.Visible && !importPackMenu.Visible && !managePackMenu.Visible; } }
         bool HandlePopupKey(Keys key)
         {
-            if (key == Keys.Escape && Enabled && pages.SelectedTab == settingsPage && !themes.DroppedDown && !scopes.DroppedDown && !busy) { pages.SelectedTab = launcherPage; apps.Focus(); return true; }
+            if (key == Keys.Escape && Enabled && pages.SelectedTab == settingsPage && !themes.DroppedDown && !scopes.DroppedDown && !restoreAppPicker.DroppedDown && !busy) { pages.SelectedTab = launcherPage; apps.Focus(); return true; }
             if (!CanFilter) return false;
             if (key == Keys.Escape) {
                 if (filterText.Length > 0) { SetFilter(""); apps.Focus(); }
@@ -617,7 +635,9 @@ namespace BetterIcon.Tray
         async Task ApplyTheme()
         {
             if (busy || SelectedTheme == null) return;
+            if (SelectedTheme.IsDefault) { await RestoreIcons(); return; }
             string theme = SelectedTheme.Id, scope = Scope;
+            bool refresh = false;
             SetBusy(true, "Preparing a preview. No icons changed yet...");
             try {
                 WorkerReply preview = await worker.Run(new WorkerRequest { Action = "Preview", Theme = theme, Scope = scope }, false);
@@ -627,26 +647,49 @@ namespace BetterIcon.Tray
                 if (!Review("Review icon changes", note, preview.Plan.Select(p => new[] { p.Status, p.Shortcut, p.Reason }), count > 0, "Apply theme")) { status.Text = "Cancelled. No icons changed."; return; }
                 status.Text = "Applying theme...";
                 WorkerReply result = await worker.Run(new WorkerRequest { Action = "Apply", Theme = theme, Scope = scope, ExpectedPlan = preview.Plan }, scope == "AllUsers" && !IsAdministrator());
+                RememberRestoredShortcuts(result.Results, false); refresh = true;
                 ShowResults(result.Results, "Theme applied");
             }
             catch (Exception error) { Report(error); }
             finally { SetBusy(false, null); }
+            if (refresh) await RefreshAfterChange();
         }
-        async Task RestoreIcons()
+        // Keep successful per-shortcut defaults visible in the launcher across restarts.
+        // A later successful pack application replaces only the affected overrides.
+        void RememberRestoredShortcuts(ResultItem[] results, bool restored)
+        {
+            HashSet<string> defaults = new HashSet<string>(preferences.DefaultShortcuts ?? new string[0], StringComparer.OrdinalIgnoreCase);
+            foreach (ResultItem result in results) {
+                if (String.IsNullOrEmpty(result.Shortcut)) continue;
+                if (restored && result.Status == "Restored") defaults.Add(result.Shortcut);
+                else if (!restored && (result.Status == "Applied" || result.Status == "Unchanged")) defaults.Remove(result.Shortcut);
+            }
+            preferences.DefaultShortcuts = defaults.OrderBy(s => s, StringComparer.OrdinalIgnoreCase).ToArray(); SavePreferences();
+        }
+        async Task RefreshAfterChange()
+        {
+            string message = status.Text;
+            await RefreshCatalog();
+            status.Text = message;
+        }
+        async Task RestoreIcons(string application = null)
         {
             if (busy) return;
+            bool refresh = false;
             string scope = Scope; SetBusy(true, "Checking original shortcut backups...");
             try {
-                WorkerReply preview = await worker.Run(new WorkerRequest { Action = "RestorePreview", Scope = scope }, false);
-                if (preview.Results.Length == 0) { status.Text = "No active installation to restore for these locations."; return; }
-                string note = "Restore the original shortcuts in " + (fixtureLog != null ? "the test shortcut folders." : scope == "AllUsers" ? "shared locations (administrator access required)." : "your locations.") + "\r\nLater user edits and app updates are preserved. Backups and icon files remain available for recovery.";
+                WorkerReply preview = await worker.Run(new WorkerRequest { Action = "RestorePreview", Scope = scope, Application = application }, false);
+                if (preview.Results.Length == 0) { status.Text = "No BetterIcon changes to restore" + (application == null ? "" : " for " + application) + " in these locations."; return; }
+                string note = "Restore " + (application == null ? "all original ArtCraft shortcuts" : "only " + application + " shortcuts") + " in " + (fixtureLog != null ? "the test shortcut folders." : scope == "AllUsers" ? "shared locations (administrator access required)." : "your locations.") + "\r\nLater user edits and app updates are preserved. Backups and icon files remain available for recovery.";
                 if (!Review("Review restoration", note, preview.Results.Select(r => new[] { r.Status, r.Shortcut, r.Message }), true, "Restore original icons")) { status.Text = "Cancelled. No icons changed."; return; }
                 status.Text = "Restoring original icons...";
-                WorkerReply result = await worker.Run(new WorkerRequest { Action = "Restore", Scope = scope, ExpectedStateHash = preview.StateHash }, scope == "AllUsers" && !IsAdministrator());
+                WorkerReply result = await worker.Run(new WorkerRequest { Action = "Restore", Scope = scope, Application = application, ExpectedStateHash = preview.StateHash }, scope == "AllUsers" && !IsAdministrator());
+                RememberRestoredShortcuts(result.Results, true); refresh = true;
                 ShowResults(result.Results, "Original icons restored");
             }
             catch (Exception error) { Report(error); }
             finally { SetBusy(false, null); }
+            if (refresh) await RefreshAfterChange();
         }
         void ShowResults(ResultItem[] results, string success)
         {

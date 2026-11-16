@@ -1,6 +1,6 @@
 # BetterIcon-Craft Apps for Windows
 
-Windows version **1.8.0** includes a native tray launcher alongside the existing icon installer. It shares the repository's artwork and leaves Craft executables, app settings, file associations, and the registry unchanged.
+Windows version **1.9.0** includes a native tray launcher alongside the existing icon installer. It shares the repository's artwork and leaves Craft executables, app settings, file associations, and the registry unchanged.
 
 ## Start here
 
@@ -9,7 +9,7 @@ Windows version **1.8.0** includes a native tray launcher alongside the existing
 3. Click its notification-area icon to open the popup above the system tray. Click the icon again to hide it. Closing the window or clicking elsewhere also hides it. The popup stays inside the clicked monitor's working area.
 4. Start typing an app's name to narrow the grid immediately, without a search field. For example, `f` shows FigCraft and FilmCraft; `fiL` leaves FilmCraft. Use arrows to choose a result and **Enter** to launch, or double-click an app. **Backspace** edits the filter; **Ctrl+Backspace** clears it. **Escape** clears a filter first, then closes the popup. Reopening starts with all apps. Open dropdowns and Settings keep their normal keyboard behavior.
 5. The left **Launcher** tab contains only app icons and names. Open the right **Settings** tab to manage icon packs, preview artwork, or configure the launcher. Select **My Desktop and Start menu** or **Shared shortcuts (administrator)**, then choose **Apply icons** and review the exact shortcuts. Shared writes request elevation; normal app launches remain unelevated.
-6. To undo, choose **Restore original icons** in Settings with the same scope and review the restoration.
+6. To undo one app, open **Settings > Windows shortcuts > Restore one app**, choose the app and **Restore app default**. To undo all apps, select **ArtCraft default** (the first icon pack) and **Restore ArtCraft defaults**, or use **Restore all defaults** beside Apply icons. Use the same shortcut locations as the original application and review the exact shortcuts.
 
 Choose **Exit** in Settings or the tray menu, or use **Windows/Stop-Tray.cmd** to stop this user's launcher. Starting it again reopens the existing instance. `Start-Tray.ps1 -TrayOnly` starts without opening the popup. No login/startup entry is created.
 
@@ -31,6 +31,7 @@ The launcher uses Windows PowerShell 5.1 and .NET Framework 4.8 on Windows 10/11
 
 Settings has three sections: **Icon pack**, **Launcher**, and **Windows shortcuts**. Less-used pack commands are grouped under **Pack actions**; **Import** offers ZIP and folder choices. The content scrolls vertically when needed, while status, Refresh apps, and Exit remain in a separate footer. All customization lives in **Settings**. Selecting a pack previews its artwork in Settings and the Launcher; changing shortcut icons still requires **Apply icons** and a review.
 
+- **ArtCraft default:** always the first option, displaying original icons from installed apps and verified shortcut backups. It cannot be removed, edited, copied, or exported. Choosing it previews the defaults; **Restore ArtCraft defaults** reviews and restores BetterIcon's changes in the selected shortcut locations.
 - **Import > From folder / From ZIP:** add one theme at a time, using app-named PNG or ICO files such as `PhotoCraft.png` or `FilmCraft.ico`. Nested folders are supported. An ICO takes precedence over a PNG for the same app; multiple variants in the same format are rejected. ICNS and SVG are not supported. Imports are copied locally, so their original folder or ZIP is no longer needed.
 - **New pack:** name a pack, optionally enter its public author credit, and choose a PNG or ICO for each app you want to customize. At least one icon is required. Apps without assigned artwork keep their current shortcut icons.
 - **Customize:** start a personal copy of the selected pack and mix in your own artwork. Built-in source artwork stays unchanged.
@@ -96,6 +97,8 @@ Each installation directory contains `manifest.json`, `backups/`, `icons/`, and 
 The installer saves the complete original `.lnk` file before replacing it. Theme switching keeps that original backup. It verifies launch information before applying a staged change and uses an on-disk journal to support recovery if interrupted. For MSI-advertised shortcuts, it checks the installer identity, installed component path, and extra data; the shell's displayed target can be an icon resource rather than the executable.
 
 Restoration checks file hashes and restores original bytes. If a shortcut has been edited, replaced by an app update, or deleted since installation, it is left untouched and its backup is retained. A corrupt/missing backup or invalid manifest also stops that restoration. Close another installer instance if the state directory is locked.
+
+**Restore one app** restores only that app's backed-up shortcuts in the selected locations, including aliases for the same app. Other apps and their backups stay unchanged. The button is disabled when there is no verified BetterIcon backup for that app. Restoration returns the shortcut to its state before BetterIcon first changed it; it does not manufacture a replacement shortcut or reset earlier customizations. Successful individual restorations also show the original icon in the Launcher across restarts. Applying a pack again replaces these defaults only for shortcuts successfully updated by that application.
 
 Backups and copied icons are deliberately retained after restoration because pinned/copied shortcuts may still reference them. Once all shortcuts and pins are restored and no pending entries remain in the manifest, you can remove the state directory yourself. Do not remove it while custom icons are still in use.
 

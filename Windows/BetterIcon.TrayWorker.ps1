@@ -26,7 +26,7 @@ try {
                     Icons = @(Get-BetterIconThemeIcon -Theme $_.Id) }
             })
             $reply.Catalog = @{ Version = Get-BetterIconVersion; Themes = $themes;
-                Apps = @(Get-BetterIconApplication -ShortcutDirectory $directories | Sort-Object Name,Scope,Shortcut) }
+                Apps = @(Get-BetterIconApplication -ShortcutDirectory $directories -StateDirectory $request.StateDirectory | Sort-Object Name,Scope,Shortcut) }
         }
         'Preview' {
             $reply.Plan = @(Get-BetterIconPlan -Theme $request.Theme -Scope $scope -ShortcutDirectory $directories @themeOptions)
@@ -38,6 +38,11 @@ try {
             $reply.Results = @(Install-BetterIconTheme @options @themeOptions -Confirm:$false)
         }
         { $_ -in 'RestorePreview','Restore' } {
+            # Old clients omit Application; null means all apps. Explicit empty
+            # or unknown names are passed to validation, never widened to all.
+            if ($request.PSObject.Properties['Application'] -and $null -ne $request.Application) {
+                $options.Application = [string]$request.Application
+            }
             $state = if ($request.StateDirectory) { [string]$request.StateDirectory } else { Get-BetterIconStateDirectory $scope }
             $manifest = Join-Path $state 'manifest.json'
             # Use .NET directly: an inherited PowerShell 7 module path can hide

@@ -1,9 +1,15 @@
 #Requires -Version 5.1
 [CmdletBinding()]
-param([string]$ArtifactDirectory = [IO.Path]::GetTempPath())
+param([string]$ArtifactDirectory = [IO.Path]::GetTempPath(), [switch]$UsePackagedExecutable)
 $ErrorActionPreference = 'Stop'
 $output = Join-Path $ArtifactDirectory ('bettericon-tray-ui-tests-' + [guid]::NewGuid().ToString('N'))
-$build = & (Join-Path $PSScriptRoot 'Build-Tray.ps1') -OutputDirectory $output
+if ($UsePackagedExecutable) {
+    $null = [IO.Directory]::CreateDirectory($output)
+    $executable = Join-Path $output 'BetterIcon-Tray.exe'
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'BetterIcon-Tray.exe') -Destination $executable
+    $build = @{ Executable = $executable }
+}
+else { $build = & (Join-Path $PSScriptRoot 'Build-Tray.ps1') -OutputDirectory $output }
 $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 # Launch only this disposable probe, never a user's installed app or document.
 $probeSource = Join-Path $output 'LaunchProbe.cs'

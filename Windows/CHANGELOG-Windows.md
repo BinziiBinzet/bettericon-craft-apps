@@ -1,5 +1,12 @@
 # Windows installer changelog
 
+## 1.9.0 - 2026-11-16
+
+- Put ArtCraft default first in the pack menu, with original installed-app icons and a reviewed restore-all action. Keep this option available independently of hidden or personal packs.
+- Add Restore one app in Settings, limited to the chosen shortcut locations. Preserve other apps, backups, later shortcut edits, and launch metadata.
+- Remember successfully restored individual icons in the Launcher; a later successful pack application replaces only affected defaults.
+- Decode native EXE/DLL icon resources and compressed ICO frames through the Windows Shell so original icon previews render correctly.
+
 ## 1.8.0 - 2026-11-16
 
 - Organize Settings into Icon pack, Launcher, and Windows shortcuts sections with consistent spacing and automatically sized rows.

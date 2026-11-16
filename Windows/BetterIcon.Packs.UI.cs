@@ -80,6 +80,9 @@ namespace BetterIcon.Tray
         readonly Label iconSizeValue = new Label();
         readonly Button resetIconSize = new Button();
         readonly List<Button> packButtons = new List<Button>();
+        readonly ComboBox restoreAppPicker = new ComboBox();
+        readonly Button restoreApp = new Button();
+        readonly Label restoreAppHint = new Label();
         int iconWheelDelta;
         PackLibrary library;
         ThemeEntry[] bundledThemes = new ThemeEntry[0];
@@ -204,14 +207,24 @@ namespace BetterIcon.Tray
 
             TableLayoutPanel shortcuts = SettingsSection("ShortcutsSection", "Windows shortcuts");
             scopes.DropDownStyle = ComboBoxStyle.DropDownList; scopes.Dock = DockStyle.Top; scopes.Margin = new Padding(0, 0, 0, 10); scopes.AccessibleName = "Shortcut locations";
-            scopes.Items.AddRange(new object[] { "My Desktop and Start menu", "Shared shortcuts (administrator)" }); scopes.SelectedIndex = preferences.Scope == "AllUsers" ? 1 : 0; scopes.SelectedIndexChanged += delegate { SavePreferences(); };
+            scopes.Items.AddRange(new object[] { "My Desktop and Start menu", "Shared shortcuts (administrator)" }); scopes.SelectedIndex = preferences.Scope == "AllUsers" ? 1 : 0; scopes.SelectedIndexChanged += delegate { SavePreferences(); UpdateRestoreApps(); };
             SettingsRow(shortcuts, scopes);
             TableLayoutPanel applyRow = SettingsTable(2);
             applyRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50)); applyRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
             apply.Text = "Apply icons..."; SettingsButton(apply); apply.BackColor = accent; apply.ForeColor = Color.White; apply.FlatStyle = FlatStyle.Flat; apply.Click += async delegate { await ApplyTheme(); };
-            restore.Text = "Restore original icons..."; SettingsButton(restore); restore.Click += async delegate { await RestoreIcons(); };
+            restore.Text = "Restore all defaults..."; SettingsButton(restore); restore.Click += async delegate { await RestoreIcons(); };
             applyRow.Controls.Add(apply, 0, 0); applyRow.Controls.Add(restore, 1, 0); SettingsRow(shortcuts, applyRow);
-            previewLabel.Text = "Shortcut icons change only when you apply."; previewLabel.AutoSize = true; previewLabel.Dock = DockStyle.Top; previewLabel.Margin = new Padding(0, 8, 0, 0); SettingsRow(shortcuts, previewLabel);
+            SettingsRow(shortcuts, new Label { Text = "Restore one app", AutoSize = true, Margin = new Padding(0, 14, 0, 6) });
+            TableLayoutPanel individual = SettingsTable(2);
+            individual.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); individual.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            restoreAppPicker.DropDownStyle = ComboBoxStyle.DropDownList; restoreAppPicker.Dock = DockStyle.Fill; restoreAppPicker.Anchor = AnchorStyles.Left | AnchorStyles.Right;
+            restoreAppPicker.AccessibleName = "App to restore"; restoreAppPicker.Margin = new Padding(0, 4, 10, 0);
+            restoreAppPicker.SelectedIndexChanged += delegate { UpdateRestoreAppButton(); };
+            restoreApp.Text = "Restore app default..."; SettingsButton(restoreApp);
+            restoreApp.Click += async delegate { string app = restoreAppPicker.SelectedItem as string; if (!String.IsNullOrEmpty(app)) await RestoreIcons(app); };
+            individual.Controls.Add(restoreAppPicker, 0, 0); individual.Controls.Add(restoreApp, 1, 0); SettingsRow(shortcuts, individual);
+            restoreAppHint.AutoSize = true; restoreAppHint.Dock = DockStyle.Top; restoreAppHint.Margin = new Padding(0, 6, 0, 0); SettingsRow(shortcuts, restoreAppHint);
+            previewLabel.Text = "Changes are reviewed before they are applied."; previewLabel.AutoSize = true; previewLabel.Dock = DockStyle.Top; previewLabel.Margin = new Padding(0, 8, 0, 0); SettingsRow(shortcuts, previewLabel);
 
             TableLayoutPanel footer = SettingsTable(3); footer.Padding = new Padding(16, 8, 16, 12);
             footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
@@ -226,20 +239,25 @@ namespace BetterIcon.Tray
         {
             if (catalog == null) return;
             string chosen = selectId ?? (SelectedTheme == null ? preferences.Theme : SelectedTheme.Id);
-            catalog.Themes = library.VisibleThemes(bundledThemes);
+            ThemeEntry defaults = new ThemeEntry { Id = ThemeEntry.DefaultThemeId, Name = "ArtCraft default", IsDefault = true, Icons = new ThemeIcon[0], IconCount = catalog.Apps.Select(a => a.Application).Distinct().Count() };
+            catalog.Themes = new[] { defaults }.Concat(library.VisibleThemes(bundledThemes).Where(t => !t.IsDefault)).ToArray();
             fillingThemes = true;
             try { themes.Items.Clear(); themes.Items.AddRange(catalog.Themes); themes.SelectedItem = catalog.Themes.FirstOrDefault(t => t.Id == chosen) ?? catalog.Themes.FirstOrDefault(t => t.Name == "Cardboard") ?? catalog.Themes.FirstOrDefault(); }
             finally { fillingThemes = false; }
-            RenderApps(); RenderPack(); SavePreferences(); BuildTrayMenu();
+            RenderApps(); RenderPack(); UpdateRestoreApps(); SavePreferences(); BuildTrayMenu();
         }
         void RenderPack()
         {
             ThemeEntry theme = SelectedTheme;
-            packDetails.Text = theme == null ? "No packs. Import or create one." : theme.IconCount + " icons / " + (theme.Managed ? "Personal pack" : "Built-in pack");
+            packDetails.Text = theme == null ? "No packs. Import or create one." : theme.IsDefault ? "Original icons for your installed apps. Restore defaults below to undo BetterIcon changes." : theme.IconCount + " icons / " + (theme.Managed ? "Personal pack" : "Built-in pack");
             packPreview.BeginUpdate();
             try {
                 packPreview.Items.Clear(); packPictures.Images.Clear(); ClearPackArtwork();
-                if (theme != null) foreach (ThemeIcon icon in theme.Icons.OrderBy(i => i.Application)) {
+                if (theme != null && theme.IsDefault) foreach (AppEntry app in catalog.Apps.GroupBy(a => a.Application).Select(g => g.First()).OrderBy(a => a.Application)) {
+                    packArtwork.Add(Thumbnail(app.OriginalIconPath, Icon, Preferences.MaximumIconSize, app.OriginalIconIndex));
+                    packPreview.Items.Add(new ListViewItem(app.Application, packArtwork.Count - 1) { ToolTipText = app.Application + " - ArtCraft default" });
+                }
+                else if (theme != null) foreach (ThemeIcon icon in theme.Icons.OrderBy(i => i.Application)) {
                     packArtwork.Add(Thumbnail(icon.Path, Icon, Preferences.MaximumIconSize));
                     packPreview.Items.Add(new ListViewItem(icon.Application, packArtwork.Count - 1) { ToolTipText = icon.Application });
                 }
@@ -266,9 +284,36 @@ namespace BetterIcon.Tray
             foreach (ToolStripItem item in importPackMenu.Items) item.Enabled = !busy;
             foreach (ToolStripItem item in managePackMenu.Items) {
                 bool needsPersonal = item.Text == "Edit pack..." || item.Text == "Export ZIP...";
-                item.Enabled = !busy && (item.Text == "Restore built-in packs" || (SelectedTheme != null && (!needsPersonal || SelectedTheme.Managed)));
+                item.Enabled = !busy && (item.Text == "Restore built-in packs" || (SelectedTheme != null && !SelectedTheme.IsDefault && (!needsPersonal || SelectedTheme.Managed)));
             }
+            bool defaults = SelectedTheme != null && SelectedTheme.IsDefault;
+            apply.Text = defaults ? "Restore ArtCraft defaults..." : "Apply icons...";
+            restore.Visible = !defaults;
+            TableLayoutPanel applyRow = apply.Parent as TableLayoutPanel;
+            if (applyRow != null) applyRow.SetColumnSpan(apply, defaults ? 2 : 1);
             apply.Enabled = !busy && SelectedTheme != null;
+            UpdateRestoreAppButton();
+        }
+        void UpdateRestoreApps()
+        {
+            string selected = restoreAppPicker.SelectedItem as string;
+            restoreAppPicker.BeginUpdate();
+            try {
+                restoreAppPicker.Items.Clear();
+                if (catalog != null) restoreAppPicker.Items.AddRange(catalog.Apps.Where(a => a.Scope == Scope).Select(a => a.Application).Distinct().OrderBy(a => a).ToArray());
+                if (selected != null && restoreAppPicker.Items.Contains(selected)) restoreAppPicker.SelectedItem = selected;
+                else if (restoreAppPicker.Items.Count != 0) restoreAppPicker.SelectedIndex = 0;
+            }
+            finally { restoreAppPicker.EndUpdate(); }
+            UpdateRestoreAppButton();
+        }
+        void UpdateRestoreAppButton()
+        {
+            string selected = restoreAppPicker.SelectedItem as string;
+            bool available = selected != null && catalog != null && catalog.Apps.Any(a => a.Application == selected && a.Scope == Scope && a.RestoreAvailable);
+            restoreAppPicker.Enabled = !busy && restoreAppPicker.Items.Count != 0;
+            restoreApp.Enabled = !busy && available;
+            restoreAppHint.Text = selected == null ? "No installed apps in these shortcut locations." : available ? "Restores only this app in the selected locations. Other apps keep their icons." : "No BetterIcon backup to restore for this app in these locations.";
         }
         async void ImportPack(bool zip)
         {
@@ -297,14 +342,14 @@ namespace BetterIcon.Tray
         }
         void EditPack(bool useSelected, bool edit)
         {
-            if (busy || (useSelected && SelectedTheme == null) || (edit && !SelectedTheme.Managed)) return;
+            if (busy || (useSelected && (SelectedTheme == null || SelectedTheme.IsDefault)) || (edit && !SelectedTheme.Managed)) return;
             SetBusy(true, "Editing icon pack...");
             try { using (PackEditor editor = new PackEditor(library, useSelected ? SelectedTheme : null, edit)) if (editor.ShowDialog(this) == DialogResult.OK) { ReloadLibrary(editor.Saved.Id); status.Text = "Saved " + editor.Saved.Name + ". Choose Apply icons to change shortcuts."; } }
             finally { SetBusy(false, null); }
         }
         void RemovePack()
         {
-            if (busy || SelectedTheme == null) return;
+            if (busy || SelectedTheme == null || SelectedTheme.IsDefault) return;
             ThemeEntry selected = SelectedTheme;
             string note = "Remove " + selected + " from your library? Applied shortcut icons will stay as they are." + (selected.Managed ? "" : " You can restore built-in packs later.");
             if (MessageBox.Show(this, note, "Remove icon pack", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;

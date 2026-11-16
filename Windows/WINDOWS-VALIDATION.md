@@ -1,5 +1,13 @@
 # Windows validation
 
+## 1.9.0 ArtCraft defaults and individual restore - 2026-11-16
+
+All 138 local native checks passed, including default-first ordering and persistence, protection from pack-management actions, original artwork in both grids, EXE/DLL resource indices, compressed ICO decoding, scoped individual-restore availability, dropdown keyboard behavior, and successful-only per-shortcut default preferences. Existing layout, launcher, wheel, hotkey, and pack-sharing checks remain passing.
+
+All 120 installer checks passed on both Windows PowerShell 5.1 and PowerShell 7. Selective-restore checks cover aliases, exact restored bytes, untouched other apps and manifest entries, no-write preview, invalid/empty selectors, conflicts, verified original icon resources, and safe fallback with corrupt backups. Each run tested 12 installed shortcut copies (10 MSI-advertised); installed originals stayed unchanged. All 18 JSON bridge checks passed, including selective preview/restore and invalid selector handling.
+
+Approved visual inspection used an isolated native test app. ArtCraft default appeared first, original icons rendered correctly in both grids, and 80-pixel previews and the per-app restore section remained separated while scrolling. The default option showed one full-width restore-all action. Selecting EffectCraft enabled its restore button and opened a review listing only its one fixture shortcut; the review was cancelled. All 14 installed shortcut hashes remained unchanged. The final Escape guard is covered by native tests. Builds and checks ran locally; elevated writes to live shared folders remain untested.
+
 ## 1.8.0 Settings layout - 2026-11-16
 
 All 110 local native checks passed. Eight new checks cover the three Settings sections, nonoverlapping controls and horizontal fit at 790x570 and 900x690 with both 24- and 128-pixel icons, built-in pack action availability, and keyboard isolation while either pack menu is open. Existing launcher, wheel, shared-size, pack and worker checks remain passing.

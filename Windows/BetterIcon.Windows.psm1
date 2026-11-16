@@ -1,7 +1,7 @@
-# BetterIcon-Craft Apps Windows support, version 1.8.0.
+# BetterIcon-Craft Apps Windows support, version 1.9.0.
 # No network access, executable patching, registry changes, or Explorer restart.
 Set-StrictMode -Version Latest
-$script:Version = '1.8.0'
+$script:Version = '1.9.0'
 $script:RepositoryRoot = Split-Path -Parent $PSScriptRoot
 $script:Applications = @('PhotoCraft','VectorCraft','FilmCraft','LightCraft','PdfCraft',
     'EffectCraft','AniCraft','DesignCraft','FigCraft','TextureCraft','MaterialCraft',
@@ -247,10 +247,13 @@ function Get-BetterIconBytes {
 
 function Get-BetterIconApplication {
     [CmdletBinding()]
-    param([string[]]$ShortcutDirectory)
+    param([string[]]$ShortcutDirectory, [string]$StateDirectory)
     Initialize-BetterIcon
     $roots = if ($ShortcutDirectory) { $ShortcutDirectory } else { @(Get-ShortcutRoots 'CurrentUser') + @(Get-ShortcutRoots 'AllUsers') }
     $seen = @{}
+    $states = @{}
+    $managedRoots = @((Get-BetterIconStateDirectory 'CurrentUser'), (Get-BetterIconStateDirectory 'AllUsers'))
+    if ($StateDirectory) { $managedRoots += Get-FullPath $StateDirectory }
     foreach ($root in $roots) {
         foreach ($file in @(Get-RegularFiles (Get-FullPath $root) '.lnk' | Sort-Object FullName)) {
             $app = Get-AppName $file.BaseName
@@ -264,8 +267,50 @@ function Get-BetterIconApplication {
                 $target = [Environment]::ExpandEnvironmentVariables($info.LaunchTarget)
                 if ($info.InstallerIdentity) { $target = $target -replace '^3:', '' }
                 if (-not $target -or -not (Test-Path -LiteralPath $target -PathType Leaf)) { continue }
+                $scope = if (Test-CommonShortcut $file.FullName) { 'AllUsers' } else { 'CurrentUser' }
+                if (-not $states.ContainsKey($scope)) {
+                    $directory = if ($StateDirectory) { Get-FullPath $StateDirectory } else { Get-BetterIconStateDirectory $scope }
+                    $states[$scope] = @{ Directory = $directory; Entries = @{} }
+                    try {
+                        Assert-RegularPath $directory
+                        $state = Read-State $directory $scope
+                        foreach ($entry in @($state.Entries)) { $states[$scope].Entries[$entry.Path] = $entry }
+                    }
+                    catch { Write-Verbose "Cannot inspect $scope icon backups: $($_.Exception.Message)" }
+                }
+                $original = $info; $verifiedBackup = $false
+                $entry = $states[$scope].Entries[$file.FullName]
+                if ($entry) {
+                    try {
+                        $backup = Get-BackupPath $entry $states[$scope].Directory
+                        $original = [BetterIcon.Windows.ShellLink]::Read($backup)
+                        $verifiedBackup = $true
+                    }
+                    catch { Write-Verbose "Cannot inspect original icon for $($file.FullName): $($_.Exception.Message)" }
+                }
+                # Without a verified backup, only native EXE/DLL icon resources
+                # can establish a default. A themed ICO is not the ArtCraft default.
+                $originalPath = $target; $originalIndex = 0
+                if ($verifiedBackup) {
+                    $originalTarget = [Environment]::ExpandEnvironmentVariables($original.LaunchTarget)
+                    if ($original.InstallerIdentity) { $originalTarget = $originalTarget -replace '^3:', '' }
+                    if ($originalTarget -and (Test-Path -LiteralPath $originalTarget -PathType Leaf)) { $originalPath = $originalTarget }
+                }
+                $candidate = [Environment]::ExpandEnvironmentVariables($original.IconPath)
+                $nativeResource = [IO.Path]::GetExtension($candidate) -in '.exe','.dll','.icl'
+                $managed = $false
+                if ($candidate -and [IO.Path]::IsPathRooted($candidate)) {
+                    $candidate = Get-FullPath $candidate
+                    foreach ($managedRoot in $managedRoots) {
+                        if ($candidate.StartsWith((Get-FullPath $managedRoot) + '\', [StringComparison]::OrdinalIgnoreCase)) { $managed = $true; break }
+                    }
+                    if (($verifiedBackup -or ($nativeResource -and -not $managed)) -and (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+                        $originalPath = $candidate; $originalIndex = $original.IconIndex
+                    }
+                }
                 [pscustomobject]@{ Application = $app; Name = $file.BaseName; Shortcut = $file.FullName;
-                    Scope = $(if (Test-CommonShortcut $file.FullName) { 'AllUsers' } else { 'CurrentUser' }); IconPath = $info.IconPath }
+                    Scope = $scope; IconPath = $info.IconPath; IconIndex = $info.IconIndex;
+                    OriginalIconPath = $originalPath; OriginalIconIndex = $originalIndex; RestoreAvailable = $verifiedBackup }
             }
             catch { Write-Verbose "Cannot inspect $($file.FullName): $($_.Exception.Message)" }
         }
@@ -467,14 +512,18 @@ function Install-BetterIconTheme {
 
 function Restore-BetterIcon {
     [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium')]
-    param([ValidateSet('CurrentUser','AllUsers')][string]$Scope = 'CurrentUser', [string]$StateDirectory, [string]$ExpectedStateHash)
+    param([ValidateSet('CurrentUser','AllUsers')][string]$Scope = 'CurrentUser', [string]$StateDirectory, [string]$ExpectedStateHash,
+        [ValidateNotNullOrEmpty()][ValidateSet('PhotoCraft','VectorCraft','FilmCraft','LightCraft','PdfCraft',
+            'EffectCraft','AniCraft','DesignCraft','FigCraft','TextureCraft','MaterialCraft',
+            'SoundCraft','WordCraft','DeckCraft','CADCraft','GridCraft','CraftAnything','SolidCraft','MailCraft')][string]$Application)
     Initialize-BetterIcon
     $directory = if ($StateDirectory) { Get-FullPath $StateDirectory } else { Get-BetterIconStateDirectory $Scope }
     Assert-RegularPath $directory
     $preview = Read-State $directory $Scope
-    if (-not @($preview.Entries).Count) { return }
-    if (-not $PSCmdlet.ShouldProcess("$(@($preview.Entries).Count) $Scope shortcut(s)", 'Restore original icons and shortcuts')) {
-        foreach ($entry in @($preview.Entries)) { New-Result $entry.Path 'Preview' 'Restore original backup if the shortcut is unchanged.' }
+    $selected = @($preview.Entries | Where-Object { -not $Application -or (Get-AppName ([IO.Path]::GetFileNameWithoutExtension($_.Path))) -ieq $Application })
+    if (-not $selected.Count) { return }
+    if (-not $PSCmdlet.ShouldProcess("$($selected.Count) $Scope shortcut(s)", 'Restore original icons and shortcuts')) {
+        foreach ($entry in $selected) { New-Result $entry.Path 'Preview' 'Restore original backup if the shortcut is unchanged.' }
         return
     }
     $lock = Open-StateLock $directory $Scope
@@ -486,6 +535,7 @@ function Restore-BetterIcon {
         }
         $state = Read-State $directory $Scope
         foreach ($entry in @($state.Entries)) {
+            if ($Application -and (Get-AppName ([IO.Path]::GetFileNameWithoutExtension($entry.Path))) -ine $Application) { continue }
             $temporary = $null
             try {
                 Assert-RegularPath $entry.Path

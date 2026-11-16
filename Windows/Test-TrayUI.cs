@@ -44,6 +44,189 @@ static class TrayTests
         }
         return null;
     }
+    static bool SamePixels(Bitmap first, Bitmap second)
+    {
+        if (first.Size != second.Size) return false;
+        for (int y = 0; y < first.Height; y++)
+            for (int x = 0; x < first.Width; x++)
+                if (first.GetPixel(x, y) != second.GetPixel(x, y)) return false;
+        return true;
+    }
+    static void CheckDefaultAndIndividualRestore(LauncherForm form, string root, string preferencesPath, JavaScriptSerializer json)
+    {
+        // This runs after the existing launcher checks. Only the isolated catalog,
+        // library and preferences change; no restore/apply dialog is accepted.
+        BindingFlags instance = BindingFlags.Instance | BindingFlags.NonPublic;
+        Func<string, object> field = name => typeof(LauncherForm).GetField(name, instance).GetValue(form);
+        Action<string, object[]> call = (name, arguments) => typeof(LauncherForm).GetMethod(name, instance).Invoke(form, arguments);
+        ComboBox themes = (ComboBox)field("themes"), scopes = (ComboBox)field("scopes"), picker = (ComboBox)field("restoreAppPicker");
+        Button restoreApp = (Button)field("restoreApp"), apply = (Button)field("apply");
+        TabControl pages = (TabControl)field("pages");
+        Catalog catalog = (Catalog)field("catalog");
+        Preferences preferences = (Preferences)field("preferences");
+        List<Bitmap> appArtwork = (List<Bitmap>)field("appArtwork"), packArtwork = (List<Bitmap>)field("packArtwork");
+        ListView packPreview = (ListView)field("packPreview");
+        ContextMenuStrip menu = (ContextMenuStrip)field("managePackMenu");
+        PackLibrary library = (PackLibrary)field("library");
+        ThemeEntry[] bundled = (ThemeEntry[])field("bundledThemes");
+        ThemeEntry themed = themes.Items.Cast<ThemeEntry>().First(t => t.Id == "Craft-Icons-Zach/Satin");
+        string original = Path.Combine(root, "original-red.png"), current = Path.Combine(root, "current-blue.png");
+        using (Bitmap image = new Bitmap(32, 32)) {
+            using (Graphics canvas = Graphics.FromImage(image)) canvas.Clear(Color.Red);
+            image.Save(original, System.Drawing.Imaging.ImageFormat.Png);
+            using (Graphics canvas = Graphics.FromImage(image)) canvas.Clear(Color.Blue);
+            image.Save(current, System.Drawing.Imaging.ImageFormat.Png);
+        }
+        string photo = Path.Combine(root, "Photo primary.lnk"), variant = Path.Combine(root, "Photo alternate.lnk");
+        string film = Path.Combine(root, "Film user.lnk"), fig = Path.Combine(root, "Fig shared.lnk");
+        catalog.Apps = new[] {
+            new AppEntry { Application = "PhotoCraft", Name = "My photo workspace", Shortcut = photo, Scope = "CurrentUser", IconPath = current, OriginalIconPath = original, RestoreAvailable = true },
+            new AppEntry { Application = "PhotoCraft", Name = "Photo alternate workspace", Shortcut = variant, Scope = "CurrentUser", IconPath = current, OriginalIconPath = original, RestoreAvailable = true },
+            new AppEntry { Application = "FilmCraft", Name = "Custom film workspace", Shortcut = film, Scope = "CurrentUser", IconPath = current, OriginalIconPath = original, RestoreAvailable = false },
+            new AppEntry { Application = "FigCraft", Name = "Shared drawing workspace", Shortcut = fig, Scope = "AllUsers", IconPath = current, OriginalIconPath = original, RestoreAvailable = true }
+        };
+        pages.SelectedIndex = 1;
+        scopes.SelectedIndex = 0;
+        call("ReloadLibrary", new object[] { ThemeEntry.DefaultThemeId });
+        Check(((ThemeEntry)themes.Items[0]).IsDefault && ((ThemeEntry)themes.Items[0]).Id == ThemeEntry.DefaultThemeId && themes.SelectedIndex == 0,
+            "ArtCraft default is the first selectable pack and uses a stable identity");
+        Check(json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).Theme == ThemeEntry.DefaultThemeId,
+            "The ArtCraft default choice persists in preferences");
+        call("ReloadLibrary", new object[] { null });
+        Check(themes.SelectedIndex == 0 && ((ThemeEntry)themes.SelectedItem).IsDefault,
+            "Refreshing the pack library preserves the default selection");
+        Check(new[] { "Customize...", "Edit pack...", "Export ZIP...", "Remove pack" }.All(name => !menu.Items.Cast<ToolStripItem>().First(item => item.Text == name).Enabled)
+            && menu.Items.Cast<ToolStripItem>().First(item => item.Text == "Restore built-in packs").Enabled,
+            "The virtual default cannot be customized, edited, exported or removed");
+        Check(apply.Enabled && apply.Text == "Restore ArtCraft defaults...", "Choosing the default presents the restore-all action");
+        Check(appArtwork.Count == 4 && appArtwork.All(image => image.GetPixel(64, 64).ToArgb() == Color.Red.ToArgb()),
+            "Default launcher thumbnails use original artwork instead of current shortcut or pack artwork");
+        Check(packPreview.Items.Count == 3 && packPreview.Items.Cast<ListViewItem>().Select(item => item.Text).SequenceEqual(new[] { "FigCraft", "FilmCraft", "PhotoCraft" })
+            && packArtwork.All(image => image.GetPixel(64, 64).ToArgb() == Color.Red.ToArgb()),
+            "Default preview shows original artwork once per canonical installed app");
+        foreach (ThemeEntry pack in bundled) library.Remove(pack);
+        call("ReloadLibrary", new object[] { null });
+        Check(themes.Items.Count > 0 && ((ThemeEntry)themes.Items[0]).IsDefault && themes.Items.Cast<ThemeEntry>().Count(t => t.IsDefault) == 1
+            && !themes.Items.Cast<ThemeEntry>().Any(t => !t.Managed && !t.IsDefault),
+            "ArtCraft default stays first and available when all bundled packs are hidden");
+        library.RestoreBundled();
+        call("ReloadLibrary", new object[] { themed.Id });
+        Check(!appArtwork.Any(image => image.GetPixel(64, 64).ToArgb() == Color.Red.ToArgb()) && packPreview.Items.Count == themed.Icons.Length,
+            "Selecting an icon pack restores themed thumbnails and its full preview");
+
+        // Exercise the real native extractor with different resource indices,
+        // independently of whatever artwork is currently selected in the app.
+        MethodInfo thumbnail = typeof(LauncherForm).GetMethod("Thumbnail", BindingFlags.Static | BindingFlags.NonPublic);
+        string shellLibrary = Path.Combine(Environment.SystemDirectory, "shell32.dll");
+        string explorer = Path.Combine(Environment.GetEnvironmentVariable("WINDIR"), "explorer.exe");
+        string compressedIcon = Path.Combine(root, "original-compressed.ico");
+        using (Bitmap image = new Bitmap(128, 128))
+        using (MemoryStream png = new MemoryStream()) {
+            using (Graphics canvas = Graphics.FromImage(image)) canvas.Clear(Color.Red);
+            image.Save(png, System.Drawing.Imaging.ImageFormat.Png);
+            byte[] payload = png.ToArray();
+            using (BinaryWriter writer = new BinaryWriter(File.Create(compressedIcon))) {
+                writer.Write((ushort)0); writer.Write((ushort)1); writer.Write((ushort)1);
+                writer.Write((byte)128); writer.Write((byte)128); writer.Write((byte)0); writer.Write((byte)0);
+                writer.Write((ushort)1); writer.Write((ushort)32); writer.Write((uint)payload.Length); writer.Write((uint)22);
+                writer.Write(payload);
+            }
+        }
+        using (Bitmap fallback = (Bitmap)thumbnail.Invoke(null, new object[] { "", SystemIcons.Error, 128, 0 }))
+        using (Bitmap first = (Bitmap)thumbnail.Invoke(null, new object[] { shellLibrary, SystemIcons.Error, 128, 0 }))
+        using (Bitmap second = (Bitmap)thumbnail.Invoke(null, new object[] { shellLibrary, SystemIcons.Error, 128, 1 }))
+        using (Bitmap executable = (Bitmap)thumbnail.Invoke(null, new object[] { explorer, SystemIcons.Error, 128, 0 }))
+        using (Bitmap compressed = (Bitmap)thumbnail.Invoke(null, new object[] { compressedIcon, SystemIcons.Error, 128, 0 })) {
+            Check(!SamePixels(first, fallback) && !SamePixels(second, fallback) && !SamePixels(first, second),
+                "Native DLL thumbnails extract distinct indexed resources instead of the fallback");
+            Check(!SamePixels(executable, fallback), "Native EXE thumbnails extract application artwork instead of the fallback");
+            Check(new[] { 16, 32, 64, 96, 112 }.All(x => new[] { 16, 32, 64, 96, 112 }.All(y => compressed.GetPixel(x, y).ToArgb() == Color.Red.ToArgb())),
+                "PNG-compressed ICO thumbnails retain their artwork instead of gray noise or a fallback");
+            catalog.Apps[3].OriginalIconPath = shellLibrary; catalog.Apps[3].OriginalIconIndex = 1;
+            call("ReloadLibrary", new object[] { ThemeEntry.DefaultThemeId });
+            Check(SamePixels(appArtwork[3], second) && SamePixels(packArtwork[0], second),
+                "Default launcher and preview both honor the original native icon resource index");
+            catalog.Apps[3].OriginalIconPath = original; catalog.Apps[3].OriginalIconIndex = 0;
+            call("ReloadLibrary", new object[] { themed.Id });
+            ThemeIcon themedPhoto = ((ThemeEntry)themes.SelectedItem).Icons.First(icon => icon.Application == "PhotoCraft");
+            string previousArtwork = themedPhoto.Path, previousCurrentIcon = catalog.Apps[0].IconPath;
+            int previousIndex = catalog.Apps[0].IconIndex;
+            try {
+                themedPhoto.Path = compressedIcon;
+                catalog.Apps[0].IconPath = shellLibrary; catalog.Apps[0].IconIndex = 2;
+                call("RenderApps", null); call("RenderPack", null);
+                int photoPreview = packPreview.Items.Cast<ListViewItem>().ToList().FindIndex(item => item.Text == "PhotoCraft");
+                Check(SamePixels(appArtwork[0], compressed) && SamePixels(packArtwork[photoPreview], compressed),
+                    "Pack ICO artwork ignores the current shortcut's native resource index in both grids");
+            }
+            finally {
+                themedPhoto.Path = previousArtwork;
+                catalog.Apps[0].IconPath = previousCurrentIcon; catalog.Apps[0].IconIndex = previousIndex;
+                call("RenderApps", null); call("RenderPack", null);
+            }
+        }
+
+        Check(picker.Items.Cast<string>().SequenceEqual(new[] { "FilmCraft", "PhotoCraft" }),
+            "Individual restore lists unique canonical app names in the chosen shortcut scope");
+        try {
+            picker.DroppedDown = true;
+            bool dropdownOpened = picker.DroppedDown;
+            KeyEventArgs escape = new KeyEventArgs(Keys.Escape);
+            call("OnKeyDown", new object[] { escape });
+            Check(dropdownOpened && pages.SelectedIndex == 1 && !escape.Handled,
+                "Escape in the open individual restore dropdown stays in Settings and belongs to the dropdown");
+        }
+        finally { picker.DroppedDown = false; }
+        picker.SelectedItem = "FilmCraft";
+        Check(picker.Enabled && !restoreApp.Enabled, "Individual restore is disabled when the selected app has no verified backup");
+        picker.SelectedItem = "PhotoCraft";
+        call("UpdateRestoreApps", null);
+        Check((string)picker.SelectedItem == "PhotoCraft" && restoreApp.Enabled,
+            "Refreshing individual restore preserves an eligible app selection");
+        scopes.SelectedIndex = 1;
+        Check(picker.Items.Cast<string>().SequenceEqual(new[] { "FigCraft" }) && restoreApp.Enabled,
+            "Changing shortcut scope replaces the individual restore choices and availability");
+        call("SetBusy", new object[] { true, null });
+        Check(!picker.Enabled && !restoreApp.Enabled, "Busy operations disable both individual restore controls");
+        call("SetBusy", new object[] { false, null });
+        Check(picker.Enabled && restoreApp.Enabled, "Individual restore controls recover after a busy operation");
+        AppEntry[] installed = catalog.Apps;
+        catalog.Apps = installed.Where(app => app.Scope == "CurrentUser").ToArray();
+        call("UpdateRestoreApps", null);
+        Check(picker.Items.Count == 0 && !picker.Enabled && !restoreApp.Enabled,
+            "An empty shortcut scope cannot restore a stale app selection");
+        catalog.Apps = installed; scopes.SelectedIndex = 0;
+
+        Check(json.Deserialize<Preferences>("{\"Theme\":\"Craft-Icons-Zach/Satin\"}").DefaultShortcuts.Length == 0,
+            "Older preferences migrate without inventing per-shortcut default overrides");
+        call("RememberRestoredShortcuts", new object[] { new[] {
+            new ResultItem { Shortcut = photo, Status = "Restored" },
+            new ResultItem { Shortcut = photo.ToUpperInvariant(), Status = "Restored" },
+            new ResultItem { Shortcut = variant, Status = "Conflict" },
+            new ResultItem { Shortcut = film, Status = "Skipped" },
+            new ResultItem { Shortcut = fig, Status = "Restored" }
+        }, true });
+        Preferences restored = json.Deserialize<Preferences>(File.ReadAllText(preferencesPath));
+        Check(restored.DefaultShortcuts.Length == 2 && restored.DefaultShortcuts.Contains(photo, StringComparer.OrdinalIgnoreCase)
+            && restored.DefaultShortcuts.Contains(fig, StringComparer.OrdinalIgnoreCase) && restored.Theme == themed.Id,
+            "Only successful restorations persist unique per-shortcut defaults without replacing the selected pack");
+        call("RenderApps", null);
+        Check(appArtwork[0].GetPixel(64, 64).ToArgb() == Color.Red.ToArgb() && appArtwork[3].GetPixel(64, 64).ToArgb() == Color.Red.ToArgb()
+            && appArtwork[1].GetPixel(64, 64).ToArgb() != Color.Red.ToArgb() && SamePixels(appArtwork[1], packArtwork[themed.Icons.OrderBy(icon => icon.Application).ToList().FindIndex(icon => icon.Application == "PhotoCraft")]),
+            "Restored shortcuts show their originals while other shortcuts and pack previews keep the selected theme");
+        call("RememberRestoredShortcuts", new object[] { new[] {
+            new ResultItem { Shortcut = photo.ToUpperInvariant(), Status = "Applied" },
+            new ResultItem { Shortcut = fig, Status = "Conflict" }
+        }, false });
+        Check(preferences.DefaultShortcuts.SequenceEqual(new[] { fig }) && json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).DefaultShortcuts.SequenceEqual(new[] { fig }),
+            "Applying a pack clears only successful shortcut overrides and preserves failed ones");
+        call("RememberRestoredShortcuts", new object[] { new[] { new ResultItem { Shortcut = fig, Status = "Unchanged" } }, false });
+        Check(preferences.DefaultShortcuts.Length == 0 && json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).DefaultShortcuts.Length == 0,
+            "An unchanged successful pack application also clears its default override");
+        call("RenderApps", null);
+        Check(!appArtwork.Any(image => image.GetPixel(64, 64).ToArgb() == Color.Red.ToArgb()),
+            "Themed launcher artwork returns after successful applications clear the overrides");
+    }
     [STAThread]
     static int Main(string[] args)
     {
@@ -276,6 +459,7 @@ static class TrayTests
                         }
                         HotkeySettings off = second.Copy(); off.Enabled = false;
                         Check(saveHotkey.Invoke(form, new object[] { off }) == null && !json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).Hotkey.Enabled, "Disabled hotkey is saved for subsequent launches");
+                        CheckDefaultAndIndividualRestore(form, root, preferencesPath, json);
                         stop.Set(); // Exercise normal shutdown through the same message loop.
                     }
                     catch (Exception error) { eventFailure = error; timer.Stop(); context.ExitThread(); }

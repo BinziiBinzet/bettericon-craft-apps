@@ -236,6 +236,80 @@ try {
     try { $null = Restore-BetterIcon -StateDirectory $recoveryState -Confirm:$false } catch { $rejected = $true }
     Assert $rejected 'Manifest backup paths cannot escape the owned backup directory'
 
+    # Individual restoration shares the same integrity/locking rules as restore-all.
+    $individualLinks = Join-Path $testRoot 'individual links'
+    $individualState = Join-Path $testRoot 'individual state'
+    $individualPhoto = New-TestLink $individualLinks 'PhotoCraft'
+    $individualAlias = New-TestLink $individualLinks 'PhotoCraft with custom launcher'
+    $individualSolid = New-TestLink $individualLinks 'SolidCraft CAD'
+    $individualOriginals = @{}
+    foreach ($path in @($individualPhoto,$individualAlias,$individualSolid)) { $individualOriginals[$path] = Digest $path }
+    $nativeCatalog = @(Get-BetterIconApplication -ShortcutDirectory $individualLinks -StateDirectory $individualState)
+    Assert ($nativeCatalog.Count -eq 3 -and @($nativeCatalog | Where-Object { $_.RestoreAvailable -or $_.OriginalIconPath -ine (Join-Path $env:WINDIR 'System32\shell32.dll') -or $_.OriginalIconIndex -ne 2 }).Count -eq 0) 'Unmanaged catalog preserves native icon resource and index without claiming a backup'
+    Assert (-not (Test-Path -LiteralPath $individualState)) 'Default-icon catalog is read-only before installation'
+    $null = Install-BetterIconTheme -Theme Cardboard -ShortcutDirectory $individualLinks -StateDirectory $individualState -Confirm:$false
+    $individualManifestPath = Join-Path $individualState 'manifest.json'
+    $individualManifest = Get-Content -LiteralPath $individualManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $solidRecord = $individualManifest.Entries | Where-Object Path -eq $individualSolid | ConvertTo-Json -Compress
+    $individualHashes = @{}
+    foreach ($path in $individualOriginals.Keys) { $individualHashes[$path] = Digest $path }
+    $manifestHash = Digest $individualManifestPath
+    $backupCatalog = @(Get-BetterIconApplication -ShortcutDirectory $individualLinks -StateDirectory $individualState)
+    Assert ($backupCatalog.Count -eq 3 -and @($backupCatalog | Where-Object { -not $_.RestoreAvailable -or $_.OriginalIconPath -ine (Join-Path $env:WINDIR 'System32\shell32.dll') -or $_.OriginalIconIndex -ne 2 -or $_.IconIndex -ne 0 }).Count -eq 0) 'Themed catalog reads original icon resource and index from verified backups'
+    $photoEntry = $individualManifest.Entries | Where-Object Path -eq $individualPhoto
+    $photoBackup = Join-Path (Join-Path $individualState 'backups') $photoEntry.BackupFile
+    $photoBackupBytes = [IO.File]::ReadAllBytes($photoBackup)
+    [IO.File]::WriteAllText($photoBackup, 'damaged original backup')
+    $damagedCatalog = @(Get-BetterIconApplication -ShortcutDirectory $individualLinks -StateDirectory $individualState)
+    $damagedPhoto = $damagedCatalog | Where-Object Shortcut -eq $individualPhoto
+    Assert ($damagedCatalog.Count -eq 3 -and -not $damagedPhoto.RestoreAvailable -and $damagedPhoto.OriginalIconPath -ieq (Join-Path $env:WINDIR 'System32\cmd.exe') -and $damagedPhoto.OriginalIconIndex -eq 0) 'Damaged backup falls back to executable default without showing themed artwork'
+    [IO.File]::WriteAllBytes($photoBackup,$photoBackupBytes)
+    $manifestBytes = [IO.File]::ReadAllBytes($individualManifestPath)
+    [IO.File]::WriteAllText($individualManifestPath, '{broken manifest')
+    $unreadableCatalog = @(Get-BetterIconApplication -ShortcutDirectory $individualLinks -StateDirectory $individualState)
+    Assert ($unreadableCatalog.Count -eq 3 -and @($unreadableCatalog | Where-Object { $_.RestoreAvailable -or $_.OriginalIconPath -ine (Join-Path $env:WINDIR 'System32\cmd.exe') }).Count -eq 0) 'Unreadable state does not remove installed apps or advertise unsafe restoration'
+    [IO.File]::WriteAllBytes($individualManifestPath,$manifestBytes)
+    $selectedPreview = @(Restore-BetterIcon -Application PhotoCraft -StateDirectory $individualState -WhatIf)
+    Assert ($selectedPreview.Count -eq 2 -and @($selectedPreview | Where-Object { $_.Status -ne 'Preview' -or $_.Shortcut -eq $individualSolid }).Count -eq 0) 'Individual preview selects only matching canonical app and its custom launcher'
+    Assert ((Digest $individualManifestPath) -ceq $manifestHash -and @($individualHashes.Keys | Where-Object { (Digest $_) -cne $individualHashes[$_] }).Count -eq 0) 'Individual preview leaves all shortcuts and manifest bytes untouched'
+    foreach ($invalidApplication in @('NotAnApp','SolidCraft CAD','')) {
+        $rejected = $false
+        try { $null = Restore-BetterIcon -Application $invalidApplication -StateDirectory $individualState -Confirm:$false } catch { $rejected = $true }
+        Assert ($rejected -and (Digest $individualManifestPath) -ceq $manifestHash -and (Digest $individualSolid) -ceq $individualHashes[$individualSolid]) 'Invalid or empty application cannot widen restoration to every app'
+    }
+    $rejected = $false
+    try { $null = Restore-BetterIcon -Application PhotoCraft -StateDirectory $individualState -ExpectedStateHash ('0' * 64) -Confirm:$false } catch { $rejected = $true }
+    Assert ($rejected -and (Digest $individualManifestPath) -ceq $manifestHash) 'Individual restore preserves the under-lock stale-preview guard'
+    $individualResult = @(Restore-BetterIcon -Application PhotoCraft -StateDirectory $individualState -ExpectedStateHash $manifestHash -Confirm:$false)
+    Assert ($individualResult.Count -eq 2 -and @($individualResult | Where-Object Status -ne 'Restored').Count -eq 0 -and (Digest $individualPhoto) -ceq $individualOriginals[$individualPhoto] -and (Digest $individualAlias) -ceq $individualOriginals[$individualAlias]) 'Individual restoration returns selected app shortcuts byte-for-byte'
+    $remaining = Get-Content -LiteralPath $individualManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    Assert ($remaining.Entries.Count -eq 1 -and ($remaining.Entries[0] | ConvertTo-Json -Compress) -ceq $solidRecord -and (Digest $individualSolid) -ceq $individualHashes[$individualSolid]) 'Individual restoration preserves other app bytes and its complete manifest record'
+    $afterCatalog = @(Get-BetterIconApplication -ShortcutDirectory $individualLinks -StateDirectory $individualState)
+    Assert (@($afterCatalog | Where-Object RestoreAvailable).Count -eq 1 -and ($afterCatalog | Where-Object RestoreAvailable).Application -eq 'SolidCraft') 'Catalog only offers individual restoration for active verified backups'
+    $shell = New-Object -ComObject WScript.Shell
+    $edited = $shell.CreateShortcut($individualSolid); $edited.Description = 'Later user edit after individual restoration'; $edited.Save()
+    [Runtime.InteropServices.Marshal]::FinalReleaseComObject($edited) | Out-Null
+    [Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell) | Out-Null
+    $editedIndividualHash = Digest $individualSolid; $remainingHash = Digest $individualManifestPath
+    $individualConflict = @(Restore-BetterIcon -Application SolidCraft -StateDirectory $individualState -Confirm:$false)
+    Assert ($individualConflict.Count -eq 1 -and $individualConflict[0].Status -eq 'Failed' -and (Digest $individualSolid) -ceq $editedIndividualHash -and (Digest $individualManifestPath) -ceq $remainingHash) 'Individual restoration retains later user edits and their original backup record'
+    $targetLinks = Join-Path $testRoot 'executable default links'; $targetState = Join-Path $testRoot 'executable default state'
+    $null = [IO.Directory]::CreateDirectory($targetLinks)
+    $targetLink = Join-Path $targetLinks 'FilmCraft.lnk'
+    $shell = New-Object -ComObject WScript.Shell
+    try {
+        # WScript.Shell rejects assigning an empty IconLocation. A new link
+        # without an explicit IconLocation uses the executable's icon naturally.
+        $edited = $shell.CreateShortcut($targetLink); $edited.TargetPath = Join-Path $env:WINDIR 'System32\cmd.exe'; $edited.Save()
+        [Runtime.InteropServices.Marshal]::FinalReleaseComObject($edited) | Out-Null
+        $null = Install-BetterIconTheme -Theme Cardboard -ShortcutDirectory $targetLinks -StateDirectory $targetState -Confirm:$false
+        $edited = $shell.CreateShortcut($targetLink); $edited.TargetPath = Join-Path $env:WINDIR 'System32\notepad.exe'; $edited.Save()
+        [Runtime.InteropServices.Marshal]::FinalReleaseComObject($edited) | Out-Null
+    }
+    finally { [Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell) | Out-Null }
+    $targetCatalog = @(Get-BetterIconApplication -ShortcutDirectory $targetLinks -StateDirectory $targetState)
+    Assert ($targetCatalog.Count -eq 1 -and $targetCatalog[0].RestoreAvailable -and $targetCatalog[0].OriginalIconPath -ieq (Join-Path $env:WINDIR 'System32\cmd.exe') -and $targetCatalog[0].OriginalIconIndex -eq 0) 'Backup with implicit executable icon uses its original launch target even after a later target edit'
+
     if ($TestInstalledCopies) {
         $copied = Join-Path $testRoot 'installed shortcut copies'
         $copyState = Join-Path $testRoot 'installed copies state'
