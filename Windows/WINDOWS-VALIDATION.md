@@ -1,5 +1,14 @@
 # Windows validation
 
+## 1.19.1 unselected launcher opening - 2026-11-17
+
+Native checks cover opening from the tray, cursor hotkey and show signal with
+no app selected, Enter without a selection, intentional keyboard selection,
+type-to-filter selection and preserving an explicit choice during resizing.
+Empty-filter rebuilds do not manufacture a selection. The focused run passed
+147 checks, including eight new selection checks. Computer Use inspection was
+not performed.
+
 ## 1.19.0 aligned slider and exact size entry - 2026-11-17
 
 Local native checks measure the slider's actual channel and thumb against the

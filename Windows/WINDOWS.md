@@ -1,13 +1,13 @@
 # BetterIcon-Craft Apps for Windows
 
-Windows version **1.19.0** includes a native tray launcher alongside the existing icon installer. It shares the repository's artwork and leaves Craft executables, app settings, file associations, and the registry unchanged.
+Windows version **1.19.1** includes a native tray launcher alongside the existing icon installer. It shares the repository's artwork and leaves Craft executables, app settings, file associations, and the registry unchanged.
 
 ## Start here
 
 1. Download or clone the repository and extract it to a folder. Keep `Windows/` beside the `Craft-Icons-*` artwork folders.
 2. In a source checkout, double-click **Windows/Start-Tray.cmd**. It compiles the launcher locally on first use. In a built Windows ZIP, open **Windows/BetterIcon-Tray.exe** directly.
 3. Click its notification-area icon to open the popup above the system tray. Click the icon again to hide it. The popup has 32-pixel rounded corners and opens directly to its tabs without a title bar or window buttons. Drag any outer edge or curved corner to resize it; the outline follows the new size. Click elsewhere or use Escape to hide it. It stays inside the clicked monitor's working area.
-4. Start typing an app's name to narrow the grid immediately, without a search field. For example, `f` shows FigCraft and FilmCraft; `fiL` leaves FilmCraft. Use arrows to choose a result and **Enter** to launch, or double-click an app. **Backspace** edits the filter; **Ctrl+Backspace** clears it. **Escape** clears a filter first, then closes the popup. Reopening starts with all apps. Open menus and Manage Icons keep their normal keyboard behavior.
+4. The popup opens with no app selected. Start typing an app's name to narrow the grid immediately and select the first match, without a search field. For example, `f` shows FigCraft and FilmCraft; `fiL` leaves FilmCraft. Use arrows to choose a result and **Enter** to launch, or double-click an app. **Backspace** edits the filter; **Ctrl+Backspace** clears it. **Escape** clears a filter first, then closes the popup. Reopening starts with all apps and no selection. Open menus and Manage Icons keep their normal keyboard behavior.
 5. The left **Launcher** tab contains only app icons and names. Open the right **Manage Icons** tab to manage icon packs, preview artwork, or adjust the display. Click **Apply icons**, then choose **Current user** or **All users** and review the exact shortcuts. All users uses the shared Desktop and Start menu and requires administrator privileges; normal app launches remain unelevated.
 6. To undo one app, right-click its icon in either tab and choose **Restore ArtCraft default**. To undo all apps, select **ArtCraft default** (the first icon pack) and **Restore ArtCraft defaults**, or use **Restore all defaults** beside Apply icons. Each restore asks **Current user** or **All users** before the review. Choose the same locations used for application. Canceling either dialog changes no shortcuts.
 

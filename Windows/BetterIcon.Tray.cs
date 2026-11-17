@@ -684,7 +684,8 @@ namespace BetterIcon.Tray
                     item.Selected = item.Focused = false;
                     if (item.Text.StartsWith(filterText, StringComparison.OrdinalIgnoreCase)) apps.Items.Add(item);
                 }
-                if (apps.Items.Count > 0) {
+                // A fresh popup stays unselected; typing still readies its first match for Enter.
+                if (filterText.Length > 0 && apps.Items.Count > 0) {
                     apps.Items[0].Selected = apps.Items[0].Focused = true;
                     if (apps.IsHandleCreated) apps.Items[0].EnsureVisible();
                 }

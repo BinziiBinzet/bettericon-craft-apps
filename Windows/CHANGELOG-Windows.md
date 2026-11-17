@@ -1,5 +1,9 @@
 # Windows installer changelog
 
+## 1.19.1 - 2026-11-17
+
+- Open the launcher without selecting an app automatically. Preserve explicit selections during resizing and select the first matching result when typing to filter.
+
 ## 1.19.0 - 2026-11-17
 
 - Center the icon-size slider track with its label, value, and Reset button.

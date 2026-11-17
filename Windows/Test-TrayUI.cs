@@ -861,14 +861,17 @@ static class TrayTests
                         if ((bool)typeof(LauncherForm).GetField("busy", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form)) return;
                         timer.Stop();
                         form.Text = "[TEST] BetterIcon native checks";
+                        ListView openingGrid = (ListView)typeof(LauncherForm).GetField("apps", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
                         Check(!form.Visible, "Tray-only startup stays hidden after the real message loop initializes");
+                        Check(openingGrid.Items.Count > 0 && openingGrid.SelectedItems.Count == 0, "The initial asynchronous catalog load leaves every launcher icon unselected");
                         click();
-                        Check(form.Visible && Screen.FromPoint(Cursor.Position).WorkingArea.Contains(form.Bounds), "First tray release shows the popup on the clicked screen");
+                        Check(form.Visible && Screen.FromPoint(Cursor.Position).WorkingArea.Contains(form.Bounds) && openingGrid.SelectedItems.Count == 0, "First tray release shows the popup on the clicked screen without selecting an icon");
                         click(); Check(!form.Visible, "Second tray release hides the popup");
                         click(); click(); Check(!form.Visible, "Rapid double release ends hidden without reopening");
                         mouseUp.Invoke(tray, new object[] { new MouseEventArgs(MouseButtons.Right, 1, 0, 0, 0) });
                         Check(!form.Visible, "Right tray release does not toggle the popup");
-                        form.ShowManager(); Check(form.Visible, "Explicit open reopens the existing popup");
+                        openingGrid.Items[0].Selected = true;
+                        form.ShowManager(); Check(form.Visible && openingGrid.SelectedItems.Count == 0, "Explicit open reopens the existing popup without its previous selection");
                         // Desktop-wide hit tests need an unobscured test window,
                         // independent of other apps or the current cursor monitor.
                         bool wasTopMost = form.TopMost; Point previousLocation = form.Location;
@@ -878,13 +881,15 @@ static class TrayTests
                             CheckWindowResizing(form); CheckRoundedWindow(form);
                         }
                         finally { form.TopMost = wasTopMost; form.Location = previousLocation; }
+                        openingGrid.Items[0].Selected = true;
                         form.Hide(); Check(!form.Visible, "Hide retains the launcher for another tray click");
                         Point center = new Point(Screen.PrimaryScreen.WorkingArea.Left + Screen.PrimaryScreen.WorkingArea.Width / 2, Screen.PrimaryScreen.WorkingArea.Top + Screen.PrimaryScreen.WorkingArea.Height / 2);
                         form.ShowAtCursor(center);
-                        Check(form.Visible && form.Bounds == PopupPlacement.CenteredOnCursor(form.Size, center, Screen.FromPoint(center).WorkingArea), "The real hidden form opens at the cursor position");
+                        Check(form.Visible && form.Bounds == PopupPlacement.CenteredOnCursor(form.Size, center, Screen.FromPoint(center).WorkingArea) && openingGrid.SelectedItems.Count == 0, "The real hidden form opens at the cursor position without its previous selection");
                         Point edge = Screen.PrimaryScreen.WorkingArea.Location;
+                        openingGrid.Items[0].Selected = true;
                         form.ShowAtCursor(edge);
-                        Check(Screen.PrimaryScreen.WorkingArea.Contains(form.Bounds), "Reopening by hotkey moves the existing popup and clamps it on screen");
+                        Check(Screen.PrimaryScreen.WorkingArea.Contains(form.Bounds) && openingGrid.SelectedItems.Count == 1, "Repositioning the visible popup by hotkey clamps it on screen and retains an intentional selection");
                         // Exercise the actual form keyboard handlers and ListView with
                         // distinct app names; the only launch target is our local probe.
                         FieldInfo catalogField = typeof(LauncherForm).GetField("catalog", BindingFlags.Instance | BindingFlags.NonPublic);
@@ -898,6 +903,20 @@ static class TrayTests
                         MethodInfo keyDown = typeof(LauncherForm).GetMethod("OnKeyDown", BindingFlags.Instance | BindingFlags.NonPublic);
                         Action<string> type = value => PlainText(form, value);
                         Action<Keys> key = delegate(Keys value) { keyDown.Invoke(form, new object[] { new KeyEventArgs(value) }); };
+                        Check(list.Items.Count == 3 && list.SelectedItems.Count == 0, "Refreshing blank-filter artwork leaves all launcher icons unselected");
+                        key(Keys.Enter);
+                        Check(Directory.GetFiles(root, "launches.txt.*.launched").Length == 0 && form.Visible, "Enter before choosing or filtering an app launches nothing");
+                        byte[] previousKeyboard = new byte[256];
+                        if (!GetKeyboardState(previousKeyboard)) throw new Exception("Cannot read the navigation test thread's keyboard state.");
+                        byte[] plainKeyboard = (byte[])previousKeyboard.Clone();
+                        foreach (int modifier in new[] { 0x10, 0x11, 0x12, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5 }) plainKeyboard[modifier] = 0;
+                        if (!SetKeyboardState(plainKeyboard)) throw new Exception("Cannot initialize the navigation test thread's modifiers.");
+                        try { list.Focus(); SendMessage(list.Handle, 0x0100, new IntPtr((int)Keys.Right), IntPtr.Zero); }
+                        finally { if (!SetKeyboardState(previousKeyboard)) throw new Exception("Cannot restore the navigation test thread's keyboard state."); }
+                        Check(list.SelectedItems.Count == 1, "Native arrow navigation deliberately selects an icon from an unselected launcher");
+                        form.Hide(); show.Set();
+                        for (int retry = 0; retry < 100 && !form.Visible; retry++) { Thread.Sleep(20); Application.DoEvents(); }
+                        Check(form.Visible && list.SelectedItems.Count == 0, "The existing-instance show signal reopens the launcher without its previous selection");
                         TabControl pages = (TabControl)typeof(LauncherForm).GetField("pages", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
                         Check(pages.TabPages.Count == 2 && pages.TabPages[0].Text == "Launcher" && pages.TabPages[1].Text == "Manage Icons", "Launcher and Manage Icons occupy the left and right tabs");
                         Check(pages.TabPages[0].Controls.Count == 2 && !filter.Visible, "The populated Launcher page contains only the app grid");
@@ -906,11 +925,22 @@ static class TrayTests
                         ListView previewGrid = (ListView)typeof(LauncherForm).GetField("packPreview", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
                         List<Bitmap> previewCached = (List<Bitmap>)typeof(LauncherForm).GetField("packArtwork", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
                         Check(slider.Value == 72 && GridImageSize(list) == new Size(72, 72) && GridImageSize(previewGrid) == GridImageSize(list), "Hidden startup restores the same saved icon size in both grids and the Settings slider");
+                        slider.Value = 80; slider.Value = 72;
+                        Check(list.SelectedItems.Count == 0, "Resizing a launcher with no selection does not select its first icon");
+                        ComboBox openingThemes = (ComboBox)typeof(LauncherForm).GetField("themes", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
+                        ThemeEntry openingTheme = (ThemeEntry)openingThemes.SelectedItem;
+                        openingThemes.SelectedItem = openingThemes.Items.Cast<ThemeEntry>().First(theme => !theme.IsDefault && theme.Id != openingTheme.Id);
+                        LoadingTests.Wait(form);
+                        bool unselectedAfterPackChange = list.SelectedItems.Count == 0;
+                        openingThemes.SelectedItem = openingTheme; LoadingTests.Wait(form);
+                        Check(unselectedAfterPackChange && list.SelectedItems.Count == 0, "Asynchronous pack changes keep a blank-filter launcher unselected");
                         Rectangle firstIcon = list.GetItemRect(0, ItemBoundsPortion.Icon), firstLabel = list.GetItemRect(0, ItemBoundsPortion.Label);
                         Check(list.View == View.LargeIcon && firstLabel.Top >= firstIcon.Bottom && list.Items[1].Bounds.Left > list.Items[0].Bounds.Left && list.Items[1].Bounds.Top == list.Items[0].Bounds.Top, "Native launcher lays out a compact row of icons with names underneath");
                         form.ShowManager(); pages.Focus();
                         type("f");
                         Check(list.Items.Count == 2 && list.ContainsFocus && list.SelectedItems.Count == 1, "Typing from the launcher tab filters and focuses the highlighted result (matches=" + list.Items.Count + ", focused=" + list.ContainsFocus + ", visible=" + form.Visible + ")");
+                        form.ShowAtCursor(center);
+                        Check(list.Items.Count == 2 && list.AccessibleDescription.Contains("Filter: f.") && list.SelectedItems.Count == 1, "Hotkey repositioning preserves the visible popup's active filter and highlighted result");
                         IntPtr typingImages = GridImages(list); int artworkCount = ImageList_GetImageCount(typingImages);
                         type("iL");
                         Check(list.Items.Count == 1 && list.Items[0].Text == "FilmCraft" && list.AccessibleDescription.Contains("fiL"), "Successive characters narrow results and expose the query accessibly");
@@ -921,7 +951,7 @@ static class TrayTests
                         key(Keys.Enter);
                         Check(Directory.GetFiles(root, "launches.txt.*.launched").Length == 0, "Enter with no results launches nothing");
                         key(Keys.Escape);
-                        Check(form.Visible && list.Items.Count == 3, "First Escape clears the active filter without closing the popup");
+                        Check(form.Visible && list.Items.Count == 3 && list.SelectedItems.Count == 0, "First Escape clears the active filter and selection without closing the popup");
                         type("PH");
                         Check(list.Items.Count == 1 && list.SelectedItems[0].Text == "PhotoCraft", "Typing a new query highlights its matching app");
                         key(Keys.Enter);
@@ -930,7 +960,7 @@ static class TrayTests
                         Check(launchReceipts.Length == 1 && File.ReadAllText(launchReceipts[0]) == "PhotoCraft", "Enter launches the highlighted original fixture shortcut exactly once");
                         Check(GridImages(list) == typingImages && ImageList_GetImageCount(GridImages(list)) == artworkCount, "Typing reuses the loaded artwork instead of rebuilding image lists");
                         form.Hide(); form.ShowManager();
-                        Check(list.Items.Count == 3 && !filter.Visible, "Reopening starts with all apps and no stale filter");
+                        Check(list.Items.Count == 3 && !filter.Visible && list.SelectedItems.Count == 0, "Reopening starts with all apps, no stale filter, and no selected icon");
                         pages.SelectedIndex = 1; type("fil");
                         Check(list.Items.Count == 3 && pages.SelectedIndex == 1, "Settings keyboard input does not filter the launcher");
                         Bitmap[] sources = cached.ToArray(), previewSources = previewCached.ToArray();
@@ -1055,7 +1085,7 @@ static class TrayTests
                         form.Enabled = false; type("p"); form.Enabled = true;
                         Check(list.Items.Count == 3, "Modal dialog input cannot alter the app filter");
                         type("pho"); key(Keys.Control | Keys.Back);
-                        Check(list.Items.Count == 3, "Ctrl+Backspace clears the entire filter");
+                        Check(list.Items.Count == 3 && list.SelectedItems.Count == 0, "Ctrl+Backspace clears the entire filter and selection");
                         key(Keys.Escape); Check(!form.Visible, "Escape with no filter closes the popup");
                         form.ShowManager();
                         bool hotkeyDialogSeen = false, hotkeyTrayDisabled = false;
