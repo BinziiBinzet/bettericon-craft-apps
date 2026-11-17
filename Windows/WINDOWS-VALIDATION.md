@@ -1,5 +1,26 @@
 # Windows validation
 
+## 1.20.0 app installer and outer window frame - 2026-11-17
+
+The native outer-frame fixture passed 76 checks across activation, forced
+nonclient redraw, hide/show, minimize/restore, handle recreation, Dark/Light/System,
+high contrast, and resize/rounded-region geometry. The normal nonclient frame
+paint is suppressed while activation and native resizing remain enabled.
+Computer Use showed clean Dark-mode edges in Launcher and Manage Icons; the user
+stopped the inspection before Light/System and repeated focus checks. DWM border
+attribute readback is unavailable on this host, so automated geometry and message
+checks do not establish the absence of every transient compositor frame.
+
+The new app installer has dedicated local lifecycle checks in
+`Test-AppInstaller.ps1`, using its real Setup definition with an isolated identity.
+The complete native suite passes 455 checks on the packaged 1.20.0 executable.
+`Test-InstallerLifecycle.ps1` passes 17 focused checks covering busy and modal
+refusal, delayed startup, absent instances, errors, and leaving a real older
+release untouched. Compiler-only
+checks pass for public and isolated identities, spaces/apostrophes in fixture
+paths, and rejection of incomplete test isolation defines. Final package and
+installation test receipts are emitted by those scripts alongside their artifacts.
+
 ## 1.19.3 visible dropdown outline - 2026-11-17
 
 Native print rendering matches the theme's border color around the entire

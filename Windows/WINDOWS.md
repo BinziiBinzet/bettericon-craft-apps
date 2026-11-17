@@ -1,8 +1,18 @@
 # BetterIcon-Craft Apps for Windows
 
-Windows version **1.19.3** includes a native tray launcher alongside the existing icon installer. It shares the repository's artwork and leaves Craft executables, app settings, file associations, and the registry unchanged.
+Windows version **1.20.0** includes a native tray launcher and a Windows app installer alongside the existing shortcut-icon tools. It shares the repository's artwork and leaves Craft executables, app settings, and file associations unchanged.
 
 ## Start here
+
+Run **BetterIcon-Setup-1.20.0.exe**, then open **BetterIcon** from Start. Setup installs for your Windows account without administrator access, adds a Start-menu shortcut, and offers an optional desktop shortcut. It includes the app, helper scripts, and bundled icon packs; Git, a compiler, and an internet connection are not needed to use it. Windows 10/11 with .NET Framework 4.8 or later is required. Setup reports a missing framework before making changes. This build is unsigned, so Windows may show an unknown-publisher or SmartScreen warning.
+
+Run a newer Setup to upgrade. Finish any icon operation and close BetterIcon's dialogs first; Setup waits for a graceful exit and refuses to continue if the app stays busy. It never force-terminates BetterIcon. Preferences, personal packs, shortcut backups, and already-applied icons are preserved. Setup registers BetterIcon in **Settings > Apps > Installed apps** for normal removal. Uninstall preserves those same files so existing shortcuts retain their icons and a reinstall can recover your preferences. It does not restore ArtCraft shortcuts; use BetterIcon's Restore actions before uninstalling if that is what you want.
+
+The default app location is `%LOCALAPPDATA%\Programs\BetterIcon`. Each installed version has its own payload under `versions`, so retired built-in packs cannot leak into the new catalog. Earlier owned payloads are retained until uninstall; uninstall removes the files recorded by Setup without sweeping unrelated files. User state remains separately in `%LOCALAPPDATA%\BetterIcon-Craft Apps`, and shared shortcut backups remain in `%PROGRAMDATA%\BetterIcon-Craft Apps`. Setup adds only its own per-user uninstall registration and shortcuts, and does not add a login/startup entry.
+
+### Portable ZIP or source checkout
+
+If a version older than 1.20.0 is already running, finish any edits and choose **Exit BetterIcon** from its tray menu before running Setup. Older versions do not support the protected installer shutdown request; Setup leaves them running and asks you to exit them yourself.
 
 1. Download or clone the repository and extract it to a folder. Keep `Windows/` beside the `Craft-Icons-*` artwork folders.
 2. In a source checkout, double-click **Windows/Start-Tray.cmd**. It compiles the launcher locally on first use. In a built Windows ZIP, open **Windows/BetterIcon-Tray.exe** directly.
@@ -152,6 +162,16 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Test-Windows.ps1 -Test
 # Build a native executable, or a ZIP with executable and converted ICOs.
 .\Build-Tray.ps1 -OutputDirectory 'C:\path\to\local-output'
 .\Build-WindowsPackage.ps1 -OutputDirectory 'C:\path\to\local-output'
+
+# Build a Setup EXE from a locally built Windows ZIP (Inno Setup on this machine).
+.\Build-AppInstaller.ps1 -OutputDirectory 'C:\path\to\setup-output' `
+  -PackagePath 'C:\path\to\BetterIcon-Craft-Apps-Windows-1.20.0.zip' `
+  -CompilerPath 'C:\path\to\Inno Setup\ISCC.exe'
+
+# Actual install, upgrade, and uninstall using a unique disposable installer identity.
+.\Test-AppInstaller.ps1 -PayloadRoot 'C:\path\to\extracted-package' `
+  -CompilerPath 'C:\path\to\Inno Setup\ISCC.exe' -ArtifactDirectory 'D:\tmp'
+.\Test-InstallerLifecycle.ps1 -ArtifactDirectory 'D:\tmp'
 ```
 
 Tests retain temporary fixtures and a JSON receipt, whose location is printed at completion. Coverage includes real Shell links, exact restore, theme switching, Unicode/bracketed paths, aliases, preview, edited/missing shortcuts, damaged backups, interrupted journal recovery, invalid icons/manifests, and concurrency. Installed-copy checks depend on the Craft apps present on the test machine. All-user write protection is checked when tests run without elevation.
@@ -162,6 +182,10 @@ SHA-512 hashes before embedding them in the EXE. Later local builds reuse the
 verified cache. The packaged app and packaged command-line installer use the
 embedded renderer offline. Using SVG from a source checkout without a built EXE
 builds that renderer locally on first use. See `THIRD-PARTY-NOTICES.md` for licenses.
+
+The app installer uses [Inno Setup](https://jrsoftware.org/inno-setup/downloads) on the local build machine (validated with 7.1.1). Verify its [official signature](https://jrsoftware.org/inno-setup/downloads/verify) before running the compiler installer. `Build-AppInstaller.ps1` can also build the Windows ZIP when `-PackagePath` is omitted. It checks the payload version, emits SHA-256 and JSON receipts, and retains a staging directory for inspection. Signing the final executable requires the distributor's own code-signing certificate; this repository does not contain one.
+
+`Test-AppInstaller.ps1` compiles the same Setup definition with a unique test AppId, install path, shortcuts, and fixture configuration. It executes silent install, reinstall, upgrade, and uninstall against disposable data while checking that the live user's state remains unchanged. Its synthetic fourth installer version component tests upgrades without changing the real runtime bytes. The production installer has none of these test overrides. `Test-InstallerLifecycle.ps1` checks shutdown refusal during work and dialogs; its optional `-LegacyApplicationPath` verifies that older instances are left running. These are local automated checks, separate from visual inspection of the wizard.
 
 For cross-drive testing, add `-ArtifactDirectory 'D:\tmp'` (or another short local path). Each run creates its own unique subdirectory.
 

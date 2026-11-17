@@ -269,6 +269,7 @@ namespace BetterIcon.Tray
     public sealed partial class LauncherForm : Form
     {
         [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr window, int command);
+        [DllImport("user32.dll")] static extern bool IsWindowEnabled(IntPtr window);
         readonly WorkerClient worker;
         readonly NotifyIcon tray;
         readonly ContextMenuStrip trayMenu = new ContextMenuStrip();
@@ -287,7 +288,7 @@ namespace BetterIcon.Tray
         readonly Label status = new Label();
         readonly Label subtitle = new Label();
         readonly Button apply = new Button(), restore = new Button();
-        readonly EventWaitHandle showEvent, stopEvent;
+        readonly EventWaitHandle showEvent, stopEvent, installStopEvent;
         readonly System.Windows.Forms.Timer signalTimer = new System.Windows.Forms.Timer();
         readonly System.Windows.Forms.Timer dismissTimer = new System.Windows.Forms.Timer();
         readonly string preferencesPath;
@@ -302,8 +303,11 @@ namespace BetterIcon.Tray
         readonly Color ink = Color.FromArgb(26, 39, 58), accent = Color.FromArgb(41, 100, 208);
 
         public LauncherForm(string source, FixtureConfig fixture, bool hidden, EventWaitHandle show, EventWaitHandle stop)
+            : this(source, fixture, hidden, show, stop, null) { }
+
+        public LauncherForm(string source, FixtureConfig fixture, bool hidden, EventWaitHandle show, EventWaitHandle stop, EventWaitHandle installStop)
         {
-            worker = new WorkerClient(source, fixture); startInTray = hidden; showEvent = show; stopEvent = stop;
+            worker = new WorkerClient(source, fixture); startInTray = hidden; showEvent = show; stopEvent = stop; installStopEvent = installStop;
             string state = fixture == null ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BetterIcon-Craft Apps") : fixture.StateDirectory;
             preferencesPath = Path.Combine(state, "tray-preferences.json");
             library = new PackLibrary(Path.Combine(state, "packs"));
@@ -339,7 +343,11 @@ namespace BetterIcon.Tray
             Activated += delegate { dismissTimer.Stop(); TraceFixture("Activated"); };
             VisibleChanged += delegate { if (!Visible) dismissTimer.Stop(); TraceFixture(Visible ? "Shown" : "Hidden"); };
             signalTimer.Interval = 250;
-            signalTimer.Tick += delegate { if (showEvent.WaitOne(0)) { TraceFixture("Show signal"); ShowManager(); } if (stopEvent.WaitOne(0)) ExitLauncher(); };
+            signalTimer.Tick += delegate {
+                if (showEvent.WaitOne(0)) { TraceFixture("Show signal"); ShowManager(); }
+                if (stopEvent.WaitOne(0)) ExitLauncher();
+                if (installStopEvent != null && installStopEvent.WaitOne(0)) RequestExternalStop();
+            };
             signalTimer.Start();
             FormClosing += delegate(object sender, FormClosingEventArgs e) {
                 if (!exiting && e.CloseReason == CloseReason.UserClosing) {
@@ -464,6 +472,14 @@ namespace BetterIcon.Tray
             TraceFixture(centered ? "Hotkey positioned" : "Positioned", anchor);
         }
         void ExitLauncher() { if (busy) { ShowManager(); AppAppearance.Message(this, Text, "Please wait for the current operation to finish.", appearancePalette, false); return; } exiting = true; Close(); }
+        void RequestExternalStop()
+        {
+            // Setup must not interrupt an icon operation or discard an editor.
+            // Common file dialogs disable their owner without joining OwnedForms.
+            // Refuse this request silently; the caller has its own bounded wait.
+            if (busy || !Enabled || (IsHandleCreated && !IsWindowEnabled(Handle)) || OwnedForms.Any(form => form.Visible && form.Modal)) return;
+            ExitLauncher();
+        }
         void UpdateHotkeyHint()
         {
             string hint = !preferences.Hotkey.Enabled ? "Global hotkey disabled." : hotkey != null && hotkey.IsRegistered ? preferences.Hotkey + " opens at your cursor." : "Hotkey unavailable. Choose another combination.";
@@ -931,29 +947,63 @@ namespace BetterIcon.Tray
 
     static class Program
     {
+        static int StopAndWait(string name)
+        {
+            Mutex running;
+            try { running = Mutex.OpenExisting(name); }
+            catch (WaitHandleCannotBeOpenedException) { return 0; }
+            using (running) {
+                Stopwatch timeout = Stopwatch.StartNew();
+                bool signaled = false;
+                while (true) {
+                    bool acquired = false;
+                    try {
+                        try { acquired = running.WaitOne(0); }
+                        catch (AbandonedMutexException) { acquired = true; }
+                        if (acquired) return 0;
+                    }
+                    finally { if (acquired) running.ReleaseMutex(); }
+                    if (timeout.ElapsedMilliseconds >= 10000) return 2;
+                    if (!signaled) {
+                        try { using (EventWaitHandle signal = EventWaitHandle.OpenExisting(name + ".InstallStop")) signaled = signal.Set(); }
+                        catch (WaitHandleCannotBeOpenedException) { }
+                    }
+                    // Retry the startup race before the installer event exists.
+                    // Older releases expose only .Stop, whose handler can close
+                    // unsaved dialogs. Never fall back to that unsafe protocol.
+                    Thread.Sleep(50);
+                }
+            }
+        }
+
         [STAThread]
         static int Main(string[] args)
         {
             Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false);
+            bool stopAndWait = false, quietErrors = args.Contains("--stop-and-wait");
             try {
                 string source = AppDomain.CurrentDomain.BaseDirectory, configPath = null;
                 bool hidden = false, stop = false;
                 for (int i=0; i<args.Length; i++) {
                     if (args[i] == "--tray") hidden = true;
                     else if (args[i] == "--stop") stop = true;
+                    else if (args[i] == "--stop-and-wait") stopAndWait = true;
                     else if (args[i] == "--source-folder" && i+1<args.Length) source = Path.GetFullPath(args[++i]);
                     else if (args[i] == "--config" && i+1<args.Length) configPath = Path.GetFullPath(args[++i]);
                     else throw new ArgumentException("Unknown launcher option.");
                 }
+                string identity = WindowsIdentity.GetCurrent().User.Value + "|" + (configPath ?? "main");
+                string hash; using (SHA256 sha = SHA256.Create()) hash = BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(identity))).Replace("-", "");
+                string name = "Local\\BetterIcon.Tray." + hash;
+                // Setup extracts this EXE alone. Stopping does not need helper
+                // scripts, artwork, or even an extant fixture configuration file.
+                if (stopAndWait) return StopAndWait(name);
                 FixtureConfig fixture = null;
                 if (configPath != null) {
                     fixture = new JavaScriptSerializer().Deserialize<FixtureConfig>(File.ReadAllText(configPath));
                     if (fixture == null || fixture.ShortcutDirectory == null || fixture.ShortcutDirectory.Length == 0 || String.IsNullOrWhiteSpace(fixture.StateDirectory)) throw new ArgumentException("Fixture configuration requires both shortcut and state directories.");
                     if (!Path.IsPathRooted(fixture.StateDirectory) || fixture.ShortcutDirectory.Any(p => !Path.IsPathRooted(p) || !Directory.Exists(p))) throw new ArgumentException("Fixture paths must be absolute; shortcut directories must exist.");
                 }
-                string identity = WindowsIdentity.GetCurrent().User.Value + "|" + (configPath ?? "main");
-                string hash; using (SHA256 sha = SHA256.Create()) hash = BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(identity))).Replace("-", "");
-                string name = "Local\\BetterIcon.Tray." + hash;
                 if (stop) { try { using (EventWaitHandle signal = EventWaitHandle.OpenExisting(name + ".Stop")) signal.Set(); } catch (WaitHandleCannotBeOpenedException) { } return 0; }
                 bool first;
                 using (Mutex singleton = new Mutex(true, name, out first)) {
@@ -965,14 +1015,19 @@ namespace BetterIcon.Tray
                         if (!File.Exists(Path.Combine(source, "BetterIcon.TrayWorker.ps1"))) throw new FileNotFoundException("Keep the tray application beside its Windows helper files, or launch it using Start-Tray.cmd.");
                         using (EventWaitHandle show = new EventWaitHandle(false, EventResetMode.AutoReset, name + ".Show"))
                         using (EventWaitHandle quit = new EventWaitHandle(false, EventResetMode.AutoReset, name + ".Stop"))
-                        using (LauncherForm form = new LauncherForm(source, fixture, hidden, show, quit))
+                        using (EventWaitHandle installQuit = new EventWaitHandle(false, EventResetMode.AutoReset, name + ".InstallStop"))
+                        using (LauncherForm form = new LauncherForm(source, fixture, hidden, show, quit, installQuit))
                         using (LauncherContext context = new LauncherContext(form)) Application.Run(context);
                     }
                     finally { singleton.ReleaseMutex(); }
                 }
                 return 0;
             }
-            catch (Exception error) { MessageBox.Show(error.Message, "BetterIcon could not start", MessageBoxButtons.OK, MessageBoxIcon.Error); return 1; }
+            catch (Exception error) {
+                if (quietErrors) Console.Error.WriteLine(error.Message);
+                else MessageBox.Show(error.Message, "BetterIcon could not start", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return 1;
+            }
         }
     }
 }

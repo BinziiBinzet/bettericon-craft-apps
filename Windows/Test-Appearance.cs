@@ -16,6 +16,10 @@ static class AppearanceTests
 {
     [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll")] static extern bool IsWindowEnabled(IntPtr window);
+    [DllImport("user32.dll")] static extern IntPtr SetActiveWindow(IntPtr window);
+    [DllImport("user32.dll")] static extern IntPtr GetActiveWindow();
+    [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr window, int index);
+    [DllImport("user32.dll")] static extern bool RedrawWindow(IntPtr window, IntPtr update, IntPtr region, uint flags);
     [DllImport("user32.dll", SetLastError = true)] static extern bool GetKeyboardState([Out] byte[] state);
     [DllImport("user32.dll", SetLastError = true)] static extern bool SetKeyboardState(byte[] state);
     [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr window, int attribute, out uint value, int size);
@@ -149,8 +153,45 @@ static class AppearanceTests
     {
         uint value;
         int result = DwmGetWindowAttribute(form.Handle, 34, out value, sizeof(uint));
-        if (result == 0) check(value == (SystemInformation.HighContrast ? 0xFFFFFFFF : 0xFFFFFFFE), "Windows DWM uses the requested outer window border policy " + phase + " (value " + value.ToString("X8") + ")");
+        if (result == 0) check(value == (((AppearancePalette)Field(form, "appearancePalette")).HighContrast ? 0xFFFFFFFF : 0xFFFFFFFE), "Windows DWM uses the requested outer window border policy " + phase + " (value " + value.ToString("X8") + ")");
         else Console.WriteLine("SKIP: This Windows build does not expose DWM border-color readback " + phase + " (HRESULT " + result.ToString("X8") + ")");
+    }
+    static void CheckFrameTransitions(LauncherForm form, Action<bool, string> check, string mode)
+    {
+        // Exercise real same-thread activation, not a synthetic NCACTIVATE alone:
+        // suppressing frame paint must not prevent another window from becoming active.
+        using (Form other = new Form { ShowInTaskbar = false, StartPosition = FormStartPosition.Manual,
+            Bounds = new Rectangle(form.Left + 80, form.Top + 80, 280, 120), Text = "BetterIcon disposable focus test" }) {
+            other.Show(form);
+            for (int i = 0; i < 3; i++) {
+                SetActiveWindow(other.Handle); Application.DoEvents();
+                bool deactivated = GetActiveWindow() == other.Handle;
+                SetActiveWindow(form.Handle); Application.DoEvents();
+                check(deactivated && GetActiveWindow() == form.Handle && form.Visible,
+                    mode + " native activation round trip " + (i + 1) + " preserves popup availability");
+                RedrawWindow(form.Handle, IntPtr.Zero, IntPtr.Zero, 0x0501); // INVALIDATE | UPDATENOW | FRAME.
+            }
+        }
+        form.Hide(); form.Show(); SetActiveWindow(form.Handle); Application.DoEvents();
+        form.WindowState = FormWindowState.Minimized; Application.DoEvents();
+        bool minimized = form.WindowState == FormWindowState.Minimized;
+        form.WindowState = FormWindowState.Normal; SetActiveWindow(form.Handle); Application.DoEvents();
+        check(minimized && form.WindowState == FormWindowState.Normal && form.Visible,
+            mode + " native minimize and restore remain functional");
+        int style = GetWindowLong(form.Handle, -16);
+        Point edge = form.PointToScreen(new Point(1, form.ClientSize.Height / 2));
+        Point corner = form.PointToScreen(new Point(form.ClientSize.Width - 15, form.ClientSize.Height - 15));
+        Func<Point, int> hit = point => SendMessage(form.Handle, 0x0084, IntPtr.Zero,
+            new IntPtr(unchecked((point.X & 0xFFFF) | ((point.Y & 0xFFFF) << 16)))).ToInt32();
+        check(form.ClientSize == form.Size && (style & 0x00040000) != 0 && (style & 0x00C00000) == 0
+            && hit(edge) == 10 && hit(corner) == 17,
+            mode + " redraw and reopen retain the full client area and native edge/corner resizing");
+        string surface = WindowSurfacePixels(form, (AppearancePalette)Field(form, "appearancePalette"));
+        check(surface == null, mode + " rendered window margins stay continuous after activation, frame redraw and reopen"
+            + (surface == null ? "" : ": " + surface));
+        // In-memory rendering checks the app surface, not a compositor flash;
+        // the latter still requires an explicitly authorized visual inspection.
+        CheckWindowBorder(form, check, "after " + mode + " activation and frame redraw");
     }
     public static void CheckChrome(LauncherForm form, Action<bool, string> check)
     {
@@ -177,6 +218,7 @@ static class AppearanceTests
                 check(recreated == null, mode + " rounded outer corners and straight tab center stay outline-free after handle recreation" + (recreated == null ? "" : ": " + recreated));
                 string surfaceRecreated = WindowSurfacePixels(form, (AppearancePalette)Field(form, "appearancePalette"));
                 check(surfaceRecreated == null, mode + " all four window corners stay continuous after tab handle recreation" + (surfaceRecreated == null ? "" : ": " + surfaceRecreated));
+                CheckFrameTransitions(form, check, mode);
             }
             pages.SelectedIndex = 0; pages.Focus();
             SendMessage(pages.Handle, 0x0100, new IntPtr((int)Keys.Right), IntPtr.Zero);
@@ -190,10 +232,13 @@ static class AppearanceTests
             CheckWindowBorder(form, check, "after native window recreation");
             string windowRecreated = WindowSurfacePixels(form, (AppearancePalette)Field(form, "appearancePalette"));
             check(windowRecreated == null, "The continuous window surface survives native window handle recreation" + (windowRecreated == null ? "" : ": " + windowRecreated));
+            CheckFrameTransitions(form, check, "Recreated window");
             AppearancePalette contrast = AppAppearance.Resolve("Dark", false, true);
+            typeof(LauncherForm).GetField("appearancePalette", instance).SetValue(form, contrast);
             AppAppearance.Apply(form, contrast); Application.DoEvents();
             string contrastSurface = WindowSurfacePixels(form, contrast);
             check(form.BackColor == contrast.Background && contrastSurface == null, "High contrast retains its system window-margin color" + (contrastSurface == null ? "" : ": " + contrastSurface));
+            CheckFrameTransitions(form, check, "High contrast");
         }
         finally {
             form.Size = savedSize; preferences.AppearanceMode = savedMode; Invoke(form, "ApplyAppearance");

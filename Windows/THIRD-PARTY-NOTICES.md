@@ -1,4 +1,13 @@
-# Windows SVG renderer
+# Windows third-party components
+
+## App installer
+
+The Windows Setup executable is built locally with [Inno Setup](https://jrsoftware.org/),
+copyright Jordan Russell and Martijn Laan. Its original notices are retained in
+the generated installer. Inno Setup is a build-machine tool, not a separate
+runtime prerequisite. See its [license](https://github.com/jrsoftware/issrc/blob/main/license.txt).
+
+## SVG renderer
 
 The Windows executable embeds the following unmodified NuGet assemblies. They are
 restored only when building locally, from the exact versions and SHA-512 package

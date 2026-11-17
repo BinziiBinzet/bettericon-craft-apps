@@ -1,5 +1,12 @@
 # Windows installer changelog
 
+## 1.20.0 - 2026-11-17
+
+- Add an offline per-user Setup EXE with Start-menu and optional desktop shortcuts, normal Windows uninstall registration, and upgrades that retain settings, personal packs, cached shortcut icons, and backups.
+- Wait for a graceful launcher shutdown before install or uninstall; refuse to continue while it is busy or has an open modal dialog. Never force-terminate the app.
+- Suppress Windows' transient outer frame repaint during activation while retaining 32-pixel rounded corners and native edge/corner resizing.
+- Include local build and isolated install, upgrade, uninstall, and shutdown validation scripts.
+
 ## 1.19.3 - 2026-11-17
 
 - Give the icon-pack dropdown a consistent theme-colored outline, including on the white Light-mode background.

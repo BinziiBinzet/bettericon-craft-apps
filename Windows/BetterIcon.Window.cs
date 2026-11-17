@@ -88,6 +88,15 @@ namespace BetterIcon.Tray
             if (message.Msg == 0x0084 && WindowState == FormWindowState.Normal) {
                 message.Result = new IntPtr(ResizeHitTest(HitTestPoint(message.LParam))); return;
             }
+            if (WindowState == FormWindowState.Normal && !(appearancePalette == null ? SystemInformation.HighContrast : appearancePalette.HighContrast)) {
+                // WS_THICKFRAME keeps native edge resizing, but Windows can still
+                // paint its frame during activation/redraw even with no client inset.
+                // The popup paints the entire surface; retain the system frame only
+                // in high contrast. DWM border-color suppression alone is insufficient.
+                if (message.Msg == 0x0085) { message.Result = IntPtr.Zero; return; } // WM_NCPAINT.
+                // -1 preserves native activation bookkeeping without painting the frame.
+                if (message.Msg == 0x0086) message.LParam = new IntPtr(-1); // WM_NCACTIVATE.
+            }
             base.WndProc(ref message);
         }
         void DisposeRoundedWindow()

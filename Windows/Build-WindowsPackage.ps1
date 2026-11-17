@@ -15,6 +15,7 @@ $destination = Join-Path $output $name
 if (Test-Path -LiteralPath $destination) { throw "Package already exists: $destination. Choose another output directory." }
 $files = @('install.ps1','uninstall.ps1','BetterIcon.Windows.psm1','BetterIcon.ShellLink.cs',
     'Install-Windows.cmd','Restore-Windows.cmd','Test-Windows.ps1','Build-WindowsPackage.ps1',
+    'Build-AppInstaller.ps1','BetterIcon.Setup.iss','Test-AppInstaller.ps1','Test-InstallerLifecycle.ps1','Test-InstallerLifecycle.cs',
     'WINDOWS.md','CHANGELOG-Windows.md','WINDOWS-VALIDATION.md','BetterIcon.Tray.cs',
     'BetterIcon.TrayWorker.ps1','BetterIcon.Tray.manifest','Build-Tray.ps1','Start-Tray.ps1',
     'Start-Tray.cmd','Stop-Tray.cmd','Create-StartMenuShortcut.cmd','Test-Tray.ps1','Test-TrayUI.ps1','Test-TrayUI.cs','BetterIcon.Hotkey.cs','BetterIcon.Packs.cs','BetterIcon.Packs.UI.cs','BetterIcon.Shortcuts.UI.cs','Test-Shortcuts.cs','Test-Packs.cs',
