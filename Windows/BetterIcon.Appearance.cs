@@ -22,6 +22,15 @@ namespace BetterIcon.Tray
             if (DrawMode != DrawMode.Normal) size.Height = Math.Max(size.Height, Math.Max(Height, ItemHeight + 8));
             return size;
         }
+        protected override void WndProc(ref Message message)
+        {
+            bool paint = message.Msg == 0x000F; // WM_PAINT
+            // WM_PRINTCLIENT, or WM_PRINT requesting PRF_CLIENT, provides its own DC.
+            bool print = (message.Msg == 0x0318 || (message.Msg == 0x0317 && (message.LParam.ToInt64() & 4) != 0)) && message.WParam != IntPtr.Zero;
+            base.WndProc(ref message);
+            // Keep native input and dropdown painting; add only the themed outline.
+            if (paint || print) AppAppearance.DrawComboBorder(this, print ? message.WParam : IntPtr.Zero);
+        }
     }
     public static class AppBranding
     {
@@ -159,6 +168,15 @@ namespace BetterIcon.Tray
                 // Older Windows builds may ignore this style; explicit control colors still apply.
                 SetWindowTheme(control.Handle, p.Dark && !p.HighContrast ? "DarkMode_Explorer" : "Explorer", null);
             }
+        }
+        internal static void DrawComboBorder(AppearanceComboBox combo, IntPtr deviceContext)
+        {
+            Hook hook;
+            if (!combo.IsHandleCreated || combo.IsDisposed || combo.ClientSize.Width < 2 || combo.ClientSize.Height < 2
+                || !hooks.TryGetValue(combo, out hook) || hook.Palette == null) return;
+            using (Graphics canvas = deviceContext == IntPtr.Zero ? Graphics.FromHwnd(combo.Handle) : Graphics.FromHdc(deviceContext))
+            using (Pen border = new Pen(hook.Palette.Border))
+                canvas.DrawRectangle(border, 0, 0, combo.ClientSize.Width - 1, combo.ClientSize.Height - 1);
         }
         static void DrawCombo(ComboBox combo, DrawItemEventArgs e)
         {

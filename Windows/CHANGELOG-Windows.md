@@ -1,5 +1,9 @@
 # Windows installer changelog
 
+## 1.19.3 - 2026-11-17
+
+- Give the icon-pack dropdown a consistent theme-colored outline, including on the white Light-mode background.
+
 ## 1.19.2 - 2026-11-17
 
 - Smooth the dark-mode moon glyph with an antialiased crescent while preserving its transparent background and theme color.

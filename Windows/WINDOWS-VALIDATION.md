@@ -1,5 +1,14 @@
 # Windows validation
 
+## 1.19.3 visible dropdown outline - 2026-11-17
+
+Native print rendering matches the theme's border color around the entire
+dropdown in 25 combinations of light/dark/system/high-contrast palettes and
+normal/focused/disabled/resized/recreated states. Arrow-key selection and
+opening/closing the native dropdown pass. The normal paint path was exercised;
+offscreen window-DC pixels are unavailable, so these captures establish native
+print rendering rather than desktop visual inspection. No Computer Use was used.
+
 ## 1.19.2 smooth dark-mode glyph - 2026-11-17
 
 Offscreen comparisons of the real 32px glyph show 78 partially transparent edge
