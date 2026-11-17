@@ -1,5 +1,14 @@
 # Windows installer changelog
 
+## 1.16.0 - 2026-11-17
+
+- Apply the selected 32-pixel rounded outline to the main popup and update it as the window resizes.
+- Preserve native edge and curved-corner resizing, including corners covered by child controls, minimum-size tracking and the hidden title bar.
+- Support SVG artwork in bundled and personal packs, folder/ZIP imports, custom assignments and per-app icon pickers. Prefer SVG over matching ICO/PNG files, retain vectors in shared ZIPs, render previews at the selected size, and convert vectors locally into Windows shortcut ICOs.
+- Bundle a pinned SVG.NET renderer and its license notices inside the executable; packaged SVG use works offline.
+- Preserve translucent icon edges through direct native DIB uploads at every size, with explicit Common Controls v6 activation. Remove the managed image-list and HICON conversions that caused pale or dark outlines.
+- Keep native appearance pickers within their Settings row at scaled display DPI.
+
 ## 1.15.1 - 2026-11-16
 
 - Keep Launcher and Settings grid backgrounds, labels and artwork in the selected Dark, Light or System theme while saving or loading.

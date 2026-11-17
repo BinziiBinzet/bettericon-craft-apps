@@ -100,8 +100,8 @@ namespace BetterIcon.Tray
         {
             apps.BeginUpdate(); packPreview.BeginUpdate();
             try {
-                apps.Items.Clear(); appTiles.Clear(); pictures.Images.Clear();
-                packPreview.Items.Clear(); packPictures.Images.Clear(); ClearAppArtwork(); ClearPackArtwork();
+                apps.Items.Clear(); appTiles.Clear();
+                packPreview.Items.Clear(); ClearAppArtwork(); ClearPackArtwork();
                 appArtwork.AddRange(prepared.AppImages); appSources.AddRange(prepared.AppSources); prepared.AppImages.Clear();
                 packArtwork.AddRange(prepared.PackImages); packSources.AddRange(prepared.PackSources); prepared.PackImages.Clear();
                 for (int i = 0; i < prepared.Apps.Count; i++) {

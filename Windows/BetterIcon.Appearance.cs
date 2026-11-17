@@ -18,7 +18,7 @@ namespace BetterIcon.Tray
         public override Size GetPreferredSize(Size proposedSize)
         {
             Size size = base.GetPreferredSize(proposedSize);
-            if (DrawMode != DrawMode.Normal) size.Height = Math.Max(size.Height, ItemHeight + 8);
+            if (DrawMode != DrawMode.Normal) size.Height = Math.Max(size.Height, Math.Max(Height, ItemHeight + 8));
             return size;
         }
     }
@@ -234,6 +234,13 @@ namespace BetterIcon.Tray
             TableLayoutPanel iconOptions = SettingsTable(2); iconOptions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50)); iconOptions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
             appIconStylePicker.Margin = new Padding(0, 0, 8, 0); appIconVariantPicker.Margin = Padding.Empty;
             iconOptions.Controls.Add(appIconStylePicker, 0, 0); iconOptions.Controls.Add(appIconVariantPicker, 1, 0); options.Controls.Add(iconOptions, 1, 1);
+            // ComboBox ignores MinimumSize.Height and its internal table-layout
+            // measurement can underreport the native height at scaled DPI.
+            // Reserve that height on the containing row instead of the combos.
+            Action reserveIconRow = delegate { iconOptions.MinimumSize = new Size(0, Math.Max(appIconStylePicker.Height, appIconVariantPicker.Height)); };
+            appIconStylePicker.SizeChanged += delegate { reserveIconRow(); };
+            appIconVariantPicker.SizeChanged += delegate { reserveIconRow(); };
+            reserveIconRow();
             SettingsRow(section, options);
             TableLayoutPanel preview = SettingsTable(2); preview.Margin = new Padding(0, 8, 0, 0); preview.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); preview.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             appIconPreview.Size = new Size(56, 56); appIconPreview.SizeMode = PictureBoxSizeMode.CenterImage; appIconPreview.Margin = new Padding(0, 0, 14, 0); appIconPreview.AccessibleName = "Current BetterIcon icon";

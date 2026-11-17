@@ -94,6 +94,7 @@ static class PackTests
         check(launcherPreview.Results.Length == 1 && launcherRestore.Results.Single().Status == "Restored" && File.ReadAllBytes(launcherPath).SequenceEqual(launcherOriginal), "ArtCraft Launcher restores byte-for-byte through the reviewed native worker path");
         string launcherImport = Path.Combine(state, "Launcher import"); Directory.CreateDirectory(launcherImport); File.Copy(png, Path.Combine(launcherImport, "ArtCraft Launcher.png"));
         check(library.Import(launcherImport).Icons.Single().Application == "ArtCraftLauncher", "Launcher artwork imports with its spaced official app name");
+        SvgTests.Run(root, source, check);
     }
     static void Sharing(string state, string png, ThemeEntry bundled, Action<bool, string> check)
     {

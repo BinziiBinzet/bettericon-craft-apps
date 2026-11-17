@@ -1,0 +1,8 @@
+[
+  { "Id": "Svg", "Version": "3.4.8", "Library": "lib/net472/Svg.dll", "SHA512": "s6FvhddwBqrA3+vCLlkeNaLYJeEhtK0j2LN+ZgSI/HRrMFxj2W7UBtpkG0kAqK9fbWmbMapu1JHVLxKMauVUkA==" },
+  { "Id": "ExCSS", "Version": "4.2.3", "Library": "lib/net48/ExCSS.dll", "SHA512": "/LBtBJN6a9hkBg6L30pllwx0UM290yeUZYUTEKyL8StkXKxUzot6gDnHypMJuj2e5OI4J1mUecQUD3dV4RnKqQ==" },
+  { "Id": "System.Memory", "Version": "4.5.5", "Library": "lib/net461/System.Memory.dll", "SHA512": "6MjlNsl7lKw0Q8lAsw2tQ89ul9x6jD2Yk3EEj+dOFoYGOE9eAUO9wNhvd4O/n97oQXlkyzqKXXUnE+kLElFy3A==" },
+  { "Id": "System.Buffers", "Version": "4.5.1", "Library": "lib/net461/System.Buffers.dll", "SHA512": "gNphWOVbm89+C15jebnPRaYykU8De1PFv1YJV24814IfeGGVa3PXRHDS0MLlbdI1pe9Mpv/n4ZK4INwtAjqv8g==" },
+  { "Id": "System.Numerics.Vectors", "Version": "4.5.0", "Library": "lib/net46/System.Numerics.Vectors.dll", "SHA512": "nATsBTD2CKr4AYN6eRszhX4sptImWmBJwB/U6XKCWWfnCcrTBw8XSCm3QA9gjppkHTr8OkXUY21MR91D3QZXsw==" },
+  { "Id": "System.Runtime.CompilerServices.Unsafe", "Version": "4.5.3", "Library": "lib/net461/System.Runtime.CompilerServices.Unsafe.dll", "SHA512": "dl2H02p7dBXe5bbL06COrZdikV+/rPrYogWnjUoYfOxmd9okB/f3wtG1X+n4wCV5JcmwvBk9QClywyOXlni6qw==" }
+]

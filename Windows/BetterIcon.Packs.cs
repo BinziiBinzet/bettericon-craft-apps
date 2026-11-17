@@ -66,7 +66,7 @@ namespace BetterIcon.Tray
             foreach (StoredPack pack in state.Packs) {
                 if (!GuidName(pack.Id) || !GuidName(pack.Revision) || !ids.Add(pack.Id) || String.IsNullOrWhiteSpace(pack.Name) || pack.Icons == null || pack.Icons.Count == 0)
                     throw new IOException("Invalid icon pack record. Its contents have been preserved.");
-                foreach (var icon in pack.Icons) if (!Applications.Contains(icon.Key) || (icon.Value != icon.Key + ".png" && icon.Value != icon.Key + ".ico")) throw new IOException("Invalid icon filename in the library.");
+                foreach (var icon in pack.Icons) if (!Applications.Contains(icon.Key) || (icon.Value != icon.Key + ".png" && icon.Value != icon.Key + ".ico" && icon.Value != icon.Key + ".svg")) throw new IOException("Invalid icon filename in the library.");
             }
             return state;
         }
@@ -153,7 +153,8 @@ namespace BetterIcon.Tray
         {
             if (bytes.Length == 0 || bytes.Length > MaxImageBytes) throw new IOException("Each icon must be between 1 byte and 16 MB.");
             using (MemoryStream stream = new MemoryStream(bytes, false)) {
-                if (extension == ".ico") { using (Icon icon = new Icon(stream)) using (Bitmap bitmap = icon.ToBitmap()) { if (bitmap.Width > 4096 || bitmap.Height > 4096) throw new IOException("Icon dimensions exceed 4096 pixels."); } }
+                if (extension == ".svg") { using (Bitmap bitmap = SvgArtwork.Render(bytes, 256)) { } }
+                else if (extension == ".ico") { using (Icon icon = new Icon(stream)) using (Bitmap bitmap = icon.ToBitmap()) { if (bitmap.Width > 4096 || bitmap.Height > 4096) throw new IOException("Icon dimensions exceed 4096 pixels."); } }
                 else if (extension == ".png") {
                     byte[] signature = { 137, 80, 78, 71, 13, 10, 26, 10 };
                     if (bytes.Length < 24 || !bytes.Take(8).SequenceEqual(signature)) throw new IOException("The selected file is not a PNG image.");
@@ -162,7 +163,7 @@ namespace BetterIcon.Tray
                     if (width < 1 || height < 1 || width > 4096 || height > 4096) throw new IOException("PNG dimensions must be between 1 and 4096 pixels.");
                     using (Image image = Image.FromStream(stream, false, true)) using (Bitmap bitmap = new Bitmap(image)) { }
                 }
-                else throw new IOException("Choose PNG or ICO artwork.");
+                else throw new IOException("Choose SVG, PNG or ICO artwork.");
             }
         }
         static string AppForFile(string file)
@@ -170,21 +171,23 @@ namespace BetterIcon.Tray
             string name = Path.GetFileNameWithoutExtension(file);
             return Applications.FirstOrDefault(app => Regex.IsMatch(name, "^" + (app == "CraftAnything" ? "Craft[ _-]*Anything" : app == "ArtCraftLauncher" ? "ArtCraft[ _-]*Launcher" : Regex.Escape(app)) + "(?:[ _.-].*)?$", RegexOptions.IgnoreCase));
         }
-        static void AddImage(Dictionary<string, byte[]> images, Dictionary<string, string> extensions, string file, Func<byte[]> read)
+        static int FormatPriority(string extension) { return extension == ".svg" ? 3 : extension == ".ico" ? 2 : extension == ".png" ? 1 : 0; }
+        static void AddImage(Dictionary<string, byte[]> images, Dictionary<string, string> extensions, HashSet<string> ambiguous, string file, Func<byte[]> read)
         {
             string extension = Path.GetExtension(file).ToLowerInvariant(), app = AppForFile(file);
-            if (app == null || (extension != ".png" && extension != ".ico")) return;
+            if (app == null || FormatPriority(extension) == 0) return;
             if (images.ContainsKey(app)) {
-                if (extensions[app] == extension) throw new IOException("Several icons match " + app + ". Import one theme at a time.");
-                if (extensions[app] == ".ico") return;
+                if (extensions[app] == extension) { ambiguous.Add(app); return; }
+                if (FormatPriority(extensions[app]) > FormatPriority(extension)) return;
             }
-            images[app] = read(); extensions[app] = extension;
+            images[app] = read(); extensions[app] = extension; ambiguous.Remove(app);
         }
         public ThemeEntry Import(string source)
         {
             RegularPath(source);
             Dictionary<string, byte[]> images = new Dictionary<string, byte[]>();
             Dictionary<string, string> extensions = new Dictionary<string, string>();
+            HashSet<string> ambiguous = new HashSet<string>();
             string name; SharedPackMetadata metadata = null;
             if (Directory.Exists(source)) {
                 name = new DirectoryInfo(source).Name;
@@ -197,7 +200,7 @@ namespace BetterIcon.Tray
                         if (metadata != null) throw new IOException("Several pack descriptions found. Import one theme at a time.");
                         using (Stream input = File.OpenRead(path)) metadata = ReadMetadata(ReadLimited(input, MaxMetadataBytes));
                     }
-                    else AddImage(images, extensions, path, delegate { if (new FileInfo(path).Length > MaxImageBytes) throw new IOException("An icon exceeds 16 MB."); return File.ReadAllBytes(path); });
+                    else AddImage(images, extensions, ambiguous, path, delegate { if (new FileInfo(path).Length > MaxImageBytes) throw new IOException("An icon exceeds 16 MB."); return File.ReadAllBytes(path); });
                 }
             }
             else {
@@ -213,14 +216,15 @@ namespace BetterIcon.Tray
                             using (Stream input = entry.Open()) metadata = ReadMetadata(ReadLimited(input, MaxMetadataBytes));
                             continue;
                         }
-                        AddImage(images, extensions, path, delegate {
+                        AddImage(images, extensions, ambiguous, path, delegate {
                             if (entry.Length > MaxImageBytes) throw new IOException("An icon exceeds 16 MB.");
                             using (Stream input = entry.Open()) return ReadLimited(input, MaxImageBytes);
                         });
                     }
                 }
             }
-            if (images.Count == 0) throw new IOException("No matching icons found. Name PNG or ICO files after apps, such as PhotoCraft.png, or use New pack to assign files yourself.");
+            if (ambiguous.Count != 0) throw new IOException("Several icons match " + ambiguous.OrderBy(app => app).First() + ". Import one theme at a time.");
+            if (images.Count == 0) throw new IOException("No matching icons found. Name SVG, PNG or ICO files after apps, such as PhotoCraft.svg, or use New pack to assign files yourself.");
             return SaveBytes(metadata == null ? name : metadata.Name, images, extensions, null, metadata == null ? "" : metadata.Author);
         }
         static byte[] ReadLimited(Stream input, int limit)

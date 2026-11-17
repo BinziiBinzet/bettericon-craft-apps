@@ -182,10 +182,7 @@ namespace BetterIcon.Tray
     public sealed class IconGridView : ListView
     {
         [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
-        [DllImport("comctl32.dll")] static extern IntPtr ImageList_Create(int width, int height, uint flags, int initial, int grow);
-        [DllImport("comctl32.dll")] static extern int ImageList_ReplaceIcon(IntPtr list, int index, IntPtr icon);
         [DllImport("comctl32.dll")] static extern bool ImageList_Destroy(IntPtr list);
-        [DllImport("user32.dll")] static extern bool DestroyIcon(IntPtr icon);
         IntPtr largeArtwork;
         int iconSize = Preferences.DefaultIconSize;
         bool showAppNames = true, inputBlocked, savedTabStop;
@@ -223,25 +220,13 @@ namespace BetterIcon.Tray
         }
         public void SetArtwork(IList<Bitmap> artwork, int size)
         {
-            // WinForms ImageList caps ImageSize at 256. Native lists retain full-sized
-            // artwork while keeping native labels, selection, scrolling and hit testing.
+            // Upload straight BGRA directly at every size. Managed ImageList and
+            // GetHicon conversion alter translucent edge colors in different ways.
             IntPtr replacement = IntPtr.Zero;
             try {
-                if (size > 256 && artwork.Count != 0) {
-                    replacement = ImageList_Create(size, size, 0x0021, artwork.Count, 1);
-                    if (replacement == IntPtr.Zero) throw new OutOfMemoryException("Windows could not allocate the larger icons.");
-                    foreach (Bitmap source in artwork) using (Bitmap scaled = new Bitmap(size, size)) {
-                        using (Graphics canvas = Graphics.FromImage(scaled)) {
-                            canvas.Clear(Color.Transparent); canvas.InterpolationMode = InterpolationMode.HighQualityBicubic;
-                            canvas.DrawImage(source, new Rectangle(0, 0, size, size));
-                        }
-                        IntPtr icon = scaled.GetHicon();
-                        try { if (ImageList_ReplaceIcon(replacement, -1, icon) < 0) throw new OutOfMemoryException("Windows could not load the larger icons."); }
-                        finally { DestroyIcon(icon); }
-                    }
-                }
+                replacement = NativeArtwork.Create(artwork, size);
                 IntPtr previous = largeArtwork; largeArtwork = replacement; replacement = IntPtr.Zero;
-                if (IsHandleCreated) SendMessage(Handle, 0x1003, IntPtr.Zero, largeArtwork != IntPtr.Zero ? largeArtwork : LargeImageList.Handle);
+                if (IsHandleCreated) SendMessage(Handle, 0x1003, IntPtr.Zero, largeArtwork);
                 if (previous != IntPtr.Zero) ImageList_Destroy(previous);
                 SetIconSize(size);
             }
@@ -304,7 +289,6 @@ namespace BetterIcon.Tray
         readonly Label previewLabel = new Label();
         readonly Label subtitle = new Label();
         readonly Button apply = new Button(), restore = new Button(), exit = new Button(), settings = new Button();
-        readonly ImageList pictures = new ImageList();
         readonly EventWaitHandle showEvent, stopEvent;
         readonly System.Windows.Forms.Timer signalTimer = new System.Windows.Forms.Timer();
         readonly System.Windows.Forms.Timer dismissTimer = new System.Windows.Forms.Timer();
@@ -365,8 +349,8 @@ namespace BetterIcon.Tray
                     if (!notified) { tray.ShowBalloonTip(2500, "BetterIcon is in the tray", "Click its tray icon to return. Choose Exit to stop the launcher.", ToolTipIcon.Info); notified = true; }
                 }
             };
-            FormClosed += delegate { if (hotkey != null) hotkey.Dispose(); signalTimer.Stop(); signalTimer.Dispose(); dismissTimer.Stop(); dismissTimer.Dispose(); tray.Visible = false; tray.Dispose(); trayMenu.Dispose(); iconMenu.Dispose(); importPackMenu.Dispose(); managePackMenu.Dispose(); pictures.Dispose(); packPictures.Dispose(); };
-            BuildTrayMenu(); InitializeAppearance();
+            FormClosed += delegate { if (hotkey != null) hotkey.Dispose(); signalTimer.Stop(); signalTimer.Dispose(); dismissTimer.Stop(); dismissTimer.Dispose(); tray.Visible = false; tray.Dispose(); trayMenu.Dispose(); iconMenu.Dispose(); importPackMenu.Dispose(); managePackMenu.Dispose(); };
+            BuildTrayMenu(); InitializeAppearance(); InitializeRoundedWindow();
         }
 
         public void Start()
@@ -381,40 +365,9 @@ namespace BetterIcon.Tray
             BeginInvoke(new Action(async delegate { if (!startInTray) ShowManager(); await RefreshCatalog(); }));
         }
 
-        protected override CreateParams CreateParams
-        {
-            get {
-                CreateParams value = base.CreateParams;
-                // Native sizing and minimum-size tracking, without a caption.
-                value.Style = (value.Style | 0x00040000) & ~0x00C00000;
-                return value;
-            }
-        }
-
-        protected override void WndProc(ref Message message)
-        {
-            if (message.Msg == 0x0083) { // WM_NCCALCSIZE: all of the window is client area.
-                message.Result = IntPtr.Zero;
-                return;
-            }
-            if (message.Msg == 0x0084 && WindowState == FormWindowState.Normal) { // WM_NCHITTEST
-                long position = message.LParam.ToInt64();
-                Point point = PointToClient(new Point(unchecked((short)(position & 0xFFFF)), unchecked((short)((position >> 16) & 0xFFFF))));
-                int border = Math.Max(6, Padding.Left);
-                if (ClientRectangle.Contains(point)) {
-                    bool left = point.X < border, right = point.X >= ClientSize.Width - border;
-                    bool top = point.Y < border, bottom = point.Y >= ClientSize.Height - border;
-                    int hit = top ? (left ? 13 : right ? 14 : 12) : bottom ? (left ? 16 : right ? 17 : 15) : left ? 10 : right ? 11 : 1;
-                    message.Result = new IntPtr(hit);
-                    return;
-                }
-            }
-            base.WndProc(ref message);
-        }
-
         protected override void Dispose(bool disposing)
         {
-            if (disposing) { if (hotkey != null) hotkey.Dispose(); DisposeAppearance(); ClearAppArtwork(); ClearPackArtwork(); }
+            if (disposing) { DisposeRoundedWindow(); if (hotkey != null) hotkey.Dispose(); DisposeAppearance(); ClearAppArtwork(); ClearPackArtwork(); }
             base.Dispose(disposing);
         }
 
@@ -440,10 +393,7 @@ namespace BetterIcon.Tray
             launcherPage.BackColor = Color.White; launcherPage.Padding = new Padding(18);
             settingsPage.BackColor = BackColor;
             pages.TabPages.AddRange(new[] { launcherPage, settingsPage }); Controls.Add(pages);
-            pictures.ImageSize = new Size(Math.Min(256, preferences.IconSize), Math.Min(256, preferences.IconSize)); pictures.ColorDepth = ColorDepth.Depth32Bit;
-            // Force native copies before temporary thumbnails are disposed at hidden startup.
-            if (pictures.Handle == IntPtr.Zero) throw new InvalidOperationException("Could not create the app icon list.");
-            apps.Dock = DockStyle.Fill; apps.ShowAppNames = preferences.ShowAppNames; apps.SetIconSize(preferences.IconSize); apps.LargeImageList = pictures;
+            apps.Dock = DockStyle.Fill; apps.ShowAppNames = preferences.ShowAppNames; apps.SetIconSize(preferences.IconSize);
             apps.MultiSelect = false; apps.HideSelection = false;
             apps.BorderStyle = BorderStyle.None; apps.BackColor = Color.White; apps.ShowItemToolTips = true; apps.AccessibleName = "Installed ArtCraft apps";
             apps.ItemActivate += delegate { LaunchSelected(); };
@@ -598,6 +548,7 @@ namespace BetterIcon.Tray
                     }
                     finally { if (handle != IntPtr.Zero) DestroyIcon(handle); }
                 }
+                else if (Path.GetExtension(path).Equals(".svg", StringComparison.OrdinalIgnoreCase)) loaded = SvgArtwork.Render(File.ReadAllBytes(path), size);
                 else loaded = Image.FromFile(path);
                 using (Image source = loaded)
                 using (Graphics canvas = Graphics.FromImage(image)) {
@@ -617,7 +568,8 @@ namespace BetterIcon.Tray
             int maximum = 128;
             try {
                 string extension = Path.GetExtension(path).ToLowerInvariant();
-                if (extension == ".png") using (Image source = Image.FromFile(path)) maximum = Math.Max(source.Width, source.Height);
+                if (extension == ".svg") maximum = Preferences.MaximumIconSize;
+                else if (extension == ".png") using (Image source = Image.FromFile(path)) maximum = Math.Max(source.Width, source.Height);
                 else if (extension == ".ico") using (BinaryReader reader = new BinaryReader(File.OpenRead(path))) {
                     if (reader.ReadUInt16() == 0 && reader.ReadUInt16() == 1) {
                         int count = reader.ReadUInt16();
@@ -671,26 +623,12 @@ namespace BetterIcon.Tray
             iconSizeSlider.AccessibleDescription = "Size in pixels, from 24 to " + maximum + ", based on available artwork. Updates both tabs.";
         }
         void ClearAppArtwork() { foreach (Bitmap image in appArtwork) image.Dispose(); appArtwork.Clear(); appSources.Clear(); }
-        static void ResizeArtwork(ImageList images, IEnumerable<Bitmap> artwork, int size)
-        {
-            size = Math.Min(256, size);
-            images.Images.Clear(); images.ImageSize = new Size(size, size);
-            // ImageSize recreates the native list; materialize it before temporary bitmaps are disposed.
-            if (images.Handle == IntPtr.Zero) throw new InvalidOperationException("Could not resize icons.");
-            foreach (Bitmap source in artwork) using (Bitmap scaled = new Bitmap(size, size)) {
-                using (Graphics canvas = Graphics.FromImage(scaled)) {
-                    canvas.Clear(Color.Transparent); canvas.InterpolationMode = InterpolationMode.HighQualityBicubic;
-                    canvas.DrawImage(source, new Rectangle(0, 0, size, size));
-                }
-                images.Images.Add(scaled);
-            }
-        }
         void RenderApps()
         {
             if (catalog == null) return;
             apps.BeginUpdate();
             try {
-                apps.Items.Clear(); appTiles.Clear(); pictures.Images.Clear();
+                apps.Items.Clear(); appTiles.Clear();
                 ClearAppArtwork();
                 ThemeEntry theme = SelectedTheme;
                 foreach (AppEntry entry in catalog.Apps) {
@@ -712,7 +650,7 @@ namespace BetterIcon.Tray
             apps.BeginUpdate();
             try {
                 EnsureArtworkSize(appArtwork, appSources, size);
-                ResizeArtwork(pictures, appArtwork, size); apps.SetArtwork(appArtwork, size);
+                apps.SetArtwork(appArtwork, size);
                 FilterApps();
                 if (selected != null && apps.Items.Contains(selected)) {
                     foreach (ListViewItem item in appTiles) item.Selected = item.Focused = false;

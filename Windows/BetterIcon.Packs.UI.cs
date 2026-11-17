@@ -30,7 +30,7 @@ namespace BetterIcon.Tray
             authorRow.Controls.Add(new Label { Text = "Author", Width = 79, Margin = new Padding(0, 6, 12, 0) });
             packAuthor.Width = 450; packAuthor.MaxLength = 64; packAuthor.AccessibleName = "Pack author"; packAuthor.Text = basis == null ? "" : basis.Author;
             authorRow.Controls.Add(packAuthor); layout.Controls.Add(authorRow, 0, 1);
-            layout.Controls.Add(new Label { Text = "Choose a PNG or ICO for each app. Unassigned apps keep their existing shortcut icons. Saving adds the pack; Apply icons changes shortcuts.", Dock = DockStyle.Fill }, 0, 2);
+            layout.Controls.Add(new Label { Text = "Choose an SVG, PNG or ICO for each app. Unassigned apps keep their existing shortcut icons. Saving adds the pack; Apply icons changes shortcuts.", Dock = DockStyle.Fill }, 0, 2);
             grid.Dock = DockStyle.Fill; grid.AllowUserToAddRows = grid.AllowUserToDeleteRows = grid.AllowUserToResizeRows = false; grid.RowHeadersVisible = false; grid.AutoGenerateColumns = false; grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect; grid.MultiSelect = false;
             grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "App", HeaderText = "App", Width = 145, ReadOnly = true });
             grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Artwork", HeaderText = "Artwork", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, ReadOnly = true });
@@ -41,7 +41,7 @@ namespace BetterIcon.Tray
             grid.CellContentClick += delegate(object sender, DataGridViewCellEventArgs e) {
                 if (e.RowIndex < 0) return;
                 string app = (string)grid.Rows[e.RowIndex].Cells[0].Value;
-                if (e.ColumnIndex == 2) using (OpenFileDialog picker = new OpenFileDialog { Title = "Icon for " + app, Filter = "Icon artwork (*.png;*.ico)|*.png;*.ico", CheckFileExists = true }) {
+                if (e.ColumnIndex == 2) using (OpenFileDialog picker = new OpenFileDialog { Title = "Icon for " + app, Filter = "Icon artwork (*.svg;*.png;*.ico)|*.svg;*.png;*.ico", CheckFileExists = true }) {
                     if (picker.ShowDialog(this) == DialogResult.OK) { files[app] = picker.FileName; grid.Rows[e.RowIndex].Cells[1].Value = Path.GetFileName(picker.FileName); }
                 }
                 if (e.ColumnIndex == 3) { files.Remove(app); grid.Rows[e.RowIndex].Cells[1].Value = "Not assigned"; }
@@ -70,7 +70,6 @@ namespace BetterIcon.Tray
         readonly TabControl pages = new TabControl();
         readonly TabPage launcherPage = new TabPage("Launcher"), settingsPage = new TabPage("Settings");
         readonly IconGridView packPreview = new IconGridView();
-        readonly ImageList packPictures = new ImageList();
         readonly List<Bitmap> packArtwork = new List<Bitmap>();
         readonly List<ArtworkSource> packSources = new List<ArtworkSource>();
         readonly Panel settingsScroll = new Panel();
@@ -192,10 +191,8 @@ namespace BetterIcon.Tray
             manage.Click += delegate { UpdatePackButtons(); managePackMenu.Show(manage, new Point(0, manage.Height)); };
             int column = 0; foreach (Button button in new[] { import, create, manage }) { SettingsButton(button); actions.Controls.Add(button, column++, 0); }
             SettingsRow(packs, actions);
-            packPictures.ImageSize = new Size(Math.Min(256, preferences.IconSize), Math.Min(256, preferences.IconSize)); packPictures.ColorDepth = ColorDepth.Depth32Bit;
-            if (packPictures.Handle == IntPtr.Zero) throw new InvalidOperationException("Could not create pack previews.");
             packPreview.Dock = DockStyle.Top; packPreview.Height = 128; packPreview.Margin = Padding.Empty;
-            packPreview.ShowAppNames = preferences.ShowAppNames; packPreview.SetIconSize(preferences.IconSize); packPreview.LargeImageList = packPictures;
+            packPreview.ShowAppNames = preferences.ShowAppNames; packPreview.SetIconSize(preferences.IconSize);
             packPreview.MultiSelect = false; packPreview.HideSelection = false; packPreview.ShowItemToolTips = true;
             packPreview.BorderStyle = BorderStyle.None; packPreview.BackColor = Color.White; packPreview.AccessibleName = "Icon pack preview";
             SettingsRow(packs, packPreview);
@@ -265,7 +262,7 @@ namespace BetterIcon.Tray
             packDetails.Text = theme == null ? "No packs. Import or create one." : theme.IsDefault ? "Original icons for your installed apps. Restore defaults below to undo BetterIcon changes." : theme.IconCount + " icons / " + (theme.Managed ? "Personal pack" : "Built-in pack");
             packPreview.BeginUpdate();
             try {
-                packPreview.Items.Clear(); packPictures.Images.Clear(); ClearPackArtwork();
+                packPreview.Items.Clear(); ClearPackArtwork();
                 if (theme != null && theme.IsDefault) foreach (AppEntry app in catalog.Apps.GroupBy(a => a.Application).Select(g => g.First()).OrderBy(a => a.Application)) {
                     AddArtwork(packArtwork, packSources, app.OriginalIconPath, app.OriginalIconIndex);
                     packPreview.Items.Add(new ListViewItem(app.Application, packArtwork.Count - 1) { Tag = app.Application, ToolTipText = app.Application + " - ArtCraft default" });
@@ -285,7 +282,7 @@ namespace BetterIcon.Tray
             packPreview.BeginUpdate();
             try {
                 EnsureArtworkSize(packArtwork, packSources, preferences.IconSize);
-                ResizeArtwork(packPictures, packArtwork, preferences.IconSize); packPreview.SetArtwork(packArtwork, preferences.IconSize);
+                packPreview.SetArtwork(packArtwork, preferences.IconSize);
                 // Leave room for at least one complete row, including names, at the largest size.
                 packPreview.Height = Math.Max(128, packPreview.GridCellSize.Height + 12);
                 if (packPreview.SelectedItems.Count == 1) packPreview.SelectedItems[0].EnsureVisible();
@@ -310,7 +307,7 @@ namespace BetterIcon.Tray
         async Task ChooseAppIcon(AppEntry target)
         {
             if (busy || !PackLibrary.Applications.Contains(target.Application)) return;
-            using (OpenFileDialog picker = new OpenFileDialog { Title = "Choose icon for " + target.Application, Filter = "Icon artwork (*.png;*.ico)|*.png;*.ico", CheckFileExists = true, Multiselect = false, RestoreDirectory = true }) {
+            using (OpenFileDialog picker = new OpenFileDialog { Title = "Choose icon for " + target.Application, Filter = "Icon artwork (*.svg;*.png;*.ico)|*.svg;*.png;*.ico", CheckFileExists = true, Multiselect = false, RestoreDirectory = true }) {
                 if (picker.ShowDialog(this) != DialogResult.OK) return;
                 try { await ChangeAppIcon(target, picker.FileName); }
                 catch (Exception error) { Report(error); }
@@ -337,7 +334,7 @@ namespace BetterIcon.Tray
             if (busy) return;
             string source = null;
             if (zip) using (OpenFileDialog picker = new OpenFileDialog { Title = "Import one icon theme", Filter = "Icon pack ZIP (*.zip)|*.zip" }) { if (picker.ShowDialog(this) == DialogResult.OK) source = picker.FileName; }
-            else using (FolderBrowserDialog picker = new FolderBrowserDialog { Description = "Choose one theme folder containing app-named PNG or ICO files.", ShowNewFolderButton = false }) { if (picker.ShowDialog(this) == DialogResult.OK) source = picker.SelectedPath; }
+            else using (FolderBrowserDialog picker = new FolderBrowserDialog { Description = "Choose one theme folder containing app-named SVG, PNG or ICO files.", ShowNewFolderButton = false }) { if (picker.ShowDialog(this) == DialogResult.OK) source = picker.SelectedPath; }
             if (source == null) return;
             SetBusy(true, "Importing icon pack...");
             try { ThemeEntry added = await Task.Run(() => library.Import(source)); ReloadLibrary(added.Id); status.Text = "Imported " + added.Name + ". Choose Apply icons to change shortcuts."; }

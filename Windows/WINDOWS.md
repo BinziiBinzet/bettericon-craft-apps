@@ -1,12 +1,12 @@
 # BetterIcon-Craft Apps for Windows
 
-Windows version **1.15.1** includes a native tray launcher alongside the existing icon installer. It shares the repository's artwork and leaves Craft executables, app settings, file associations, and the registry unchanged.
+Windows version **1.16.0** includes a native tray launcher alongside the existing icon installer. It shares the repository's artwork and leaves Craft executables, app settings, file associations, and the registry unchanged.
 
 ## Start here
 
 1. Download or clone the repository and extract it to a folder. Keep `Windows/` beside the `Craft-Icons-*` artwork folders.
 2. In a source checkout, double-click **Windows/Start-Tray.cmd**. It compiles the launcher locally on first use. In a built Windows ZIP, open **Windows/BetterIcon-Tray.exe** directly.
-3. Click its notification-area icon to open the popup above the system tray. Click the icon again to hide it. The popup opens directly to its tabs without a title bar or window buttons. Drag any outer edge or corner to resize it. Click elsewhere or use Escape to hide it. It stays inside the clicked monitor's working area.
+3. Click its notification-area icon to open the popup above the system tray. Click the icon again to hide it. The popup has 32-pixel rounded corners and opens directly to its tabs without a title bar or window buttons. Drag any outer edge or curved corner to resize it; the outline follows the new size. Click elsewhere or use Escape to hide it. It stays inside the clicked monitor's working area.
 4. Start typing an app's name to narrow the grid immediately, without a search field. For example, `f` shows FigCraft and FilmCraft; `fiL` leaves FilmCraft. Use arrows to choose a result and **Enter** to launch, or double-click an app. **Backspace** edits the filter; **Ctrl+Backspace** clears it. **Escape** clears a filter first, then closes the popup. Reopening starts with all apps. Open dropdowns and Settings keep their normal keyboard behavior.
 5. The left **Launcher** tab contains only app icons and names. Open the right **Settings** tab to manage icon packs, preview artwork, or configure the launcher. Select **My Desktop and Start menu** or **Shared shortcuts (administrator)**, then choose **Apply icons** and review the exact shortcuts. Shared writes request elevation; normal app launches remain unelevated.
 6. To undo one app, right-click its icon in either tab and choose **Restore ArtCraft default**. To undo all apps, select **ArtCraft default** (the first icon pack) and **Restore ArtCraft defaults**, or use **Restore all defaults** beside Apply icons. Use the same shortcut locations as the original application and review the exact shortcuts.
@@ -45,19 +45,21 @@ The launcher uses Windows PowerShell 5.1 and .NET Framework 4.8 on Windows 10/11
 
 Settings groups controls into **Icon pack**, **Appearance**, **Launcher**, and **Windows shortcuts**. Less-used pack commands are grouped under **Pack actions**; **Import** offers ZIP and folder choices. The content scrolls vertically when needed, while status, Refresh apps, and Exit remain in a separate footer. Selecting a pack previews its artwork in Settings and the Launcher; changing shortcut icons still requires **Apply icons** and a review.
 
-Right-click any app icon in either tab and choose **Choose icon...** to browse for PNG or ICO artwork. The new image appears in both grids and is saved in your personal library. Editing a built-in pack creates a uniquely named custom copy; editing a personal pack keeps its name, author and other assignments. Starting from ArtCraft default creates a new personal pack. Canceling the picker changes nothing, and invalid artwork leaves the pack intact. Use **Apply icons...** when you want to change Windows shortcuts.
+Right-click any app icon in either tab and choose **Choose icon...** to browse for SVG, PNG or ICO artwork. The new image appears in both grids and is saved in your personal library. Editing a built-in pack creates a uniquely named custom copy; editing a personal pack keeps its name, author and other assignments. Starting from ArtCraft default creates a new personal pack. Canceling the picker changes nothing, and invalid artwork leaves the pack intact. Use **Apply icons...** when you want to change Windows shortcuts.
 
 - **ArtCraft default:** always the first option, displaying original icons from installed apps and verified shortcut backups. It cannot be removed, edited, copied, or exported. Choosing it previews the defaults; **Restore ArtCraft defaults** reviews and restores BetterIcon's changes in the selected shortcut locations.
-- **Import > From folder / From ZIP:** add one theme at a time, using app-named PNG or ICO files such as `PhotoCraft.png` or `FilmCraft.ico`. Nested folders are supported. An ICO takes precedence over a PNG for the same app; multiple variants in the same format are rejected. ICNS and SVG are not supported. Imports are copied locally, so their original folder or ZIP is no longer needed.
-- **New pack:** name a pack, optionally enter its public author credit, and choose a PNG or ICO for each app you want to customize. At least one icon is required. Apps without assigned artwork keep their current shortcut icons.
+- **Import > From folder / From ZIP:** add one theme at a time, using app-named SVG, PNG or ICO files such as `PhotoCraft.svg` or `FilmCraft.png`. Nested folders are supported. SVG takes precedence, followed by ICO, then PNG. Multiple variants in the preferred format are rejected. ICNS is not supported. Imports are copied locally, so their original folder or ZIP is no longer needed.
+- **New pack:** name a pack, optionally enter its public author credit, and choose an SVG, PNG or ICO for each app you want to customize. At least one icon is required. Apps without assigned artwork keep their current shortcut icons.
 - **Customize:** start a personal copy of the selected pack and mix in your own artwork. Built-in source artwork stays unchanged.
 - **Edit pack:** rename or change assignments in a personal pack. Each save creates a new revision so an earlier preview continues to refer to the artwork it showed.
-- **Export ZIP:** select a personal pack and save a ZIP to share. Recipients choose **Import > From ZIP** to install it into their own library. The pack name, author, and exact PNG/ICO artwork travel with it, even if the ZIP is renamed. Built-ins can be copied with **Customize** before exporting. Export includes no local paths, preferences, shortcut backups, or internal library IDs.
+- **Export ZIP:** select a personal pack and save a ZIP to share. Recipients choose **Import > From ZIP** to install it into their own library. The pack name, author, and original SVG/PNG/ICO artwork travel with it, even if the ZIP is renamed. SVG files remain vectors. Built-ins can be copied with **Customize** before exporting. Export includes no local paths, preferences, shortcut backups, or internal library IDs.
 - **Remove pack:** remove a personal pack from the selector, or hide a built-in pack. Already-applied shortcut icons remain unchanged. **Restore built-in packs** brings hidden built-ins back.
 
 Personal packs and their library metadata live in `%LOCALAPPDATA%\BetterIcon-Craft Apps\packs`. Old revisions and removed artwork are retained to preserve existing previews and references; removing a pack is a library operation, not disk cleanup. Personal artwork is never included in a source commit or a Windows release package. Pack management does not require administrator access; applying to shared shortcuts still does.
 
 Images are limited to 16 MB each and PNG dimensions to 4096 pixels per side. A pack must fit within 128 MB including its small description file; imports accept at most 1024 entries. Unsafe archive paths and linked files/folders are refused. Use **New pack** to assign artwork with arbitrary filenames instead of renaming files for import.
+
+SVG previews render from the vector at the current icon size, up to the existing 4096-pixel zoom limit. Use self-contained static SVGs with embedded styles/images; links to outside files or websites, scripts and embedded HTML are refused. Paths, viewBox, transforms, gradients, clipping and CSS are supported through SVG.NET. No browser or extra SVG application is needed.
 
 Shared ZIPs contain app-named image files and `bettericon-pack.json` with `Format: "BetterIcon.IconPack"`, `Version: 1`, `Name`, and `Author`. Exported packs can also be extracted and imported as a folder. Older image-only folders/ZIPs remain supported; their filename supplies the pack name. An older personal library without author metadata opens normally; use Edit pack to add a credit. Author credits are supplied by the pack creator, not a verified identity.
 
@@ -99,9 +101,9 @@ All **13 current themes** are available: seven by **OmegaDarling**, five in **Cr
 
 OmegaDarling's themes retain the legacy `Craft-Icons-Zach` folder and IDs so saved selections, applied icons, and restore records remain compatible. Their public author credit is **OmegaDarling** in the app and command-line theme listing.
 
-PNG artwork is converted locally to transparent Windows ICOs containing 16, 24, 32, 48, 64, 128, and 256-pixel frames for Windows shortcuts. The Windows ZIP also retains each original PNG for high-resolution Launcher and Settings previews. Aspect ratio is preserved and source images are never rewritten. An existing ICO is preferred for shortcut application; its matching PNG supplies the larger preview when available. Duplicate ICOs or duplicate PNGs remain ambiguous. ICNS/SVG-only artwork is not selectable.
+SVG and PNG artwork is converted locally to transparent Windows ICOs containing 16, 24, 32, 48, 64, 128, and 256-pixel frames for Windows shortcuts. Each SVG frame is rendered directly from the vector. The Windows ZIP also retains original SVG/PNG artwork for Launcher and Settings previews. Aspect ratio is preserved and source images are never rewritten. SVG takes precedence over ICO, then PNG. Without SVG, a matching PNG supplies the larger preview for an ICO when available. Multiple files in the preferred format remain ambiguous. ICNS-only artwork is not selectable.
 
-Theme discovery understands flat PNG folders, root-level pack artwork, and nested `ico/` folders. Use recognized app names such as `PhotoCraft.png`. A full `Pack/Theme` ID disambiguates identical theme names; the circleb theme uses `Craft-Icons-circleb/Root`. Overview sheets are ignored. Missing artwork is skipped when applying; shortcuts without an explicit icon use their executable's icon. ArtCraft Launcher can use personal artwork named `ArtCraftLauncher.png` or `ArtCraft Launcher.png`; bundled packs currently leave its default unchanged. Its custom icons use the same backup and selective restoration protections as other apps. The command-line theme list covers repository artwork; the tray's Settings manages the personal library.
+Theme discovery understands SVG/PNG folders, root-level pack artwork, and nested `ico/` folders. Use recognized app names such as `PhotoCraft.png`. A full `Pack/Theme` ID disambiguates identical theme names; the circleb theme uses `Craft-Icons-circleb/Root`. Overview sheets are ignored. Missing artwork is skipped when applying; shortcuts without an explicit icon use their executable's icon. ArtCraft Launcher can use personal artwork named `ArtCraftLauncher.png` or `ArtCraft Launcher.png`; bundled packs currently leave its default unchanged. Its custom icons use the same backup and selective restoration protections as other apps. The command-line theme list covers repository artwork; the tray's Settings manages the personal library.
 
 ## Backups and restoration
 
@@ -151,6 +153,13 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Test-Windows.ps1 -Test
 ```
 
 Tests retain temporary fixtures and a JSON receipt, whose location is printed at completion. Coverage includes real Shell links, exact restore, theme switching, Unicode/bracketed paths, aliases, preview, edited/missing shortcuts, damaged backups, interrupted journal recovery, invalid icons/manifests, and concurrency. Installed-copy checks depend on the Craft apps present on the test machine. All-user write protection is checked when tests run without elevation.
+
+The first source build restores the small, pinned SVG.NET dependencies from NuGet
+into `%LOCALAPPDATA%\BetterIcon-Craft Apps\build-dependencies`, verifying the locked
+SHA-512 hashes before embedding them in the EXE. Later local builds reuse the
+verified cache. The packaged app and packaged command-line installer use the
+embedded renderer offline. Using SVG from a source checkout without a built EXE
+builds that renderer locally on first use. See `THIRD-PARTY-NOTICES.md` for licenses.
 
 For cross-drive testing, add `-ArtifactDirectory 'D:\tmp'` (or another short local path). Each run creates its own unique subdirectory.
 

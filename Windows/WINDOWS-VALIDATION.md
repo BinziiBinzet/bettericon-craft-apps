@@ -1,5 +1,34 @@
 # Windows validation
 
+## 1.16.0 SVG packs, rounded resizing and clean icon edges - 2026-11-17
+
+All 308 local native checks passed from source. New coverage includes SVG-only
+packs, format preference independent of ZIP order, original-vector ZIP sharing,
+custom/per-app edits, fresh large-vector rendering, paths/CSS/gradients/clipping,
+embedded PNGs, harmless doctypes without external resolution, and invalid/linked
+artwork rejection before library mutation. The real PowerShell worker applies an
+SVG pack as a seven-frame Windows ICO and restores the disposable shortcut's
+original bytes. All 133 CLI checks passed on both PowerShell 5.1 and 7, including
+SVG discovery, selection, conversion, application and restoration.
+
+Native outline tests verify the selected 32-pixel radius, transparent cutouts,
+all eight edge/corner resize directions through child controls, minimum/large
+window sizes and recreated handles. The test executable now uses the shipping
+DPI-aware manifest. Settings controls fit at 790x570 and 900x690, including the
+native appearance pickers at the machine's scaled display DPI.
+
+Both grids now upload straight BGRA through native DIBs and Common Controls v6
+at every size. Independent mathematical alpha-compositing checks on the actual
+grid pass for RGBA/PArgb artwork at 24/136/512 pixels on black, white, dark and
+selection backgrounds, within one channel value. Repeated replacement, clearing
+and disposal leaves the native GDI object count unchanged. Existing 1024-pixel
+detail, labels, filtering, context actions, busy themes, loading, hotkeys and
+backup/restore checks remain passing. No source artwork is recolored or rewritten.
+
+Builds, dependency restoration and all verification run locally. SVG dependencies
+are version/hash locked and embedded in the executable with license notices.
+Windows 10, ARM64 and per-monitor DPI transitions remain unverified.
+
 ## 1.15.1 themed busy grids - 2026-11-16
 
 All 270 local native checks passed from source. New coverage measures painted grid background pixels and native text/background colors while busy in Dark, Light and System, including appearance notifications and input recovery. Native mouse selection, keyboard activation/navigation, context actions and wheel zoom remain paused; handle recreation and a simulated System-to-Light update preserve painting and the input pause. Existing real save, loading, error cleanup, large-image, launcher and restore checks remain passing.

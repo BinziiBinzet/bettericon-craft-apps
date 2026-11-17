@@ -1,7 +1,8 @@
-# BetterIcon-Craft Apps Windows support, version 1.15.1.
-# No network access, executable patching, registry changes, or Explorer restart.
+# BetterIcon-Craft Apps Windows support, version 1.16.0.
+# Packaged runtime uses no network, executable patching, registry changes, or Explorer restart.
 Set-StrictMode -Version Latest
-$script:Version = '1.15.1'
+$script:Version = '1.16.0'
+$script:SvgArtworkType = $null
 $script:RepositoryRoot = Split-Path -Parent $PSScriptRoot
 $script:Applications = @('PhotoCraft','VectorCraft','FilmCraft','LightCraft','PdfCraft',
     'EffectCraft','AniCraft','DesignCraft','FigCraft','TextureCraft','MaterialCraft',
@@ -124,7 +125,7 @@ function Get-BetterIconTheme {
         if (@(Get-ChildItem -LiteralPath $pack.FullName -File | Where-Object { $_.Extension -in '.ico','.png','.icns','.svg' -and (Get-AppName $_.BaseName -Icon) }).Count) { $themes = @($pack) + $themes }
         foreach ($theme in $themes) {
             if (Test-RedirectedItem $theme) { continue }
-            $icons = @(Get-RegularFiles $theme.FullName '.ico') + @(Get-RegularFiles $theme.FullName '.png')
+            $icons = @(Get-RegularFiles $theme.FullName '.svg') + @(Get-RegularFiles $theme.FullName '.ico') + @(Get-RegularFiles $theme.FullName '.png')
             $icons = @($icons | Where-Object { Get-AppName $_.BaseName -Icon })
             # Ignore non-artwork folders, including future tests or documentation.
             if (-not $icons.Count) { continue }
@@ -148,7 +149,7 @@ function Resolve-Theme([string]$Theme, [string]$Repository) {
 
 function Get-IconMap($Theme) {
     $map = @{}
-    $files = @(Get-RegularFiles $Theme.Path '.ico') + @(Get-RegularFiles $Theme.Path '.png')
+    $files = @(Get-RegularFiles $Theme.Path '.svg') + @(Get-RegularFiles $Theme.Path '.ico') + @(Get-RegularFiles $Theme.Path '.png')
     foreach ($icon in @($files | Sort-Object FullName)) {
         $app = Get-AppName $icon.BaseName -Icon
         if ($app) {
@@ -157,8 +158,10 @@ function Get-IconMap($Theme) {
         }
     }
     foreach ($app in @($map.Keys)) {
-        $native = @($map[$app] | Where-Object { [IO.Path]::GetExtension($_) -ieq '.ico' })
-        if ($native.Count) { $map[$app] = $native }
+        foreach ($extension in @('.svg','.ico','.png')) {
+            $preferred = @($map[$app] | Where-Object { [IO.Path]::GetExtension($_) -ieq $extension })
+            if ($preferred.Count) { $map[$app] = $preferred; break }
+        }
     }
     return $map
 }
@@ -172,9 +175,28 @@ function Get-BetterIconThemeIcon {
     foreach ($app in @($map.Keys | Sort-Object)) {
         if (@($map[$app]).Count -eq 1) {
             $png = @($previews | Where-Object { (Get-AppName $_.BaseName -Icon) -eq $app })
-            [pscustomobject]@{ Application = $app; Path = $map[$app][0]; PreviewPath = $(if ($png.Count -eq 1) { $png[0].FullName } else { $map[$app][0] }) }
+            $path = $map[$app][0]
+            [pscustomobject]@{ Application = $app; Path = $path; PreviewPath = $(if ([IO.Path]::GetExtension($path) -ieq '.svg') { $path } elseif ($png.Count -eq 1) { $png[0].FullName } else { $path }) }
         }
     }
+}
+
+function Get-SvgArtworkType {
+    if ($null -ne $script:SvgArtworkType) { return $script:SvgArtworkType }
+    $exe = Join-Path $PSScriptRoot 'BetterIcon-Tray.exe'
+    if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
+        $output = Join-Path (Get-BetterIconStateDirectory) ('launcher\' + (Get-BetterIconVersion))
+        $exe = Join-Path $output 'BetterIcon-Tray.exe'
+        if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
+            # A separate local build process avoids reimporting this module while
+            # its apply/restore functions are executing in the current worker.
+            $powershell = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
+            $null = & $powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'Build-Tray.ps1') -OutputDirectory $output
+            if ($LASTEXITCODE -ne 0) { throw 'The local SVG renderer build failed.' }
+        }
+    }
+    $script:SvgArtworkType = [Reflection.Assembly]::LoadFrom($exe).GetType('BetterIcon.Tray.SvgArtwork', $true)
+    return $script:SvgArtworkType
 }
 
 function Get-BetterIconBytes {
@@ -186,17 +208,25 @@ function Get-BetterIconBytes {
         $check.Dispose()
         return ,([IO.File]::ReadAllBytes($Path))
     }
-    if ([IO.Path]::GetExtension($Path) -ine '.png') { throw 'Only ICO and PNG artwork is supported.' }
-    $source = [Drawing.Image]::FromFile($Path)
+    $extension = [IO.Path]::GetExtension($Path).ToLowerInvariant()
+    if ($extension -notin '.png','.svg') { throw 'Only SVG, ICO and PNG artwork is supported.' }
+    $source = $null; $svgRender = $null; $svgBytes = $null
+    if ($extension -eq '.svg') {
+        if ((Get-Item -LiteralPath $Path).Length -gt 16MB) { throw 'Each SVG must be smaller than 16 MB.' }
+        $svgBytes = [IO.File]::ReadAllBytes($Path)
+        $svgRender = (Get-SvgArtworkType).GetMethod('Render')
+    }
+    else { $source = [Drawing.Image]::FromFile($Path) }
     $frames = New-Object 'Collections.Generic.List[byte[]]'
     $sizes = @(16,24,32,48,64,128,256)
     try {
         foreach ($size in $sizes) {
-            $bitmap = [Drawing.Bitmap]::new($size, $size, [Drawing.Imaging.PixelFormat]::Format32bppArgb)
+            $bitmap = if ($null -ne $svgRender) { $svgRender.Invoke($null, [object[]]@($svgBytes, [int]$size)) } else { [Drawing.Bitmap]::new($size, $size, [Drawing.Imaging.PixelFormat]::Format32bppArgb) }
             $graphics = [Drawing.Graphics]::FromImage($bitmap)
             $stream = [IO.MemoryStream]::new()
             $attributes = [Drawing.Imaging.ImageAttributes]::new()
             try {
+                if ($null -ne $source) {
                 $graphics.Clear([Drawing.Color]::Transparent)
                 $graphics.CompositingMode = [Drawing.Drawing2D.CompositingMode]::SourceCopy
                 $graphics.InterpolationMode = [Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
@@ -207,6 +237,7 @@ function Get-BetterIconBytes {
                 $height = [Math]::Max(1, [int][Math]::Round($source.Height * $scale))
                 $rect = [Drawing.Rectangle]::new([int](($size-$width)/2), [int](($size-$height)/2), $width, $height)
                 $graphics.DrawImage($source, $rect, 0, 0, $source.Width, $source.Height, [Drawing.GraphicsUnit]::Pixel, $attributes)
+                }
                 # Uncompressed 32-bit DIB frames work with both Explorer and the
                 # .NET Framework tray UI, including very small/flat-color artwork.
                 $dib = [IO.BinaryWriter]::new($stream)
@@ -231,7 +262,7 @@ function Get-BetterIconBytes {
             finally { $attributes.Dispose(); $stream.Dispose(); $graphics.Dispose(); $bitmap.Dispose() }
         }
     }
-    finally { $source.Dispose() }
+    finally { if ($null -ne $source) { $source.Dispose() } }
     $output = [IO.MemoryStream]::new()
     $writer = [IO.BinaryWriter]::new($output)
     try {

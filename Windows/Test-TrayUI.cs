@@ -17,7 +17,12 @@ static class TrayTests
     [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr window, int index);
     [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(Point point);
+    [DllImport("user32.dll")] static extern int GetWindowRgn(IntPtr window, IntPtr region);
+    [DllImport("gdi32.dll")] static extern IntPtr CreateRectRgn(int left, int top, int right, int bottom);
+    [DllImport("gdi32.dll")] static extern bool PtInRegion(IntPtr region, int x, int y);
+    [DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr value);
     [DllImport("comctl32.dll")] static extern bool ImageList_GetIconSize(IntPtr list, out int width, out int height);
+    [DllImport("comctl32.dll")] static extern int ImageList_GetImageCount(IntPtr list);
     [DllImport("comctl32.dll")] static extern bool ImageList_Draw(IntPtr list, int index, IntPtr dc, int x, int y, uint flags);
     static readonly List<object> checks = new List<object>();
     static void Check(bool ok, string name)
@@ -34,17 +39,50 @@ static class TrayTests
         Check(form.ClientSize == form.Size, "The resize frame adds no nonclient inset or title bar");
         int lastX = form.ClientSize.Width - 2, lastY = form.ClientSize.Height - 2;
         Point[] points = { new Point(1, lastY / 2), new Point(lastX, lastY / 2), new Point(lastX / 2, 1), new Point(lastX / 2, lastY),
-            new Point(1, 1), new Point(lastX, 1), new Point(1, lastY), new Point(lastX, lastY) };
+            new Point(14, 14), new Point(lastX - 13, 14), new Point(14, lastY - 13), new Point(lastX - 13, lastY - 13) };
         int[] expected = { 10, 11, 12, 15, 13, 14, 16, 17 };
         for (int i = 0; i < points.Length; i++) {
             Point screen = form.PointToScreen(points[i]);
             IntPtr position = new IntPtr(unchecked((screen.X & 0xFFFF) | ((screen.Y & 0xFFFF) << 16)));
-            Check(SendMessage(form.Handle, 0x0084, IntPtr.Zero, position).ToInt32() == expected[i] && WindowFromPoint(screen) == form.Handle,
-                "Native resize direction " + expected[i] + " remains reachable outside child controls");
+            int actual = SendMessage(form.Handle, 0x0084, IntPtr.Zero, position).ToInt32(); IntPtr window = WindowFromPoint(screen);
+            Check(actual == expected[i] && window == form.Handle,
+                "Native resize direction " + expected[i] + " remains reachable along the outline and through child controls (hit=" + actual + ", window=" + window + ", form=" + form.Handle + ", point=" + screen + ", bounds=" + form.Bounds + ", region=" + (form.Region != null && form.Region.IsVisible(points[i])) + ")");
         }
         Point center = form.PointToScreen(new Point(form.ClientSize.Width / 2, form.ClientSize.Height / 2));
         Check(SendMessage(form.Handle, 0x0084, IntPtr.Zero, new IntPtr(unchecked((center.X & 0xFFFF) | ((center.Y & 0xFFFF) << 16)))).ToInt32() == 1,
             "The popup interior stays client content rather than a draggable title bar");
+    }
+    static bool NativeRoundedOutline(LauncherForm form)
+    {
+        IntPtr region = CreateRectRgn(0, 0, 0, 0);
+        try {
+            return GetWindowRgn(form.Handle, region) == 3 && !PtInRegion(region, 0, 0) && !PtInRegion(region, 8, 8) && PtInRegion(region, 16, 6)
+                && PtInRegion(region, 32, 1) && PtInRegion(region, form.Width / 2, form.Height / 2)
+                && !PtInRegion(region, form.Width - 1, 0) && !PtInRegion(region, 0, form.Height - 1) && !PtInRegion(region, form.Width - 1, form.Height - 1)
+                && PtInRegion(region, form.Width - 17, form.Height - 7);
+        }
+        finally { DeleteObject(region); }
+    }
+    static void CheckRoundedWindow(LauncherForm form)
+    {
+        BindingFlags instance = BindingFlags.Instance | BindingFlags.NonPublic;
+        TabControl pages = (TabControl)typeof(LauncherForm).GetField("pages", instance).GetValue(form);
+        Size previous = form.Size;
+        Check(NativeRoundedOutline(form), "The real native outline has the selected 32-pixel radius and transparent outer corners");
+        foreach (Size size in new[] { new Size(790, 570), new Size(1100, 800) }) {
+            form.Size = size; Application.DoEvents();
+            Check(NativeRoundedOutline(form), "Resizing to " + size + " rebuilds all rounded edges without leaving the old outline");
+        }
+        form.Size = previous;
+        for (int page = 0; page < 2; page++) {
+            pages.SelectedIndex = page; Application.DoEvents();
+            Point corner = form.PointToScreen(new Point(14, form.Height - 15));
+            Check(WindowFromPoint(corner) == form.Handle, "The " + (page == 0 ? "Launcher" : "Settings") + " corner passes child-control hits to native resizing");
+        }
+        typeof(Control).GetMethod("RecreateHandle", instance).Invoke(pages, null);
+        Point top = form.PointToScreen(new Point(14, 14));
+        Check(NativeRoundedOutline(form) && WindowFromPoint(top) == form.Handle, "Recreated child handles retain the rounded-corner resize target");
+        pages.SelectedIndex = 0;
     }
     static IEnumerable<Control> Descendants(Control parent)
     {
@@ -149,6 +187,13 @@ static class TrayTests
                 if (first.GetPixel(x, y) != second.GetPixel(x, y)) return false;
         return true;
     }
+    static IntPtr GridImages(ListView grid) { return SendMessage(grid.Handle, 0x1002, IntPtr.Zero, IntPtr.Zero); }
+    static Size GridImageSize(ListView grid)
+    {
+        int width, height;
+        if (!ImageList_GetIconSize(GridImages(grid), out width, out height)) throw new Exception("No native icon list attached.");
+        return new Size(width, height);
+    }
     static Bitmap GridImage(ListView grid, int index)
     {
         IntPtr list = SendMessage(grid.Handle, 0x1002, IntPtr.Zero, IntPtr.Zero);
@@ -216,8 +261,8 @@ static class TrayTests
             "Larger previews grow within the scrolling Settings layout without overlapping controls");
         themes.SelectedIndex = 0;
         LoadingTests.Wait(form);
-        Check(slider.Maximum == 128 && slider.Value == 128 && json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).IconSize == 128 && (IntPtr)typeof(IconGridView).GetField("largeArtwork", instance).GetValue(launcher) == IntPtr.Zero,
-            "Switching to smaller artwork adjusts the range and releases the oversized native list");
+        Check(slider.Maximum == 128 && slider.Value == 128 && json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).IconSize == 128 && GridImageSize(launcher) == new Size(128, 128) && GridImageSize(preview) == new Size(128, 128),
+            "Switching to smaller artwork adjusts the range and replaces oversized artwork in both native grids");
         typeof(LauncherForm).GetMethod("ReloadLibrary", instance).Invoke(form, new object[] { high.Id }); slider.Value = 512;
     }
     static void CheckLargeStartup(string root, string source)
@@ -695,7 +740,15 @@ static class TrayTests
                         mouseUp.Invoke(tray, new object[] { new MouseEventArgs(MouseButtons.Right, 1, 0, 0, 0) });
                         Check(!form.Visible, "Right tray release does not toggle the popup");
                         form.ShowManager(); Check(form.Visible, "Explicit open reopens the existing popup");
-                        CheckWindowResizing(form);
+                        // Desktop-wide hit tests need an unobscured test window,
+                        // independent of other apps or the current cursor monitor.
+                        bool wasTopMost = form.TopMost; Point previousLocation = form.Location;
+                        try {
+                            form.Location = Screen.PrimaryScreen.WorkingArea.Location + new Size(60, 60);
+                            form.TopMost = true; form.BringToFront(); Application.DoEvents();
+                            CheckWindowResizing(form); CheckRoundedWindow(form);
+                        }
+                        finally { form.TopMost = wasTopMost; form.Location = previousLocation; }
                         form.Hide(); Check(!form.Visible, "Hide retains the launcher for another tray click");
                         Point center = new Point(Screen.PrimaryScreen.WorkingArea.Left + Screen.PrimaryScreen.WorkingArea.Width / 2, Screen.PrimaryScreen.WorkingArea.Top + Screen.PrimaryScreen.WorkingArea.Height / 2);
                         form.ShowAtCursor(center);
@@ -720,18 +773,16 @@ static class TrayTests
                         Check(pages.TabPages.Count == 2 && pages.TabPages[0].Text == "Launcher" && pages.TabPages[1].Text == "Settings", "Launcher and Settings occupy the left and right tabs");
                         Check(pages.TabPages[0].Controls.Count == 2 && !filter.Visible, "The populated Launcher page contains only the app grid");
                         TrackBar slider = (TrackBar)typeof(LauncherForm).GetField("iconSizeSlider", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
-                        ImageList launcherImages = (ImageList)typeof(LauncherForm).GetField("pictures", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
                         List<Bitmap> cached = (List<Bitmap>)typeof(LauncherForm).GetField("appArtwork", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
                         ListView previewGrid = (ListView)typeof(LauncherForm).GetField("packPreview", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
-                        ImageList previewImages = (ImageList)typeof(LauncherForm).GetField("packPictures", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
                         List<Bitmap> previewCached = (List<Bitmap>)typeof(LauncherForm).GetField("packArtwork", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
-                        Check(slider.Value == 72 && launcherImages.ImageSize == new Size(72, 72) && previewImages.ImageSize == launcherImages.ImageSize, "Hidden startup restores the same saved icon size in both grids and the Settings slider");
+                        Check(slider.Value == 72 && GridImageSize(list) == new Size(72, 72) && GridImageSize(previewGrid) == GridImageSize(list), "Hidden startup restores the same saved icon size in both grids and the Settings slider");
                         Rectangle firstIcon = list.GetItemRect(0, ItemBoundsPortion.Icon), firstLabel = list.GetItemRect(0, ItemBoundsPortion.Label);
                         Check(list.View == View.LargeIcon && firstLabel.Top >= firstIcon.Bottom && list.Items[1].Bounds.Left > list.Items[0].Bounds.Left && list.Items[1].Bounds.Top == list.Items[0].Bounds.Top, "Native launcher lays out a compact row of icons with names underneath");
                         form.ShowManager(); pages.Focus();
                         type("f");
                         Check(list.Items.Count == 2 && list.ContainsFocus && list.SelectedItems.Count == 1, "Typing from the launcher tab filters and focuses the highlighted result (matches=" + list.Items.Count + ", focused=" + list.ContainsFocus + ", visible=" + form.Visible + ")");
-                        int artworkCount = ((ImageList)typeof(LauncherForm).GetField("pictures", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form)).Images.Count;
+                        IntPtr typingImages = GridImages(list); int artworkCount = ImageList_GetImageCount(typingImages);
                         type("iL");
                         Check(list.Items.Count == 1 && list.Items[0].Text == "FilmCraft" && list.AccessibleDescription.Contains("fiL"), "Successive characters narrow results and expose the query accessibly");
                         key(Keys.Back);
@@ -748,7 +799,7 @@ static class TrayTests
                         string[] launchReceipts = new string[0];
                         for (int retry = 0; retry < 100 && launchReceipts.Length == 0; retry++) { Thread.Sleep(20); launchReceipts = Directory.GetFiles(root, "launches.txt.*.launched"); }
                         Check(launchReceipts.Length == 1 && File.ReadAllText(launchReceipts[0]) == "PhotoCraft", "Enter launches the highlighted original fixture shortcut exactly once");
-                        Check(((ImageList)typeof(LauncherForm).GetField("pictures", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form)).Images.Count == artworkCount, "Typing reuses the loaded artwork instead of rebuilding image lists");
+                        Check(GridImages(list) == typingImages && ImageList_GetImageCount(GridImages(list)) == artworkCount, "Typing reuses the loaded artwork instead of rebuilding image lists");
                         form.Hide(); form.ShowManager();
                         Check(list.Items.Count == 3 && !filter.Visible, "Reopening starts with all apps and no stale filter");
                         pages.SelectedIndex = 1; type("fil");
@@ -756,19 +807,19 @@ static class TrayTests
                         Bitmap[] sources = cached.ToArray(), previewSources = previewCached.ToArray();
                         previewGrid.Items[1].Selected = true;
                         foreach (int size in new[] { 24, 128, 32, 96 }) slider.Value = size;
-                        Check(launcherImages.ImageSize == new Size(96, 96) && launcherImages.Images.Count == 3 && cached.SequenceEqual(sources) && list.GetItemRect(0, ItemBoundsPortion.Label).Top >= list.GetItemRect(0, ItemBoundsPortion.Icon).Bottom, "Resizing through compact sizes retains cached launcher artwork and labels below icons");
-                        Check(previewImages.ImageSize == launcherImages.ImageSize && previewImages.Images.Count == previewGrid.Items.Count && previewCached.SequenceEqual(previewSources) && previewGrid.SelectedItems.Count == 1 && previewGrid.SelectedItems[0].Index == 1 && previewGrid.GetItemRect(0, ItemBoundsPortion.Label).Top >= previewGrid.GetItemRect(0, ItemBoundsPortion.Icon).Bottom, "The Settings preview resizes immediately from cached artwork while retaining its selection and labels below icons");
+                        Check(GridImageSize(list) == new Size(96, 96) && ImageList_GetImageCount(GridImages(list)) == 3 && cached.SequenceEqual(sources) && list.GetItemRect(0, ItemBoundsPortion.Label).Top >= list.GetItemRect(0, ItemBoundsPortion.Icon).Bottom, "Resizing through compact sizes retains cached launcher artwork and labels below icons");
+                        Check(GridImageSize(previewGrid) == GridImageSize(list) && ImageList_GetImageCount(GridImages(previewGrid)) == previewGrid.Items.Count && previewCached.SequenceEqual(previewSources) && previewGrid.SelectedItems.Count == 1 && previewGrid.SelectedItems[0].Index == 1 && previewGrid.GetItemRect(0, ItemBoundsPortion.Label).Top >= previewGrid.GetItemRect(0, ItemBoundsPortion.Icon).Bottom, "The Settings preview resizes immediately from cached artwork while retaining its selection and labels below icons");
                         pages.SelectedIndex = 0; type("f"); list.Items[0].Selected = false; list.Items[1].Selected = true;
                         pages.SelectedIndex = 1; slider.Value = 64;
                         Check(list.Items.Count == 2 && list.AccessibleDescription.Contains("Filter: f.") && list.SelectedItems.Count == 1 && list.SelectedItems[0].Text == "FilmCraft", "Icon resizing preserves the active filter and selected app");
                         Preferences sized = json.Deserialize<Preferences>(File.ReadAllText(preferencesPath));
                         Check(sized.IconSize == 64 && sized.Theme == "Craft-Icons-Zach/Satin" && sized.Scope == "CurrentUser" && !sized.Hotkey.Enabled, "Icon size persists without changing theme, scope, or hotkey preferences");
                         ((Button)typeof(LauncherForm).GetField("resetIconSize", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form)).PerformClick();
-                        Check(launcherImages.ImageSize == new Size(48, 48) && previewImages.ImageSize == launcherImages.ImageSize && list.Items[1].Bounds.Left - list.Items[0].Bounds.Left < 200 && json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).IconSize == 48, "Reset restores and saves compact 48-pixel icons in both grids");
+                        Check(GridImageSize(list) == new Size(48, 48) && GridImageSize(previewGrid) == GridImageSize(list) && list.Items[1].Bounds.Left - list.Items[0].Bounds.Left < 200 && json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).IconSize == 48, "Reset restores and saves compact 48-pixel icons in both grids");
                         pages.SelectedIndex = 0;
                         Action<int, bool> wheel = delegate(int delta, bool control) { SendMessage(list.Handle, 0x020A, new IntPtr((delta << 16) | (control ? 8 : 0)), IntPtr.Zero); };
                         wheel(120, true);
-                        Check(slider.Value == 56 && launcherImages.ImageSize == new Size(56, 56) && previewImages.ImageSize == launcherImages.ImageSize && json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).IconSize == 56 && list.SelectedItems[0].Text == "FilmCraft" && list.AccessibleDescription.Contains("Filter: f."), "Native Ctrl+wheel enlarges both grids, updates the slider, saves the size, and retains filter/selection");
+                        Check(slider.Value == 56 && GridImageSize(list) == new Size(56, 56) && GridImageSize(previewGrid) == GridImageSize(list) && json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).IconSize == 56 && list.SelectedItems[0].Text == "FilmCraft" && list.AccessibleDescription.Contains("Filter: f."), "Native Ctrl+wheel enlarges both grids, updates the slider, saves the size, and retains filter/selection");
                         wheel(-240, true); wheel(60, true);
                         Check(slider.Value == 40, "Ctrl+wheel zooms out and waits for a complete fine-resolution wheel step");
                         wheel(60, true); wheel(120, false);
