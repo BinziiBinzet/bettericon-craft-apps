@@ -1,5 +1,26 @@
 # Windows validation
 
+## 1.17.0 shortcut locations chosen per operation - 2026-11-17
+
+All 21 focused native checks passed for the new location flow. Settings has no
+location dropdown and fits at 790x570 and 900x690. Settings Apply/Restore, tray
+Restore and applying the virtual default each open a fresh Current user / All
+users prompt. Both prompts state that All users requires administrator privileges,
+fit their native controls at the shipping display DPI, and pause parent/tray input.
+
+Canceling a location choice leaves preferences, shortcuts and backup state
+unchanged. A current-user Apply/Restore round trip restores both disposable
+shortcuts byte-for-byte even with an opposite legacy scope preference. All-users
+Apply/Restore reviews show shared locations and administrator requirements;
+canceling either review leaves the prior installation intact and avoids elevation.
+The selected location is local to that operation. Existing scope preferences are
+retained for compatibility. The backend's scope, review and elevation protections
+are unchanged. One-app restoration continues to filter to the clicked application.
+
+The user requested skipping Computer Use for this update. Verification uses local
+native event/worker tests and disposable shortcuts. No real shared shortcut was
+modified and no new UAC interaction was exercised during these checks.
+
 ## 1.16.0 SVG packs, rounded resizing and clean icon edges - 2026-11-17
 
 All 308 local native checks passed from source. New coverage includes SVG-only

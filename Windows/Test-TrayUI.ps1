@@ -27,7 +27,7 @@ try {
 }
 finally { [Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell) | Out-Null }
 $test = Join-Path $output 'TrayTests.exe'
-& $compiler /nologo /target:exe /warnaserror+ "/out:$test" "/win32manifest:$(Join-Path $PSScriptRoot 'BetterIcon.Tray.manifest')" /reference:System.dll /reference:System.Core.dll /reference:System.Drawing.dll /reference:System.Windows.Forms.dll /reference:System.Web.Extensions.dll /reference:System.IO.Compression.dll /reference:System.IO.Compression.FileSystem.dll "/reference:$($build.Executable)" (Join-Path $PSScriptRoot 'Test-TrayUI.cs') (Join-Path $PSScriptRoot 'Test-Packs.cs') (Join-Path $PSScriptRoot 'Test-Svg.cs') (Join-Path $PSScriptRoot 'Test-IconRendering.cs') (Join-Path $PSScriptRoot 'Test-Appearance.cs') (Join-Path $PSScriptRoot 'Test-Loading.cs')
+& $compiler /nologo /target:exe /warnaserror+ "/out:$test" "/win32manifest:$(Join-Path $PSScriptRoot 'BetterIcon.Tray.manifest')" /reference:System.dll /reference:System.Core.dll /reference:System.Drawing.dll /reference:System.Windows.Forms.dll /reference:System.Web.Extensions.dll /reference:System.IO.Compression.dll /reference:System.IO.Compression.FileSystem.dll "/reference:$($build.Executable)" (Join-Path $PSScriptRoot 'Test-TrayUI.cs') (Join-Path $PSScriptRoot 'Test-Packs.cs') (Join-Path $PSScriptRoot 'Test-Shortcuts.cs') (Join-Path $PSScriptRoot 'Test-Svg.cs') (Join-Path $PSScriptRoot 'Test-IconRendering.cs') (Join-Path $PSScriptRoot 'Test-Appearance.cs') (Join-Path $PSScriptRoot 'Test-Loading.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Native tray test compilation failed.' }
 & $test $output $PSScriptRoot
 if ($LASTEXITCODE -ne 0) { throw "Native tray tests failed. See $output\results.json" }

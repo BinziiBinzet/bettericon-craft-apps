@@ -226,15 +226,12 @@ namespace BetterIcon.Tray
             keyboard.Controls.Add(subtitle, 0, 0); keyboard.Controls.Add(settings, 1, 0); SettingsRow(launcher, keyboard);
 
             TableLayoutPanel shortcuts = SettingsSection("ShortcutsSection", "Windows shortcuts");
-            scopes.DropDownStyle = ComboBoxStyle.DropDownList; scopes.Dock = DockStyle.Top; scopes.Margin = new Padding(0, 0, 0, 10); scopes.AccessibleName = "Shortcut locations";
-            scopes.Items.AddRange(new object[] { "My Desktop and Start menu", "Shared shortcuts (administrator)" }); scopes.SelectedIndex = preferences.Scope == "AllUsers" ? 1 : 0; scopes.SelectedIndexChanged += delegate { SavePreferences(); };
-            SettingsRow(shortcuts, scopes);
             TableLayoutPanel applyRow = SettingsTable(2);
             applyRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50)); applyRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
             apply.Text = "Apply icons..."; apply.Tag = "PrimaryAction"; SettingsButton(apply); apply.BackColor = accent; apply.ForeColor = Color.White; apply.FlatStyle = FlatStyle.Flat; apply.Click += async delegate { await ApplyTheme(); };
             restore.Text = "Restore all defaults..."; SettingsButton(restore); restore.Click += async delegate { await RestoreIcons(); };
             applyRow.Controls.Add(apply, 0, 0); applyRow.Controls.Add(restore, 1, 0); SettingsRow(shortcuts, applyRow);
-            previewLabel.Text = "Changes are reviewed before they are applied."; previewLabel.AutoSize = true; previewLabel.Dock = DockStyle.Top; previewLabel.Margin = new Padding(0, 8, 0, 0); SettingsRow(shortcuts, previewLabel);
+            previewLabel.Text = "Choose locations when applying or restoring icons."; previewLabel.AutoSize = true; previewLabel.Dock = DockStyle.Top; previewLabel.Margin = new Padding(0, 8, 0, 0); SettingsRow(shortcuts, previewLabel);
 
             TableLayoutPanel footer = SettingsTable(3); footer.Padding = new Padding(16, 8, 16, 12);
             footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));

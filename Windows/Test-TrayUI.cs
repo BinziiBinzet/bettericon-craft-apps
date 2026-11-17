@@ -15,6 +15,8 @@ using BetterIcon.Tray;
 static class TrayTests
 {
     [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")] static extern bool GetKeyboardState(byte[] state);
+    [DllImport("user32.dll")] static extern bool SetKeyboardState(byte[] state);
     [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr window, int index);
     [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(Point point);
     [DllImport("user32.dll")] static extern int GetWindowRgn(IntPtr window, IntPtr region);
@@ -25,6 +27,19 @@ static class TrayTests
     [DllImport("comctl32.dll")] static extern int ImageList_GetImageCount(IntPtr list);
     [DllImport("comctl32.dll")] static extern bool ImageList_Draw(IntPtr list, int index, IntPtr dc, int x, int y, uint flags);
     static readonly List<object> checks = new List<object>();
+    static void PlainText(LauncherForm form, string text)
+    {
+        // Reflected character events represent plain typing. Isolate them from
+        // stale modifier state in this test thread when another app takes focus.
+        // This changes no global state and injects no keyboard input.
+        byte[] previous = new byte[256];
+        if (!GetKeyboardState(previous)) throw new Exception("Cannot read the test thread's keyboard state.");
+        byte[] plain = (byte[])previous.Clone();
+        foreach (int key in new[] { 0x11, 0x12, 0xA2, 0xA3, 0xA4, 0xA5 }) plain[key] = 0;
+        if (!SetKeyboardState(plain)) throw new Exception("Cannot initialize the test thread's modifiers.");
+        try { foreach (char character in text) typeof(LauncherForm).GetMethod("OnKeyPress", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(form, new object[] { new KeyPressEventArgs(character) }); }
+        finally { SetKeyboardState(previous); }
+    }
     static void Check(bool ok, string name)
     {
         checks.Add(new { Test = name, Passed = ok });
@@ -313,7 +328,7 @@ static class TrayTests
         Check(!json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).ShowAppNames, "The icon-only choice is saved for subsequent launches");
         form.ShowManager(); pages.SelectedIndex = 0;
         string query = titles[0].Substring(0, Math.Min(2, titles[0].Length));
-        foreach (char character in query) typeof(LauncherForm).GetMethod("OnKeyPress", instance).Invoke(form, new object[] { new KeyPressEventArgs(character) });
+        PlainText(form, query);
         Check(launcher.Items.Count > 0 && launcher.Items.Cast<ListViewItem>().All(item => item.Text.StartsWith(query, StringComparison.OrdinalIgnoreCase)), "Typing still filters real app names when their visual labels are hidden");
         typeof(LauncherForm).GetMethod("OnKeyDown", instance).Invoke(form, new object[] { new KeyEventArgs(Keys.Escape) });
         ListViewItem first = launcher.Items[0];
@@ -340,7 +355,6 @@ static class TrayTests
         Action<string, object[]> call = (name, arguments) => typeof(LauncherForm).GetMethod(name, instance).Invoke(form, arguments);
         Catalog catalog = (Catalog)field("catalog"); AppEntry[] previousApps = catalog.Apps;
         Preferences preferences = (Preferences)field("preferences"); string[] defaults = preferences.DefaultShortcuts;
-        ComboBox scopes = (ComboBox)field("scopes"); int previousScope = scopes.SelectedIndex;
         string theme = ((ThemeEntry)((ComboBox)field("themes")).SelectedItem).Id;
         TrackBar slider = (TrackBar)field("iconSizeSlider"); int previousSize = slider.Value;
         string shortcut = Path.Combine(root, "PhotoCraft.lnk"); byte[] bytes = File.ReadAllBytes(shortcut);
@@ -354,18 +368,18 @@ static class TrayTests
             ThemeEntry custom = library.Save("Launcher preview fixture", new Dictionary<string, string> { { "ArtCraftLauncher", Path.Combine(root, "current-blue.png") } }, null);
             call("ReloadLibrary", new object[] { custom.Id });
             Check(artwork[0].GetPixel(64, 64).ToArgb() == Color.Blue.ToArgb(), "A custom launcher pack can preview artwork before any shortcut change");
-            pages.SelectedIndex = 0; scopes.SelectedIndex = 1;
+            pages.SelectedIndex = 0;
             ListView grid = (ListView)field("apps"); RequestIconMenu(grid, grid.Items[0]);
             ToolStripMenuItem restore = (ToolStripMenuItem)field("restoreIconDefault");
             Check(restore.Enabled && ((AppEntry)field("iconMenuTarget")).Scope == "CurrentUser", "The launcher default action is available without a backup and targets its own locations");
-            restore.PerformClick(); ((ContextMenuStrip)field("iconMenu")).Close();
+            ShortcutScopeTests.SelectScope(() => restore.PerformClick(), "CurrentUser"); ((ContextMenuStrip)field("iconMenu")).Close();
             Check(artwork[0].GetPixel(64, 64).ToArgb() == Color.Red.ToArgb() && preferences.DefaultShortcuts.Contains(shortcut) && File.ReadAllBytes(shortcut).SequenceEqual(bytes) && ((Label)field("status")).Text.Contains("already at the default"), "Restoring an already-default launcher resets its preview and reports success without rewriting the shortcut");
-            pages.SelectedIndex = 1; scopes.SelectedIndex = 0;
+            pages.SelectedIndex = 1;
             ListView preview = (ListView)field("packPreview"); RequestIconMenu(preview, preview.Items[0]);
             Check(restore.Enabled, "The Settings context menu also allows selecting a launcher's existing default without a backup");
         }
         finally {
-            ((ContextMenuStrip)field("iconMenu")).Close(); catalog.Apps = previousApps; preferences.DefaultShortcuts = defaults; scopes.SelectedIndex = previousScope;
+            ((ContextMenuStrip)field("iconMenu")).Close(); catalog.Apps = previousApps; preferences.DefaultShortcuts = defaults;
             call("ReloadLibrary", new object[] { theme }); slider.Value = Math.Min(previousSize, slider.Maximum);
         }
     }
@@ -381,17 +395,17 @@ static class TrayTests
         BindingFlags instance = BindingFlags.Instance | BindingFlags.NonPublic;
         Func<string, object> field = name => typeof(LauncherForm).GetField(name, instance).GetValue(form);
         ListView launcher = (ListView)field("apps"), preview = (ListView)field("packPreview");
-        ComboBox scopes = (ComboBox)field("scopes"), themes = (ComboBox)field("themes");
+        ComboBox themes = (ComboBox)field("themes");
         ContextMenuStrip menu = (ContextMenuStrip)field("iconMenu");
         ToolStripMenuItem restore = (ToolStripMenuItem)field("restoreIconDefault");
         ToolStripMenuItem choose = (ToolStripMenuItem)field("chooseAppIcon");
         TabControl pages = (TabControl)field("pages");
-        pages.SelectedIndex = 0; scopes.SelectedIndex = 0;
+        pages.SelectedIndex = 0;
         launcher.Items[0].Selected = true;
         RequestIconMenu(launcher, launcher.Items[3]);
         AppEntry target = (AppEntry)field("iconMenuTarget");
         Check(menu.Visible && restore.Enabled && target.Application == "FigCraft" && target.Scope == "AllUsers" && launcher.Items[3].Selected,
-            "Right-click selects the clicked launcher app and its own shortcut scope instead of the previous selection or Settings scope");
+            "Right-click selects the clicked launcher app before asking where to restore it");
         string filter = (string)field("filterText");
         typeof(LauncherForm).GetMethod("OnKeyPress", instance).Invoke(form, new object[] { new KeyPressEventArgs('p') });
         KeyEventArgs escape = new KeyEventArgs(Keys.Escape);
@@ -416,20 +430,17 @@ static class TrayTests
         RequestIconMenu(launcher, launcher.Items[0]);
         Check(!menu.Visible && field("iconMenuTarget") == null, "Busy operations cannot open a new icon restoration menu");
         typeof(LauncherForm).GetMethod("SetBusy", instance).Invoke(form, new object[] { false, null });
-        pages.SelectedIndex = 1; scopes.SelectedIndex = 1;
+        pages.SelectedIndex = 1;
         RequestIconMenu(preview, preview.Items.Cast<ListViewItem>().First(item => item.Text == "FigCraft"));
-        Check(menu.Visible && restore.Enabled && ((AppEntry)field("iconMenuTarget")).Scope == "AllUsers",
-            "Settings icon previews restore the clicked canonical app in the selected locations");
+        Check(menu.Visible && restore.Enabled && ((AppEntry)field("iconMenuTarget")).Application == "FigCraft",
+            "Settings previews find shared restore backups before the operation's location choice");
         escape = new KeyEventArgs(Keys.Escape);
         typeof(LauncherForm).GetMethod("OnKeyDown", instance).Invoke(form, new object[] { escape });
         Check(!escape.Handled && pages.SelectedIndex == 1, "Escape in the icon menu stays in Settings");
         menu.Close();
         RequestIconMenu(preview, preview.Items.Cast<ListViewItem>().First(item => item.Text == "PhotoCraft"));
-        Check(menu.Visible && !restore.Enabled, "A Settings preview cannot offer restoration from another shortcut scope");
-        menu.Close(); scopes.SelectedIndex = 0;
-        RequestIconMenu(preview, preview.Items.Cast<ListViewItem>().First(item => item.Text == "PhotoCraft"));
-        Check(menu.Visible && restore.Enabled && ((AppEntry)field("iconMenuTarget")).Scope == "CurrentUser",
-            "Changing locations makes the matching preview restoration available");
+        Check(menu.Visible && restore.Enabled && ((AppEntry)field("iconMenuTarget")).Application == "PhotoCraft",
+            "Settings previews find current-user restore backups without a persistent location selector");
         menu.Close(); themes.SelectedIndex = 0; LoadingTests.Wait(form);
         RequestIconMenu(preview, preview.Items.Cast<ListViewItem>().First(item => item.Text == "PhotoCraft"));
         Check(menu.Visible && restore.Enabled && ((AppEntry)field("iconMenuTarget")).Application == "PhotoCraft",
@@ -443,7 +454,7 @@ static class TrayTests
         BindingFlags instance = BindingFlags.Instance | BindingFlags.NonPublic;
         Func<string, object> field = name => typeof(LauncherForm).GetField(name, instance).GetValue(form);
         Action<string, object[]> call = (name, arguments) => typeof(LauncherForm).GetMethod(name, instance).Invoke(form, arguments);
-        ComboBox themes = (ComboBox)field("themes"), scopes = (ComboBox)field("scopes");
+        ComboBox themes = (ComboBox)field("themes");
         Button apply = (Button)field("apply");
         TabControl pages = (TabControl)field("pages");
         Catalog catalog = (Catalog)field("catalog");
@@ -470,7 +481,6 @@ static class TrayTests
             new AppEntry { Application = "FigCraft", Name = "Shared drawing workspace", Shortcut = fig, Scope = "AllUsers", IconPath = current, OriginalIconPath = original, RestoreAvailable = true }
         };
         pages.SelectedIndex = 1;
-        scopes.SelectedIndex = 0;
         call("ReloadLibrary", new object[] { ThemeEntry.DefaultThemeId });
         Check(((ThemeEntry)themes.Items[0]).IsDefault && ((ThemeEntry)themes.Items[0]).Id == ThemeEntry.DefaultThemeId && themes.SelectedIndex == 0,
             "ArtCraft default is the first selectable pack and uses a stable identity");
@@ -614,6 +624,12 @@ static class TrayTests
                         ((ToolStripMenuItem)field("restoreIconDefault")).PerformClick();
                     }
                     else if (phase == 1) {
+                        ShortcutScopeDialog scope = Application.OpenForms.OfType<ShortcutScopeDialog>().FirstOrDefault();
+                        if (scope != null) {
+                            Check(scope.Text == "Restore icon locations", "Right-click restoration asks for current user or all users before reviewing the clicked app");
+                            scope.Controls.Find("CurrentUserChoice", true).OfType<Button>().Single().PerformClick();
+                            return;
+                        }
                         Form review = Application.OpenForms.Cast<Form>().FirstOrDefault(dialog => dialog.Text == "Review restoration");
                         if (review == null) return;
                         ListView rows = review.Controls[0].Controls.OfType<ListView>().Single();
@@ -635,7 +651,7 @@ static class TrayTests
                             "Right-click restore returns only the selected app to its exact original bytes");
                         Check(!updated.Apps.Single(app => app.Application == "PhotoCraft").RestoreAvailable && updated.Apps.Single(app => app.Application == "FilmCraft").RestoreAvailable
                             && preferences.DefaultShortcuts.SequenceEqual(new[] { photo }) && preferences.Scope == "AllUsers",
-                            "The completed context restore refreshes availability and remembers the default without changing Settings locations or other backups");
+                            "The completed context restore remembers the chosen app's default while preserving legacy preferences and other backups");
                         timer.Stop(); stop.Set();
                     }
                 }
@@ -767,7 +783,7 @@ static class TrayTests
                         Label filter = (Label)typeof(LauncherForm).GetField("filterHint", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
                         MethodInfo character = typeof(LauncherForm).GetMethod("OnKeyPress", BindingFlags.Instance | BindingFlags.NonPublic);
                         MethodInfo keyDown = typeof(LauncherForm).GetMethod("OnKeyDown", BindingFlags.Instance | BindingFlags.NonPublic);
-                        Action<string> type = delegate(string value) { foreach (char c in value) character.Invoke(form, new object[] { new KeyPressEventArgs(c) }); };
+                        Action<string> type = value => PlainText(form, value);
                         Action<Keys> key = delegate(Keys value) { keyDown.Invoke(form, new object[] { new KeyEventArgs(value) }); };
                         TabControl pages = (TabControl)typeof(LauncherForm).GetField("pages", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
                         Check(pages.TabPages.Count == 2 && pages.TabPages[0].Text == "Launcher" && pages.TabPages[1].Text == "Settings", "Launcher and Settings occupy the left and right tabs");
@@ -905,6 +921,7 @@ static class TrayTests
             }
             CheckLargeStartup(root, args[1]);
             CheckContextRestore(root, args[1], json);
+            ShortcutScopeTests.Run(root, args[1], json, Check);
         }
         catch (Exception error) { failure = error.ToString(); Console.Error.WriteLine(failure); }
         finally { File.WriteAllText(Path.Combine(root, "results.json"), new JavaScriptSerializer().Serialize(new { Passed = failure == null, Error = failure, Checks = checks, ArtifactDirectory = root })); }

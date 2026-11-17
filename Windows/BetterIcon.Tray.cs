@@ -277,7 +277,6 @@ namespace BetterIcon.Tray
         readonly ToolStripMenuItem restoreIconDefault = new ToolStripMenuItem("Restore ArtCraft default...");
         AppEntry iconMenuTarget;
         readonly ComboBox themes = new AppearanceComboBox();
-        readonly ComboBox scopes = new AppearanceComboBox();
         readonly IconGridView apps = new IconGridView();
         readonly List<ListViewItem> appTiles = new List<ListViewItem>();
         readonly List<Bitmap> appArtwork = new List<Bitmap>();
@@ -334,7 +333,7 @@ namespace BetterIcon.Tray
             dismissTimer.Tick += delegate {
                 if (ContainsFocus) { dismissTimer.Stop(); return; }
                 if (fixture != null && fixture.KeepOpenForAutomation) { dismissTimer.Stop(); return; }
-                if (Control.MouseButtons != MouseButtons.None || trayMenu.Visible || iconMenu.Visible || importPackMenu.Visible || managePackMenu.Visible || busy || !Enabled || themes.DroppedDown || scopes.DroppedDown || AppearanceMenuOpen) return;
+                if (Control.MouseButtons != MouseButtons.None || trayMenu.Visible || iconMenu.Visible || importPackMenu.Visible || managePackMenu.Visible || busy || !Enabled || themes.DroppedDown || AppearanceMenuOpen) return;
                 dismissTimer.Stop(); Hide();
             };
             Deactivate += delegate { TraceFixture("Deactivated"); if (Visible) dismissTimer.Start(); };
@@ -407,18 +406,20 @@ namespace BetterIcon.Tray
             chooseAppIcon.Click += async delegate { AppEntry target = iconMenuTarget; if (!busy && target != null) await ChooseAppIcon(target); };
             restoreIconDefault.Click += async delegate {
                 AppEntry target = iconMenuTarget;
-                if (!busy && target != null && target.CanRestoreDefault) await RestoreIcons(target.Application, target.Scope);
+                if (!busy && target != null) await RestoreIcons(target.Application);
             };
             apps.IconMenuRequested += point => ShowIconMenu(apps, point);
             packPreview.IconMenuRequested += point => ShowIconMenu(packPreview, point);
             pages.SelectedIndexChanged += delegate { pages.Invalidate(); if (pages.SelectedTab == launcherPage) apps.Focus(); };
         }
-        string Scope { get { return scopes.SelectedIndex == 1 ? "AllUsers" : "CurrentUser"; } }
+        // Retain old preference values for compatibility; every write operation
+        // gets a fresh scope from its dialog instead of this legacy setting.
+        string Scope { get { return preferences.Scope == "AllUsers" ? "AllUsers" : "CurrentUser"; } }
         ThemeEntry SelectedTheme { get { return themes.SelectedItem as ThemeEntry; } }
         static bool IsAdministrator() { return new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator); }
         void SetBusy(bool value, string message)
         {
-            busy = value; apply.Enabled = restore.Enabled = themes.Enabled = scopes.Enabled = exit.Enabled = settings.Enabled = !value;
+            busy = value; apply.Enabled = restore.Enabled = themes.Enabled = exit.Enabled = settings.Enabled = !value;
             if (value) { iconMenu.Close(); iconMenuTarget = null; chooseAppIcon.Enabled = restoreIconDefault.Enabled = false; }
             iconSizeSlider.Enabled = resetIconSize.Enabled = !value;
             showAppNames.Enabled = !value;
@@ -680,10 +681,10 @@ namespace BetterIcon.Tray
             finally { apps.EndUpdate(); }
         }
         void SetFilter(string value) { filterText = value; FilterApps(); }
-        bool CanFilter { get { return Enabled && !busy && pages.SelectedTab == launcherPage && !themes.DroppedDown && !scopes.DroppedDown && !AppearanceMenuOpen && !trayMenu.Visible && !iconMenu.Visible && !importPackMenu.Visible && !managePackMenu.Visible; } }
+        bool CanFilter { get { return Enabled && !busy && pages.SelectedTab == launcherPage && !themes.DroppedDown && !AppearanceMenuOpen && !trayMenu.Visible && !iconMenu.Visible && !importPackMenu.Visible && !managePackMenu.Visible; } }
         bool HandlePopupKey(Keys key)
         {
-            if (key == Keys.Escape && Enabled && pages.SelectedTab == settingsPage && !themes.DroppedDown && !scopes.DroppedDown && !AppearanceMenuOpen && !iconMenu.Visible && !busy) { pages.SelectedTab = launcherPage; apps.Focus(); return true; }
+            if (key == Keys.Escape && Enabled && pages.SelectedTab == settingsPage && !themes.DroppedDown && !AppearanceMenuOpen && !iconMenu.Visible && !busy) { pages.SelectedTab = launcherPage; apps.Focus(); return true; }
             if (!CanFilter) return false;
             if (key == Keys.Escape) {
                 if (filterText.Length > 0) { SetFilter(""); apps.Focus(); }
@@ -729,18 +730,18 @@ namespace BetterIcon.Tray
             if (target == null) {
                 string application = item.Tag as string;
                 if (String.IsNullOrEmpty(application)) return;
-                target = new AppEntry { Application = application, Scope = Scope,
-                    RestoreAvailable = catalog.Apps.Any(app => app.Application == application && app.Scope == Scope && app.RestoreAvailable),
-                    UsingDefaultIcon = catalog.Apps.Any(app => app.Application == application && app.Scope == Scope && app.UsingDefaultIcon) };
+                AppEntry[] matches = catalog.Apps.Where(app => app.Application == application).ToArray();
+                target = new AppEntry { Application = application,
+                    RestoreAvailable = matches.Any(app => app.RestoreAvailable), UsingDefaultIcon = matches.Any(app => app.UsingDefaultIcon) };
             }
             foreach (ListViewItem selected in grid.SelectedItems.Cast<ListViewItem>().ToArray()) selected.Selected = false;
             item.Selected = item.Focused = true; grid.Focus();
             if (!point.HasValue) item.EnsureVisible();
             iconMenuTarget = target;
             chooseAppIcon.Enabled = PackLibrary.Applications.Contains(target.Application);
-            chooseAppIcon.ToolTipText = "Choose a PNG or ICO for " + target.Application + ". Built-in packs are saved as a personal copy.";
-            restoreIconDefault.Enabled = target.CanRestoreDefault;
-            restoreIconDefault.ToolTipText = target.RestoreAvailable ? "Restore only " + target.Application + " in " + (target.Scope == "AllUsers" ? "shared shortcut locations (administrator)" : "your shortcut locations") + "." : target.UsingDefaultIcon ? "The shortcut already uses its default. Show that icon in Launcher." : "No BetterIcon backup to restore for this app in these locations.";
+            chooseAppIcon.ToolTipText = "Choose an SVG, PNG or ICO for " + target.Application + ". Built-in packs are saved as a personal copy.";
+            restoreIconDefault.Enabled = catalog.Apps.Any(app => app.Application == target.Application && app.CanRestoreDefault);
+            restoreIconDefault.ToolTipText = restoreIconDefault.Enabled ? "Restore only " + target.Application + ". Choose current user or all users before reviewing the shortcuts." : "No BetterIcon backup or existing default to restore for this app.";
             Point anchor = point ?? new Point(item.Bounds.Left + item.Bounds.Width / 2, item.Bounds.Bottom);
             iconMenu.Show(grid, anchor);
         }
@@ -803,13 +804,14 @@ namespace BetterIcon.Tray
         {
             if (busy || SelectedTheme == null) return;
             if (SelectedTheme.IsDefault) { await RestoreIcons(); return; }
-            string theme = SelectedTheme.Id, scope = Scope;
+            string theme = SelectedTheme.Id, scope = ChooseShortcutScope(false);
+            if (scope == null) { status.Text = "Cancelled. No icons changed."; return; }
             bool refresh = false;
             SetBusy(true, "Preparing a preview. No icons changed yet...");
             try {
                 WorkerReply preview = await worker.Run(new WorkerRequest { Action = "Preview", Theme = theme, Scope = scope }, false);
                 int count = preview.Plan.Count(p => p.Status == "Ready");
-                string note = "Apply " + SelectedTheme + " to " + count + " shortcut(s) in " + (fixtureLog != null ? "the test shortcut folders" : scope == "AllUsers" ? "the shared Desktop and Start menu" : "your Desktop and Start menu") + ". Original shortcuts are backed up.\r\n" +
+                string note = "Apply " + SelectedTheme + " to " + count + " shortcut(s) in " + (scope == "AllUsers" ? "the shared Desktop and Start menu" : "your Desktop and Start menu") + (fixtureLog != null ? " (test shortcuts only)" : "") + ". Original shortcuts are backed up.\r\n" +
                     (scope == "AllUsers" ? "Windows will request administrator access. " : "") + "Missing or ambiguous artwork is skipped. Existing taskbar pins may need re-pinning.";
                 if (!Review("Review icon changes", note, preview.Plan.Select(p => new[] { p.Status, p.Shortcut, p.Reason }), count > 0, "Apply theme")) { status.Text = "Cancelled. No icons changed."; return; }
                 status.Text = "Applying theme...";
@@ -839,11 +841,12 @@ namespace BetterIcon.Tray
             await RefreshCatalog();
             status.Text = message;
         }
-        async Task RestoreIcons(string application = null, string scopeOverride = null)
+        async Task RestoreIcons(string application = null)
         {
             if (busy) return;
             bool refresh = false;
-            string scope = scopeOverride ?? Scope;
+            string scope = ChooseShortcutScope(true, application);
+            if (scope == null) { status.Text = "Cancelled. No icons changed."; return; }
             if (application != null && catalog != null) {
                 AppEntry[] matches = catalog.Apps.Where(app => app.Application == application && app.Scope == scope).ToArray();
                 if (!matches.Any(app => app.RestoreAvailable) && matches.Any(app => app.UsingDefaultIcon)) {
@@ -858,7 +861,7 @@ namespace BetterIcon.Tray
             try {
                 WorkerReply preview = await worker.Run(new WorkerRequest { Action = "RestorePreview", Scope = scope, Application = application }, false);
                 if (preview.Results.Length == 0) { status.Text = "No BetterIcon changes to restore" + (application == null ? "" : " for " + application) + " in these locations."; return; }
-                string note = "Restore " + (application == null ? "all original ArtCraft shortcuts" : "only " + application + " shortcuts") + " in " + (fixtureLog != null ? "the test shortcut folders." : scope == "AllUsers" ? "shared locations (administrator access required)." : "your locations.") + "\r\nLater user edits and app updates are preserved. Backups and icon files remain available for recovery.";
+                string note = "Restore " + (application == null ? "all original ArtCraft shortcuts" : "only " + application + " shortcuts") + " in " + (scope == "AllUsers" ? "shared locations (administrator access required)." : "your locations.") + (fixtureLog != null ? " Test shortcuts only." : "") + "\r\nLater user edits and app updates are preserved. Backups and icon files remain available for recovery.";
                 if (!Review("Review restoration", note, preview.Results.Select(r => new[] { r.Status, r.Shortcut, r.Message }), true, "Restore original icons")) { status.Text = "Cancelled. No icons changed."; return; }
                 status.Text = "Restoring original icons...";
                 WorkerReply result = await worker.Run(new WorkerRequest { Action = "Restore", Scope = scope, Application = application, ExpectedStateHash = preview.StateHash }, scope == "AllUsers" && !IsAdministrator());

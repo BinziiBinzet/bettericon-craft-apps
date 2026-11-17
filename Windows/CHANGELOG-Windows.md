@@ -1,5 +1,11 @@
 # Windows installer changelog
 
+## 1.17.0 - 2026-11-17
+
+- Remove the persistent shortcut-location dropdown from Settings. Ask Current user or All users each time Apply or Restore is invoked, including one-app context actions and the tray restore command.
+- Explain that All users requires administrator privileges before previewing or confirming a write. Retain exact shortcut review, backups, restoration checks and elevation only for shared writes.
+- Canceling the choice leaves preferences and shortcuts unchanged. Preserve older scope preferences for compatibility without using them to choose an operation's locations.
+
 ## 1.16.0 - 2026-11-17
 
 - Apply the selected 32-pixel rounded outline to the main popup and update it as the window resizes.
