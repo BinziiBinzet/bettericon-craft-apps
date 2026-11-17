@@ -1,5 +1,10 @@
 # Windows installer changelog
 
+## 1.18.2 - 2026-11-17
+
+- Match the approved mockup with 32-pixel rounded upper tab corners and square lower joins. Keep the tab/page outlines removed, native tab navigation, keyboard focus cues, and window resizing.
+- Match the popup's resize margin to its page surface so rectangular content no longer interrupts the top or bottom window curves. Keep dialog palettes and high-contrast behavior unchanged.
+
 ## 1.18.1 - 2026-11-17
 
 - Remove the light native outlines around the main popup and tab pages. Paint the tab strip in the selected app theme while retaining native tab navigation, accessibility, 32-pixel corners, and edge/corner resizing.

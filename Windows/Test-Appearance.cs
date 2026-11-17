@@ -17,6 +17,10 @@ static class AppearanceTests
     [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll")] static extern bool IsWindowEnabled(IntPtr window);
     [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr window, int attribute, out uint value, int size);
+    [DllImport("user32.dll")] static extern int GetWindowRgn(IntPtr window, IntPtr region);
+    [DllImport("gdi32.dll")] static extern IntPtr CreateRectRgn(int left, int top, int right, int bottom);
+    [DllImport("gdi32.dll")] static extern bool PtInRegion(IntPtr region, int x, int y);
+    [DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr value);
     static readonly BindingFlags instance = BindingFlags.Instance | BindingFlags.NonPublic;
     static object Field(LauncherForm form, string name) { return typeof(LauncherForm).GetField(name, instance).GetValue(form); }
     static void Invoke(LauncherForm form, string name, params object[] args) { typeof(LauncherForm).GetMethod(name, instance).Invoke(form, args); }
@@ -48,6 +52,16 @@ static class AppearanceTests
                 Color actual = bitmap.GetPixel(x, y);
                 return actual.ToArgb() == expected.ToArgb() ? null : "pixel " + x + "," + y + " was " + actual + ", expected " + expected;
             };
+            Func<Color, Color, Color, bool> paletteBlend = (actual, inside, outside) => {
+                int[] a = { actual.R, actual.G, actual.B }, first = { inside.R, inside.G, inside.B }, last = { outside.R, outside.G, outside.B };
+                int channel = Enumerable.Range(0, 3).OrderByDescending(c => Math.Abs(first[c] - last[c])).First();
+                // GDI+ coverage rounding can move a channel by one even when
+                // painting the same solid color over itself. Allow two levels
+                // only along the antialiased arc, never in flat regions.
+                if (first[channel] == last[channel]) return actual.A == 255 && Enumerable.Range(0, 3).All(c => Math.Abs(a[c] - first[c]) <= 2);
+                double mix = (a[channel] - last[channel]) / (double)(first[channel] - last[channel]);
+                return actual.A == 255 && mix >= 0 && mix <= 1 && Enumerable.Range(0, 3).All(c => Math.Abs(a[c] - (last[c] + mix * (first[c] - last[c]))) <= 2);
+            };
             int headerBottom = Enumerable.Range(0, pages.TabCount).Max(index => pages.GetTabRect(index).Bottom);
             // The page frame is empty chrome, not app content; inspect its real
             // rendered perimeter rather than a control BackColor property.
@@ -60,16 +74,71 @@ static class AppearanceTests
             for (int index = 0; index < pages.TabCount; index++) {
                 Rectangle tab = pages.GetTabRect(index);
                 Color expected = index == pages.SelectedIndex ? palette.HighContrast ? SystemColors.Highlight : palette.Surface : palette.HighContrast ? SystemColors.Control : palette.InactiveTab;
-                // Stay outside both the centered label and the inset keyboard
-                // focus rectangle, while checking all four header edges.
-                for (int x = tab.Left + 1; x < tab.Right - 1; x++) foreach (int y in new[] { tab.Top + 1, tab.Bottom - 2 }) {
-                    string problem = pixel(x, y, expected); if (problem != null) return "tab " + index + ": " + problem;
+                // Compare actual pixels against the approved 32px, top-only
+                // quarter circles. This rejects square corners and half-height
+                // rounding without duplicating the production GraphicsPath.
+                int radius = Math.Min(32, Math.Min(tab.Height, tab.Width / 2));
+                Rectangle focus = Rectangle.Inflate(tab, -5, -5);
+                foreach (bool right in new[] { false, true }) {
+                    int start = right ? tab.Right - radius : tab.Left;
+                    double centerX = right ? tab.Right - radius : tab.Left + radius, centerY = tab.Top + radius;
+                    for (int y = tab.Top + 1; y < tab.Top + radius; y++) for (int x = start + 1; x < start + radius - 1; x++) {
+                        // Native keyboard focus is deliberately retained; it
+                        // has its own tests and is not decorative tab chrome.
+                        if (index == pages.SelectedIndex && ((Math.Abs(x - focus.Left) <= 1 || Math.Abs(x - (focus.Right - 1)) <= 1) && y >= focus.Top - 1 && y <= focus.Bottom ||
+                            (Math.Abs(y - focus.Top) <= 1 || Math.Abs(y - (focus.Bottom - 1)) <= 1) && x >= focus.Left - 1 && x <= focus.Right)) continue;
+                        double distance = Math.Sqrt(Math.Pow(x + 0.5 - centerX, 2) + Math.Pow(y + 0.5 - centerY, 2));
+                        string problem;
+                        if (Math.Abs(distance - radius) <= 1.5) {
+                            Color actual = bitmap.GetPixel(x, y);
+                            problem = paletteBlend(actual, expected, palette.Surface) ? null : "arc pixel " + x + "," + y + " introduced a color outside the tab/page blend: " + actual;
+                        }
+                        else problem = pixel(x, y, distance < radius ? expected : palette.Surface);
+                        if (problem != null) return "tab " + index + (right ? " upper-right" : " upper-left") + " 32px corner: " + problem;
+                    }
                 }
-                for (int y = tab.Top + 1; y < tab.Bottom - 1; y++) foreach (int x in new[] { tab.Left + 1, tab.Right - 2 }) {
+                for (int x = tab.Left + radius + 1; x < tab.Right - radius - 1; x++) {
+                    string problem = pixel(x, tab.Top + 1, expected); if (problem != null) return "tab " + index + " top edge: " + problem;
+                }
+                // Lower corners stay square and connect directly to the page.
+                for (int x = tab.Left + 1; x < tab.Right - 1; x++) {
+                    string problem = pixel(x, tab.Bottom - 2, expected); if (problem != null) return "tab " + index + " lower edge: " + problem;
+                }
+                for (int y = tab.Top + radius + 1; y < tab.Bottom - 1; y++) foreach (int x in new[] { tab.Left + 1, tab.Right - 2 }) {
                     string problem = pixel(x, y, expected); if (problem != null) return "tab " + index + ": " + problem;
                 }
             }
         }
+        return null;
+    }
+    static string WindowSurfacePixels(LauncherForm form, AppearancePalette palette)
+    {
+        IntPtr region = CreateRectRgn(0, 0, 0, 0);
+        try {
+            if (region == IntPtr.Zero || GetWindowRgn(form.Handle, region) == 0) return "Native rounded window region is unavailable.";
+            using (Bitmap bitmap = new Bitmap(form.Width, form.Height)) {
+                form.Refresh(); form.DrawToBitmap(bitmap, form.ClientRectangle);
+                Color expected = palette.HighContrast ? palette.Background : palette.Surface;
+                int width = form.ClientSize.Width, height = form.ClientSize.Height;
+                int[] corners = new int[4]; int samples = 0;
+                // DrawToBitmap itself does not enforce the native window region.
+                // Sample only visible points in the real HWND's region, along
+                // the exposed resize margin and all four curved corners.
+                for (int y = 0; y < height; y++) for (int x = 0; x < width; x++) {
+                    bool margin = x < form.Padding.Left || x >= width - form.Padding.Right || y < form.Padding.Top || y >= height - form.Padding.Bottom;
+                    if (!margin || !PtInRegion(region, x, y)) continue;
+                    samples++;
+                    if (x < 32 && y < 32) corners[0]++;
+                    if (x >= width - 32 && y < 32) corners[1]++;
+                    if (x < 32 && y >= height - 32) corners[2]++;
+                    if (x >= width - 32 && y >= height - 32) corners[3]++;
+                    Color actual = bitmap.GetPixel(x, y);
+                    if (actual.ToArgb() != expected.ToArgb()) return "window margin pixel " + x + "," + y + " was " + actual + ", expected " + expected;
+                }
+                if (samples == 0 || corners.Any(count => count == 0)) return "The native perimeter did not expose samples in all four rounded corners.";
+            }
+        }
+        finally { if (region != IntPtr.Zero) DeleteObject(region); }
         return null;
     }
     static void CheckWindowBorder(LauncherForm form, Action<bool, string> check, string phase)
@@ -93,13 +162,17 @@ static class AppearanceTests
                     for (int page = 0; page < pages.TabCount; page++) {
                         pages.SelectedIndex = page; form.PerformLayout(); pages.PerformLayout(); Application.DoEvents();
                         string problem = ChromePixels(pages, (AppearancePalette)Field(form, "appearancePalette"));
-                        check(problem == null, mode + " native tab and page edges have no system outline at " + size.Width + "x" + size.Height + ", page " + page + (problem == null ? "" : ": " + problem));
+                        check(problem == null, mode + " native tabs have 32px upper corners and no system outline at " + size.Width + "x" + size.Height + ", page " + page + (problem == null ? "" : ": " + problem));
+                        string surface = WindowSurfacePixels(form, (AppearancePalette)Field(form, "appearancePalette"));
+                        check(surface == null, mode + " window margins and all four rounded corners match the page at " + size.Width + "x" + size.Height + ", page " + page + (surface == null ? "" : ": " + surface));
                     }
                 }
                 typeof(Control).GetMethod("RecreateHandle", instance).Invoke(pages, null);
                 Application.DoEvents();
                 string recreated = ChromePixels(pages, (AppearancePalette)Field(form, "appearancePalette"));
-                check(recreated == null, mode + " tab chrome remains flat after native handle recreation" + (recreated == null ? "" : ": " + recreated));
+                check(recreated == null, mode + " rounded tab chrome stays outline-free after native handle recreation" + (recreated == null ? "" : ": " + recreated));
+                string surfaceRecreated = WindowSurfacePixels(form, (AppearancePalette)Field(form, "appearancePalette"));
+                check(surfaceRecreated == null, mode + " all four window corners stay continuous after tab handle recreation" + (surfaceRecreated == null ? "" : ": " + surfaceRecreated));
             }
             pages.SelectedIndex = 0; pages.Focus();
             SendMessage(pages.Handle, 0x0100, new IntPtr((int)Keys.Right), IntPtr.Zero);
@@ -111,6 +184,12 @@ static class AppearanceTests
             CheckWindowBorder(form, check, "after theme changes");
             typeof(Control).GetMethod("RecreateHandle", instance).Invoke(form, null); Application.DoEvents();
             CheckWindowBorder(form, check, "after native window recreation");
+            string windowRecreated = WindowSurfacePixels(form, (AppearancePalette)Field(form, "appearancePalette"));
+            check(windowRecreated == null, "The continuous window surface survives native window handle recreation" + (windowRecreated == null ? "" : ": " + windowRecreated));
+            AppearancePalette contrast = AppAppearance.Resolve("Dark", false, true);
+            AppAppearance.Apply(form, contrast); Application.DoEvents();
+            string contrastSurface = WindowSurfacePixels(form, contrast);
+            check(form.BackColor == contrast.Background && contrastSurface == null, "High contrast retains its system window-margin color" + (contrastSurface == null ? "" : ": " + contrastSurface));
         }
         finally {
             form.Size = savedSize; preferences.AppearanceMode = savedMode; Invoke(form, "ApplyAppearance");
@@ -242,7 +321,8 @@ static class AppearanceTests
             check(iconChoices.Visible && (bool)typeof(LauncherForm).GetProperty("AppearanceMenuOpen", instance).GetValue(form, null) && Screen.FromControl(form).WorkingArea.Contains(iconChoices.Bounds), "The app-icon button opens its guarded menu entirely inside the monitor working area");
             check(iconChoices.Items.Cast<ToolStripItem>().Zip(iconChoices.Items.Cast<ToolStripItem>().Skip(1), (first, second) => first.Bounds.Bottom <= second.Bounds.Top && first.Bounds.Left == second.Bounds.Left).All(value => value), "App-icon choices form a nonoverlapping vertical list");
             iconChoices.Close();
-            check(((AppearancePalette)Field(form, "appearancePalette")).Dark && form.BackColor == AppAppearance.Resolve("Dark").Background && ((Control)Field(form, "apps")).BackColor == AppAppearance.Resolve("Dark").Surface && ((Control)Field(form, "packPreview")).ForeColor == AppAppearance.Resolve("Dark").Text && !((ListView)Field(form, "apps")).OwnerDraw, "Dark appearance reaches the window and both grids retain native icon and label rendering");
+            AppearancePalette darkPalette = AppAppearance.Resolve("Dark");
+            check(((AppearancePalette)Field(form, "appearancePalette")).Dark && form.BackColor == (darkPalette.HighContrast ? darkPalette.Background : darkPalette.Surface) && ((Control)Field(form, "apps")).BackColor == darkPalette.Surface && ((Control)Field(form, "packPreview")).ForeColor == darkPalette.Text && !((ListView)Field(form, "apps")).OwnerDraw, "Dark appearance reaches the window and both grids retain native icon and label rendering");
             check(menus.All(menu => menu.BackColor == AppAppearance.Resolve("Dark").Surface && menu.Items.Cast<ToolStripItem>().All(item => item.ForeColor == AppAppearance.Resolve("Dark").Text)), "Dark appearance reaches tray, icon, import and pack action menus including rebuilt items");
             HashSet<string> signatures = new HashSet<string>();
             foreach (string style in AppBranding.Styles) foreach (string variant in new[] { "dark", "light" }) {
@@ -260,7 +340,8 @@ static class AppearanceTests
             chooseIcon("Sage Dark"); chooseIcon("Match app theme"); SelectMode(form, "Dark");
             using (Icon sage = AppBranding.Load("sage", "dark")) check(IconPixels(form.Icon) == IconPixels(sage), "Sage Dark is the default icon for Dark appearance");
             SelectMode(form, "Light");
-            using (Icon sage = AppBranding.Load("sage", "light")) check(IconPixels(form.Icon) == IconPixels(sage) && !((AppearancePalette)Field(form, "appearancePalette")).Dark && form.BackColor == AppAppearance.Resolve("Light").Background, "Switching to Light immediately selects the matching light icon and control palette");
+            AppearancePalette lightPalette = AppAppearance.Resolve("Light");
+            using (Icon sage = AppBranding.Load("sage", "light")) check(IconPixels(form.Icon) == IconPixels(sage) && !((AppearancePalette)Field(form, "appearancePalette")).Dark && form.BackColor == (lightPalette.HighContrast ? lightPalette.Background : lightPalette.Surface), "Switching to Light immediately selects the matching light icon and control palette");
             chooseIcon("Sage Dark");
             using (Icon sage = AppBranding.Load("sage", "dark")) check(IconPixels(form.Icon) == IconPixels(sage) && !((AppearancePalette)Field(form, "appearancePalette")).Dark, "A pinned Dark icon stays Dark in a Light app theme");
             chooseIcon("Match app theme"); SelectMode(form, "System");

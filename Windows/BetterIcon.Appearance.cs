@@ -108,7 +108,9 @@ namespace BetterIcon.Tray
             hook.Palette = palette;
             string role = control.Tag as string;
             Color parent = control.Parent == null ? palette.Background : control.Parent.BackColor;
-            control.BackColor = control is Form ? palette.Background : control is TabPage || control is ListView || control.Name.EndsWith("Section", StringComparison.Ordinal) ? palette.Surface : parent;
+            // The popup's resize margin and pages share one surface. A contrasting
+            // rectangular inner panel otherwise appears to cut through its curves.
+            control.BackColor = control is LauncherForm && !palette.HighContrast ? palette.Surface : control is Form ? palette.Background : control is TabPage || control is ListView || control.Name.EndsWith("Section", StringComparison.Ordinal) ? palette.Surface : parent;
             control.ForeColor = role == "ErrorText" ? palette.Error : role == "SecondaryText" ? palette.Muted : palette.Text;
             Button button = control as Button;
             if (button != null) {

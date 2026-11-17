@@ -1,5 +1,15 @@
 # Windows validation
 
+## 1.18.2 rounded tab corners - 2026-11-17
+
+Native rendered-pixel checks verify the 32-pixel upper tab curves, square lower
+joins and absence of light outlines in Dark, Light and System, with either tab
+selected at minimum/default/tall sizes and after handle recreation. Native tab
+navigation and the existing window-resize checks remain in the full local suite.
+Full-popup pixel checks also cover the outer resize margin and all four rounded
+corners so a contrasting rectangular content surface cannot interrupt the curves.
+Computer Use remains skipped; these checks use isolated native test controls.
+
 ## 1.18.1 flat window and tab edges - 2026-11-17
 
 Native rendered-pixel checks cover the tab headers and page perimeter in Dark,

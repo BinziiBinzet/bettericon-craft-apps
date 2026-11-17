@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -127,7 +128,20 @@ namespace BetterIcon.Tray
             AppearancePalette palette = appearancePalette ?? AppAppearance.Resolve(preferences.AppearanceMode);
             Color background = selected ? palette.Surface : palette.InactiveTab, foreground = palette.Text;
             if (SystemInformation.HighContrast) { background = selected ? SystemColors.Highlight : SystemColors.Control; foreground = selected ? SystemColors.HighlightText : SystemColors.ControlText; }
-            using (Brush brush = new SolidBrush(background)) e.Graphics.FillRectangle(brush, e.Bounds);
+            // Match the mockup's 32px upper corners and square page joins.
+            // Top-only rounding can exceed half the tab's height.
+            Rectangle bounds = e.Bounds;
+            float radius = Math.Min(32f, Math.Min(bounds.Height, bounds.Width / 2f));
+            using (GraphicsPath shape = new GraphicsPath()) using (Brush brush = new SolidBrush(background)) {
+                shape.AddArc(bounds.Left, bounds.Top, radius * 2, radius * 2, 180, 90);
+                shape.AddArc(bounds.Right - radius * 2, bounds.Top, radius * 2, radius * 2, 270, 90);
+                shape.AddLine(bounds.Right, bounds.Top + radius, bounds.Right, bounds.Bottom);
+                shape.AddLine(bounds.Right, bounds.Bottom, bounds.Left, bounds.Bottom);
+                shape.CloseFigure();
+                GraphicsState state = e.Graphics.Save();
+                try { e.Graphics.SmoothingMode = SmoothingMode.AntiAlias; e.Graphics.FillPath(brush, shape); }
+                finally { e.Graphics.Restore(state); }
+            }
             using (Font font = new Font(Font, selected ? FontStyle.Bold : FontStyle.Regular))
                 TextRenderer.DrawText(e.Graphics, pages.TabPages[e.Index].Text, font, e.Bounds, foreground, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
             if (selected && (e.State & DrawItemState.Focus) != 0) ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(e.Bounds, -5, -5), foreground, background);
