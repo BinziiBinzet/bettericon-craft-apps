@@ -11,7 +11,7 @@ Icon installers for [Artcraft](https://getartcraft.com/) applications. The Linux
 - **Clear Status Log:** Visual table showing which apps are ready, missing icons, or not installed.
 - **Windows Support:** A tray popup for installed apps, PNG/ICO theme previews, separate current-user/all-users scopes, and original-shortcut restoration.
 
-The themes in [Craft-Icons-OmegaDarling](Craft-Icons-OmegaDarling/) are by **OmegaDarling**. The collection includes five Graphic Evolution themes—**Paperflow**, **Softform**, **Edgework**, **Counterform**, and **Foldmark**—with 19 approved app icons each.
+The seven themes in [Craft-Icons-OmegaDarling](Craft-Icons-OmegaDarling/) are by **OmegaDarling**: **Cardboard**, **HyGel**, **Irridiant**, **KnivesAndFeathers**, **NegativeSpace**, **Edgework**, and **Foldmark**. Each contains 19 current approved app icons, including the CADCraft ant as `cadcraft.png`, and has an example sheet.
 
 ## Supported Applications
 

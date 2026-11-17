@@ -79,7 +79,7 @@ Open PowerShell in the **Windows** subfolder. `Install-Windows.cmd` and `Restore
 
 # Apply, with a preview and a confirmation prompt.
 .\install.ps1 -Theme Cardboard
-.\install.ps1 -Theme 'Craft-Icons-Zach/Satin' -Scope AllUsers
+.\install.ps1 -Theme 'Craft-Icons-OmegaDarling/HyGel' -Scope AllUsers
 
 # Restore original shortcuts. User edits made since installation are preserved.
 .\uninstall.ps1 -WhatIf
@@ -95,7 +95,7 @@ Use reasonably short folder paths. This version requires shortcut and installed 
 
 ## Themes and matching
 
-All **18 current themes** are available: twelve by **OmegaDarling**, five in **Craft-Icons-Komplett**, and the root theme in **Craft-Icons-circleb**. The current collection supplies **313 app icons**, including the five [Graphic Evolution themes](../Craft-Icons-OmegaDarling/README.md). Oil Slick is retired and is excluded from the repository's current artwork, app catalog, and new Windows packages.
+All **13 current themes** are available: seven by **OmegaDarling**, five in **Craft-Icons-Komplett**, and the root theme in **Craft-Icons-circleb**. The current collection supplies **218 app icons**, including the two [Graphic Evolution themes](../Craft-Icons-OmegaDarling/README.md#graphic-evolution), Edgework and Foldmark. Cardstock, Satin, OilSlick, Paperflow, Softform and Counterform are retired and are excluded from the repository's current artwork, app catalog, and new Windows packages.
 
 The shared artwork is stored in `Craft-Icons-OmegaDarling`. The public author credit is **OmegaDarling** in the app and command-line theme listing.
 

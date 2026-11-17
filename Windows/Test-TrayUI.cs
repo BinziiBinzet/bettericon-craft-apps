@@ -56,7 +56,7 @@ static class TrayTests
         Func<string, object> field = name => typeof(LauncherForm).GetField(name, instance).GetValue(form);
         ComboBox themes = (ComboBox)field("themes"); Catalog catalog = (Catalog)field("catalog");
         Preferences preferences = (Preferences)field("preferences"); PackLibrary library = (PackLibrary)field("library");
-        ThemeEntry basis = themes.Items.Cast<ThemeEntry>().First(theme => theme.Id == "Craft-Icons-Zach/Satin");
+        ThemeEntry basis = themes.Items.Cast<ThemeEntry>().First(theme => theme.Id == "Craft-Icons-Zach/HyGel");
         string previousTheme = preferences.Theme; string[] previousDefaults = preferences.DefaultShortcuts;
         MethodInfo reload = typeof(LauncherForm).GetMethod("ReloadLibrary", instance), change = typeof(LauncherForm).GetMethod("ChangeAppIcon", instance);
         string png = Path.Combine(root, "context-choice.png"), other = Path.Combine(root, "context-other.png");
@@ -408,7 +408,7 @@ static class TrayTests
         ContextMenuStrip menu = (ContextMenuStrip)field("managePackMenu");
         PackLibrary library = (PackLibrary)field("library");
         ThemeEntry[] bundled = (ThemeEntry[])field("bundledThemes");
-        ThemeEntry themed = themes.Items.Cast<ThemeEntry>().First(t => t.Id == "Craft-Icons-Zach/Satin");
+        ThemeEntry themed = themes.Items.Cast<ThemeEntry>().First(t => t.Id == "Craft-Icons-Zach/HyGel");
         string original = Path.Combine(root, "original-red.png"), current = Path.Combine(root, "current-blue.png");
         using (Bitmap image = new Bitmap(32, 32)) {
             using (Graphics canvas = Graphics.FromImage(image)) canvas.Clear(Color.Red);
@@ -505,7 +505,7 @@ static class TrayTests
             }
         }
 
-        Check(json.Deserialize<Preferences>("{\"Theme\":\"Craft-Icons-Zach/Satin\"}").DefaultShortcuts.Length == 0,
+        Check(json.Deserialize<Preferences>("{\"Theme\":\"Craft-Icons-Zach/HyGel\"}").DefaultShortcuts.Length == 0,
             "Older preferences migrate without inventing per-shortcut default overrides");
         call("RememberRestoredShortcuts", new object[] { new[] {
             new ResultItem { Shortcut = photo, Status = "Restored" },
@@ -545,12 +545,12 @@ static class TrayTests
         byte[] originalPhoto = File.ReadAllBytes(photo), originalFilm = File.ReadAllBytes(film);
         FixtureConfig fixture = new FixtureConfig { ShortcutDirectory = new[] { links }, StateDirectory = state, KeepOpenForAutomation = true };
         WorkerClient worker = new WorkerClient(source, fixture);
-        WorkerReply plan = worker.Run(new WorkerRequest { Action = "Preview", Scope = "CurrentUser", Theme = "Craft-Icons-Zach/Satin" }, false).GetAwaiter().GetResult();
-        WorkerReply applied = worker.Run(new WorkerRequest { Action = "Apply", Scope = "CurrentUser", Theme = "Craft-Icons-Zach/Satin", ExpectedPlan = plan.Plan }, false).GetAwaiter().GetResult();
+        WorkerReply plan = worker.Run(new WorkerRequest { Action = "Preview", Scope = "CurrentUser", Theme = "Craft-Icons-Zach/HyGel" }, false).GetAwaiter().GetResult();
+        WorkerReply applied = worker.Run(new WorkerRequest { Action = "Apply", Scope = "CurrentUser", Theme = "Craft-Icons-Zach/HyGel", ExpectedPlan = plan.Plan }, false).GetAwaiter().GetResult();
         Check(applied.Results.Length == 2 && applied.Results.All(result => result.Status == "Applied"), "Context-menu integration prepares two isolated themed shortcuts");
         byte[] themedFilm = File.ReadAllBytes(film);
         string preferencesPath = Path.Combine(state, "tray-preferences.json");
-        File.WriteAllText(preferencesPath, json.Serialize(new Preferences { Theme = "Craft-Icons-Zach/Satin", Scope = "AllUsers", Hotkey = new HotkeySettings { Enabled = false } }));
+        File.WriteAllText(preferencesPath, json.Serialize(new Preferences { Theme = "Craft-Icons-Zach/HyGel", Scope = "AllUsers", Hotkey = new HotkeySettings { Enabled = false } }));
         using (EventWaitHandle show = new EventWaitHandle(false, EventResetMode.AutoReset))
         using (EventWaitHandle stop = new EventWaitHandle(false, EventResetMode.AutoReset))
         using (LauncherForm form = new LauncherForm(source, fixture, true, show, stop))
@@ -660,14 +660,14 @@ static class TrayTests
             File.WriteAllText(Path.Combine(workerState, "manifest.json"), "{\"Product\":\"BetterIcon-Craft Apps Windows\",\"SchemaVersion\":1,\"Version\":\"1.1.0\",\"Scope\":\"CurrentUser\",\"Entries\":[]}");
             WorkerClient client = new WorkerClient(args[1], new FixtureConfig { ShortcutDirectory = new[] { root }, StateDirectory = workerState });
             WorkerReply catalog = client.Run(new WorkerRequest { Action = "Catalog", Scope = "CurrentUser" }, false).GetAwaiter().GetResult();
-            Check(catalog.Success && catalog.Catalog.Themes.Length == 18 && catalog.Catalog.Apps.Length == 1 && catalog.Catalog.Apps[0].Application == "PhotoCraft", "Native process invokes the catalog worker with a real fixture shortcut");
+            Check(catalog.Success && catalog.Catalog.Themes.Length == 13 && catalog.Catalog.Apps.Length == 1 && catalog.Catalog.Apps[0].Application == "PhotoCraft", "Native process invokes the catalog worker with a real fixture shortcut");
             WorkerReply preview = client.Run(new WorkerRequest { Action = "RestorePreview", Scope = "CurrentUser" }, false).GetAwaiter().GetResult();
             Check(preview.Success && preview.StateHash.Length == 64 && preview.Results.Length == 0, "Native restore worker hashes an existing manifest with inherited module paths");
             PackTests.Run(root, args[1], catalog.Catalog, Check);
 
             string state = Path.Combine(root, "state"), preferencesPath = Path.Combine(state, "tray-preferences.json");
             Directory.CreateDirectory(state);
-            File.WriteAllText(preferencesPath, json.Serialize(new Preferences { Theme = "Craft-Icons-Zach/Satin", Scope = "CurrentUser", IconSize = 72, Hotkey = new HotkeySettings { Enabled = false } }));
+            File.WriteAllText(preferencesPath, json.Serialize(new Preferences { Theme = "Craft-Icons-Zach/HyGel", Scope = "CurrentUser", IconSize = 72, Hotkey = new HotkeySettings { Enabled = false } }));
             using (EventWaitHandle show = new EventWaitHandle(false, EventResetMode.AutoReset))
             using (EventWaitHandle stop = new EventWaitHandle(false, EventResetMode.AutoReset))
             using (LauncherForm form = new LauncherForm(args[1], new FixtureConfig { ShortcutDirectory = new[] { root }, StateDirectory = Path.Combine(root, "state"), KeepOpenForAutomation = true }, true, show, stop))
@@ -762,7 +762,7 @@ static class TrayTests
                         pages.SelectedIndex = 1; slider.Value = 64;
                         Check(list.Items.Count == 2 && list.AccessibleDescription.Contains("Filter: f.") && list.SelectedItems.Count == 1 && list.SelectedItems[0].Text == "FilmCraft", "Icon resizing preserves the active filter and selected app");
                         Preferences sized = json.Deserialize<Preferences>(File.ReadAllText(preferencesPath));
-                        Check(sized.IconSize == 64 && sized.Theme == "Craft-Icons-Zach/Satin" && sized.Scope == "CurrentUser" && !sized.Hotkey.Enabled, "Icon size persists without changing theme, scope, or hotkey preferences");
+                        Check(sized.IconSize == 64 && sized.Theme == "Craft-Icons-Zach/HyGel" && sized.Scope == "CurrentUser" && !sized.Hotkey.Enabled, "Icon size persists without changing theme, scope, or hotkey preferences");
                         ((Button)typeof(LauncherForm).GetField("resetIconSize", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form)).PerformClick();
                         Check(launcherImages.ImageSize == new Size(48, 48) && previewImages.ImageSize == launcherImages.ImageSize && list.Items[1].Bounds.Left - list.Items[0].Bounds.Left < 200 && json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).IconSize == 48, "Reset restores and saves compact 48-pixel icons in both grids");
                         pages.SelectedIndex = 0;
