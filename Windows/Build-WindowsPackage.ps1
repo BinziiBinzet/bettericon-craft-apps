@@ -46,7 +46,9 @@ try {
         }
         foreach ($theme in @(Get-BetterIconTheme)) {
             foreach ($icon in @(Get-BetterIconThemeIcon -Theme $theme.Id)) {
-                $folder = if ($theme.Name -eq 'Root') { $theme.Pack } else { $theme.Id }
+                # Preserve the repository's public directory names independently
+                # of stable Windows preference IDs.
+                $folder = $theme.Path.Substring($repository.TrimEnd('\','/').Length).TrimStart('\','/').Replace('\','/')
                 $entry = $archive.CreateEntry($folder + '/' + $icon.Application + '.ico', [IO.Compression.CompressionLevel]::Optimal)
                 $stream = $entry.Open()
                 try { $bytes = Get-BetterIconBytes $icon.Path; $stream.Write($bytes, 0, $bytes.Length) }

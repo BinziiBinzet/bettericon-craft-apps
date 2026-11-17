@@ -1,7 +1,7 @@
-# BetterIcon-Craft Apps Windows support, version 1.15.0.
+# BetterIcon-Craft Apps Windows support, version 1.15.1.
 # No network access, executable patching, registry changes, or Explorer restart.
 Set-StrictMode -Version Latest
-$script:Version = '1.15.0'
+$script:Version = '1.15.1'
 $script:RepositoryRoot = Split-Path -Parent $PSScriptRoot
 $script:Applications = @('PhotoCraft','VectorCraft','FilmCraft','LightCraft','PdfCraft',
     'EffectCraft','AniCraft','DesignCraft','FigCraft','TextureCraft','MaterialCraft',
@@ -129,15 +129,18 @@ function Get-BetterIconTheme {
             # Ignore non-artwork folders, including future tests or documentation.
             if (-not $icons.Count) { continue }
             $name = if ($theme.FullName -eq $pack.FullName) { 'Root' } else { $theme.Name }
-            # Keep stable folder IDs for saved selections and restoration; credit the public author separately.
-            $author = if ($pack.Name -eq 'Craft-Icons-Zach') { 'OmegaDarling' } else { $pack.Name -replace '^Craft-Icons-','' }
-            [pscustomobject]@{ Id = "$($pack.Name)/$name"; Pack = $pack.Name; Author = $author; Name = $name; Path = $theme.FullName;
+            # IDs persist in preferences and reviewed plans. Keep them stable when
+            # the public artwork directory changes its author name.
+            $packId = if ($pack.Name -eq 'Craft-Icons-OmegaDarling') { 'Craft-Icons-Zach' } else { $pack.Name }
+            $author = if ($packId -eq 'Craft-Icons-Zach') { 'OmegaDarling' } else { $pack.Name -replace '^Craft-Icons-','' }
+            [pscustomobject]@{ Id = "$packId/$name"; Pack = $packId; Author = $author; Name = $name; Path = $theme.FullName;
                 IconCount = @($icons | ForEach-Object { Get-AppName $_.BaseName -Icon } | Sort-Object -Unique).Count; Status = 'Available' }
         }
     }
 }
 
 function Resolve-Theme([string]$Theme, [string]$Repository) {
+    $Theme = $Theme -replace '^Craft-Icons-OmegaDarling/', 'Craft-Icons-Zach/'
     $matches = @(Get-BetterIconTheme -Repository $Repository | Where-Object { $_.Id -ieq $Theme -or $_.Name -ieq $Theme })
     if ($matches.Count -ne 1) { throw "Theme '$Theme' was not found or is ambiguous. Use -ListThemes and a full Pack/Theme ID." }
     $matches[0]

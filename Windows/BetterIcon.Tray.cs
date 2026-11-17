@@ -188,10 +188,25 @@ namespace BetterIcon.Tray
         [DllImport("user32.dll")] static extern bool DestroyIcon(IntPtr icon);
         IntPtr largeArtwork;
         int iconSize = Preferences.DefaultIconSize;
-        bool showAppNames = true;
+        bool showAppNames = true, inputBlocked, savedTabStop;
         public event Action<int> IconSizeWheel;
         public event Action<Point?> IconMenuRequested;
         public bool ShowAppNames { get { return showAppNames; } set { if (showAppNames == value) return; showAppNames = value; UpdateSpacing(); Invalidate(); } }
+        public bool InputBlocked
+        {
+            get { return inputBlocked; }
+            set {
+                if (inputBlocked == value) return;
+                inputBlocked = value;
+                if (value) {
+                    savedTabStop = TabStop; TabStop = false;
+                    // Cancel an in-progress mouse/scroll interaction without
+                    // entering the native disabled state, which loses our colors.
+                    if (IsHandleCreated) SendMessage(Handle, 0x001F, IntPtr.Zero, IntPtr.Zero);
+                }
+                else TabStop = savedTabStop;
+            }
+        }
         public Size GridCellSize { get { return new Size(showAppNames ? Math.Max(112, iconSize + 24) : iconSize + 24, iconSize + (showAppNames ? Font.Height * 2 : 0) + 16); } }
         public IconGridView() { View = View.LargeIcon; AutoArrange = true; Alignment = ListViewAlignment.Top; LabelWrap = true; DoubleBuffered = true; }
         public void SetIconSize(int size) { iconSize = size; UpdateSpacing(); }
@@ -234,6 +249,12 @@ namespace BetterIcon.Tray
         }
         protected override void WndProc(ref Message message)
         {
+            if (inputBlocked && (message.Msg == 0x007B || message.Msg == 0x0114 || message.Msg == 0x0115 ||
+                (message.Msg >= 0x0100 && message.Msg <= 0x0109) ||
+                (message.Msg >= 0x0200 && message.Msg <= 0x020E) ||
+                (message.Msg >= 0x00A0 && message.Msg <= 0x00AD))) {
+                message.Result = IntPtr.Zero; return;
+            }
             // WM_CONTEXTMENU covers right-click, Shift+F10 and the menu key.
             if (message.Msg == 0x007B && IconMenuRequested != null) {
                 long position = message.LParam.ToInt64();
@@ -455,7 +476,9 @@ namespace BetterIcon.Tray
             UpdatePackButtons();
             if (!String.IsNullOrEmpty(message)) status.Text = message;
             UseWaitCursor = value; BuildTrayMenu();
-            apps.Enabled = packPreview.Enabled = !value;
+            // WS_DISABLED paints native list views in system colors. Pause input
+            // instead so artwork, labels and theme updates keep their normal paint.
+            apps.InputBlocked = packPreview.InputBlocked = value;
             ShowLoading(value, message);
         }
         public void ToggleAboveTray(Point anchor)

@@ -5,6 +5,7 @@ using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
@@ -13,6 +14,8 @@ using BetterIcon.Tray;
 
 static class AppearanceTests
 {
+    [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")] static extern bool IsWindowEnabled(IntPtr window);
     static readonly BindingFlags instance = BindingFlags.Instance | BindingFlags.NonPublic;
     static object Field(LauncherForm form, string name) { return typeof(LauncherForm).GetField(name, instance).GetValue(form); }
     static void Invoke(LauncherForm form, string name, params object[] args) { typeof(LauncherForm).GetMethod(name, instance).Invoke(form, args); }
@@ -27,6 +30,77 @@ static class AppearanceTests
     static double Channel(byte c) { double n = c / 255.0; return n <= 0.04045 ? n / 12.92 : Math.Pow((n + 0.055) / 1.055, 2.4); }
     static double Light(Color c) { return Channel(c.R) * 0.2126 + Channel(c.G) * 0.7152 + Channel(c.B) * 0.0722; }
     static double Contrast(Color a, Color b) { double x = Light(a), y = Light(b); return (Math.Max(x, y) + 0.05) / (Math.Min(x, y) + 0.05); }
+    static Color PaintedBackground(IconGridView grid)
+    {
+        using (Bitmap bitmap = new Bitmap(grid.Width, grid.Height)) {
+            grid.Refresh(); grid.DrawToBitmap(bitmap, grid.ClientRectangle);
+            Point[] empty = { new Point(grid.ClientSize.Width - 8, grid.ClientSize.Height - 8), new Point(8, grid.ClientSize.Height - 8), new Point(grid.ClientSize.Width - 8, 8) };
+            foreach (Point point in empty) if (!grid.Items.Cast<ListViewItem>().Any(item => item.Bounds.Contains(point))) return bitmap.GetPixel(point.X, point.Y);
+        }
+        throw new Exception("No empty grid area available for native background verification.");
+    }
+    static void CheckBusyThemes(LauncherForm form, ComboBox modePicker, Action<bool, string> check)
+    {
+        TabControl pages = (TabControl)Field(form, "pages");
+        IconGridView[] grids = { (IconGridView)Field(form, "apps"), (IconGridView)Field(form, "packPreview") };
+        foreach (string mode in new[] { "Dark", "Light", "System" }) {
+            modePicker.SelectedItem = mode;
+            AppearancePalette palette = (AppearancePalette)Field(form, "appearancePalette");
+            Invoke(form, "SetBusy", true, "Saving test artwork...");
+            try {
+                for (int page = 0; page < grids.Length; page++) {
+                    pages.SelectedIndex = page; form.PerformLayout(); Application.DoEvents();
+                    IconGridView grid = grids[page]; Color painted = PaintedBackground(grid);
+                    check(grid.InputBlocked && !grid.TabStop && IsWindowEnabled(grid.Handle)
+                        && SendMessage(grid.Handle, 0x1000, IntPtr.Zero, IntPtr.Zero).ToInt32() == ColorTranslator.ToWin32(palette.Surface)
+                        && SendMessage(grid.Handle, 0x1023, IntPtr.Zero, IntPtr.Zero).ToInt32() == ColorTranslator.ToWin32(palette.Text)
+                        && painted.ToArgb() == palette.Surface.ToArgb(),
+                        mode + " " + (page == 0 ? "Launcher" : "Settings") + " paints its actual theme background and text while saving (painted " + painted + ")");
+                }
+                Invoke(form, "OnSystemAppearanceChanged", null, new UserPreferenceChangedEventArgs(UserPreferenceCategory.General)); Application.DoEvents();
+                check(grids.All(grid => grid.InputBlocked && grid.BackColor == ((AppearancePalette)Field(form, "appearancePalette")).Surface),
+                    mode + " appearance notifications preserve the theme and input pause while saving");
+            }
+            finally { Invoke(form, "SetBusy", false, null); }
+            check(grids.All(grid => !grid.InputBlocked && grid.Enabled && grid.TabStop), mode + " saving completion restores ordinary grid input and tab navigation");
+        }
+    }
+    static void CheckGridInput(LauncherForm owner, Action<bool, string> check)
+    {
+        using (Form holder = new Form { Text = "[TEST] Themed busy grid", ClientSize = new Size(380, 230), ShowInTaskbar = false })
+        using (ImageList images = new ImageList())
+        using (IconGridView grid = new IconGridView { Dock = DockStyle.Fill }) {
+            images.ImageSize = new Size(48, 48); images.Images.Add(SystemIcons.Application); grid.LargeImageList = images;
+            foreach (string name in new[] { "Alpha", "Beta", "Gamma" }) grid.Items.Add(new ListViewItem(name, 0));
+            holder.Controls.Add(grid); holder.Show(owner); grid.Focus();
+            grid.Items[0].Selected = grid.Items[0].Focused = true;
+            int activations = 0, menus = 0, zooms = 0;
+            grid.ItemActivate += delegate { activations++; }; grid.IconMenuRequested += delegate { menus++; }; grid.IconSizeWheel += delegate { zooms++; };
+            AppAppearance.Apply(grid, AppAppearance.Resolve("Dark", null, false));
+            grid.InputBlocked = true;
+            Rectangle target = grid.GetItemRect(1, ItemBoundsPortion.Icon);
+            IntPtr point = new IntPtr(((target.Top + target.Height / 2) << 16) | (target.Left + target.Width / 2));
+            foreach (int message in new[] { 0x0201, 0x0202, 0x0203, 0x0202 }) SendMessage(grid.Handle, message, IntPtr.Zero, point);
+            SendMessage(grid.Handle, 0x0100, new IntPtr(39), IntPtr.Zero); SendMessage(grid.Handle, 0x0100, new IntPtr(13), IntPtr.Zero);
+            SendMessage(grid.Handle, 0x0102, new IntPtr('B'), IntPtr.Zero);
+            SendMessage(grid.Handle, 0x007B, grid.Handle, new IntPtr(-1));
+            SendMessage(grid.Handle, 0x020A, new IntPtr((120 << 16) | 8), IntPtr.Zero);
+            check(grid.SelectedIndices.Count == 1 && grid.SelectedIndices[0] == 0 && activations == 0 && menus == 0 && zooms == 0,
+                "A themed busy grid blocks native mouse selection, keyboard launch/navigation, context actions and wheel zoom");
+            typeof(Control).GetMethod("RecreateHandle", instance).Invoke(grid, null);
+            check(grid.InputBlocked && !grid.TabStop && IsWindowEnabled(grid.Handle) && PaintedBackground(grid).ToArgb() == AppAppearance.Resolve("Dark", null, false).Surface.ToArgb(),
+                "Native handle recreation retains paused input and dark painting without disabling the grid");
+            AppAppearance.Apply(grid, AppAppearance.Resolve("System", false, false));
+            check(grid.InputBlocked && PaintedBackground(grid).ToArgb() == AppAppearance.Resolve("Light", null, false).Surface.ToArgb(),
+                "A paused grid repaints for a simulated System-to-Light change without enabling input");
+            grid.InputBlocked = false; grid.Focus(); grid.Items[0].Selected = grid.Items[0].Focused = true;
+            SendMessage(grid.Handle, 0x0100, new IntPtr(39), IntPtr.Zero);
+            SendMessage(grid.Handle, 0x007B, grid.Handle, new IntPtr(-1)); SendMessage(grid.Handle, 0x020A, new IntPtr((120 << 16) | 8), IntPtr.Zero);
+            check(grid.TabStop && grid.SelectedIndices.Count == 1 && grid.SelectedIndices[0] == 1 && menus == 1 && zooms == 1,
+                "Finishing a save restores native keyboard selection, context actions and zoom");
+            holder.Close();
+        }
+    }
     public static void Run(LauncherForm form, string preferencesPath, string sourceFolder, Action<bool, string> check)
     {
         JavaScriptSerializer json = new JavaScriptSerializer();
@@ -101,6 +175,7 @@ static class AppearanceTests
             check(!modePicker.Enabled && !stylePicker.Enabled && !variantPicker.Enabled, "Appearance controls cannot change during a shortcut operation");
             Invoke(form, "SetBusy", false, null);
 
+            CheckBusyThemes(form, modePicker, check); CheckGridInput(form, check);
             foreach (string mode in new[] { "Dark", "Light" }) {
                 modePicker.SelectedItem = mode;
                 AppearancePalette p = (AppearancePalette)Field(form, "appearancePalette");

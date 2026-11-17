@@ -1,5 +1,13 @@
 # Windows validation
 
+## 1.15.1 themed busy grids - 2026-11-16
+
+All 270 local native checks passed from source. New coverage measures painted grid background pixels and native text/background colors while busy in Dark, Light and System, including appearance notifications and input recovery. Native mouse selection, keyboard activation/navigation, context actions and wheel zoom remain paused; handle recreation and a simulated System-to-Light update preserve painting and the input pause. Existing real save, loading, error cleanup, large-image, launcher and restore checks remain passing.
+
+With approval, Computer Use inspected both tabs in Dark, Light and System using an external isolated test host that held the launcher's actual shared busy state visible. Backgrounds, labels and artwork retained the selected palette; System followed the machine's current dark setting. The test used 14 disposable probe shortcuts and its own settings. All 14 fixture shortcuts and 14 installed shortcuts remained byte-identical; production preferences and pack metadata were unchanged. All test processes were closed. No OS appearance setting was changed.
+
+The checkout incorporates upstream's OmegaDarling artwork-directory rename. Windows retains saved preference/plan IDs, accepts the public directory name as an alias, and packages artwork under its physical public directory. Both names resolve to the same artwork. All 126 installer checks passed on PowerShell 5.1 and 7, and all 20 bridge checks passed locally. Windows 10, ARM64 and per-monitor DPI transitions remain unverified.
+
 ## 1.15.0 per-app icon editing - 2026-11-16
 
 All 253 local native checks passed from source. Coverage replaces the removed Settings restore-picker checks with per-app artwork editing: context actions remain available without a restore backup, empty-space and busy states clear both actions, built-ins become complete personal copies, only the chosen assignment changes, both grids update immediately, and personal edits retain names, authors, other assignments and immutable earlier revisions. The selected pack and per-app default choices persist without altering unrelated preferences or Windows shortcuts. Invalid artwork preserves the library and preferences and clears loading. Repeated built-in copies get unique names, and editing from ArtCraft default creates a personal pack without modifying the default.

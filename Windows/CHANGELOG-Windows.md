@@ -1,5 +1,11 @@
 # Windows installer changelog
 
+## 1.15.1 - 2026-11-16
+
+- Keep Launcher and Settings grid backgrounds, labels and artwork in the selected Dark, Light or System theme while saving or loading.
+- Pause grid input without using Windows' native disabled colors. Resume normal mouse, keyboard, context-menu and wheel interactions when the operation finishes.
+- Preserve saved Windows pack IDs after the upstream OmegaDarling directory rename, accept the new public path as an alias, and retain public directory names in Windows ZIPs.
+
 ## 1.15.0 - 2026-11-16
 
 - Remove the redundant Restore one app section from Settings; keep individual restoration in either icon grid's right-click menu.
