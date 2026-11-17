@@ -285,9 +285,8 @@ namespace BetterIcon.Tray
         bool renderingArtwork;
         readonly Label filterHint = new Label();
         readonly Label status = new Label();
-        readonly Label previewLabel = new Label();
         readonly Label subtitle = new Label();
-        readonly Button apply = new Button(), restore = new Button(), exit = new Button(), settings = new Button();
+        readonly Button apply = new Button(), restore = new Button();
         readonly EventWaitHandle showEvent, stopEvent;
         readonly System.Windows.Forms.Timer signalTimer = new System.Windows.Forms.Timer();
         readonly System.Windows.Forms.Timer dismissTimer = new System.Windows.Forms.Timer();
@@ -314,7 +313,7 @@ namespace BetterIcon.Tray
             Text = "BetterIcon for ArtCraft"; Name = "BetterIconLauncher";
             Font = new Font("Segoe UI", 10F); ForeColor = ink; BackColor = Color.FromArgb(244, 247, 251);
             AutoScaleMode = AutoScaleMode.Font; FormBorderStyle = FormBorderStyle.None;
-            ClientSize = new Size(900, 690); MinimumSize = new Size(790, 570);
+            ClientSize = new Size(900, 818); MinimumSize = new Size(790, 570);
             // Keep a small exposed client margin so child controls cannot consume
             // the native edge hit tests. Font autoscaling scales this margin too.
             Padding = new Padding(8);
@@ -419,11 +418,11 @@ namespace BetterIcon.Tray
         static bool IsAdministrator() { return new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator); }
         void SetBusy(bool value, string message)
         {
-            busy = value; apply.Enabled = restore.Enabled = themes.Enabled = exit.Enabled = settings.Enabled = !value;
+            busy = value; apply.Enabled = restore.Enabled = themes.Enabled = !value;
             if (value) { iconMenu.Close(); iconMenuTarget = null; chooseAppIcon.Enabled = restoreIconDefault.Enabled = false; }
             iconSizeSlider.Enabled = resetIconSize.Enabled = !value;
             showAppNames.Enabled = !value;
-            appearanceModePicker.Enabled = appIconStylePicker.Enabled = appIconVariantPicker.Enabled = !value;
+            SetAppearanceBusy(value);
             UpdatePackButtons();
             if (!String.IsNullOrEmpty(message)) status.Text = message;
             UseWaitCursor = value; BuildTrayMenu();
@@ -469,6 +468,7 @@ namespace BetterIcon.Tray
         {
             string hint = !preferences.Hotkey.Enabled ? "Global hotkey disabled." : hotkey != null && hotkey.IsRegistered ? preferences.Hotkey + " opens at your cursor." : "Hotkey unavailable. Choose another combination.";
             subtitle.Text = (fixtureLog == null ? "" : "Test shortcuts only. ") + hint;
+            BuildTrayMenu();
         }
         void ShowSettings()
         {
@@ -476,6 +476,20 @@ namespace BetterIcon.Tray
             if (!Enabled) { ActivateDialog(); return; }
             if (!Visible) ShowManager();
             pages.SelectedTab = settingsPage;
+        }
+        void ChangeHotkey()
+        {
+            if (busy || hotkey == null) return;
+            if (!Enabled || OwnedForms.Any(dialog => dialog.Visible)) { ActivateDialog(); return; }
+            if (!Visible) ShowManager();
+            bool trayEnabled = trayMenu.Enabled;
+            trayMenu.Enabled = false;
+            try {
+                using (HotkeySettingsDialog dialog = new HotkeySettingsDialog(preferences.Hotkey, hotkey.IsRegistered, SaveHotkey)) {
+                    ApplyDialogAppearance(dialog); dialog.ShowDialog(this);
+                }
+            }
+            finally { trayMenu.Enabled = trayEnabled; }
         }
         string SaveHotkey(HotkeySettings requested)
         {
@@ -523,7 +537,7 @@ namespace BetterIcon.Tray
                 catalog = reply.Catalog;
                 bundledThemes = catalog.Themes;
                 ReloadLibrary(null);
-                status.Text = catalog.Apps.Select(a => a.Application).Distinct().Count() + " installed apps / " + catalog.Apps.Length + " launch shortcuts. Enter or double-click to open.";
+                status.Text = "Changes are reviewed before they are applied.";
                 if (catalog.Apps.Length == 0) status.Text = "No ArtCraft shortcuts found. Install an app, then refresh from the tray menu.";
                 Text = "BetterIcon for ArtCraft  " + catalog.Version;
             }
@@ -674,7 +688,7 @@ namespace BetterIcon.Tray
                     apps.Items[0].Selected = apps.Items[0].Focused = true;
                     if (apps.IsHandleCreated) apps.Items[0].EnsureVisible();
                 }
-                filterHint.Text = catalog == null ? "Finding installed apps..." : filterText.Length == 0 ? "No ArtCraft apps found. Open Settings to refresh." : "No apps match '" + filterText + "'. Backspace edits; Esc clears.";
+                filterHint.Text = catalog == null ? "Finding installed apps..." : filterText.Length == 0 ? "No ArtCraft apps found. Right-click the tray icon to refresh." : "No apps match '" + filterText + "'. Backspace edits; Esc clears.";
                 filterHint.Visible = apps.Items.Count == 0;
                 apps.AccessibleDescription = (filterText.Length == 0 ? "Type an app name to filter. Enter opens. Escape closes." : "Filter: " + filterText + ". " + apps.Items.Count + " matches. Escape clears.") + " Ctrl+mouse wheel changes icon size.";
             }
@@ -775,9 +789,26 @@ namespace BetterIcon.Tray
                 item.Click += delegate { ShowSettings(); themes.SelectedItem = captured; status.Text = "Pack preview selected. Choose locations, then Apply icons."; }; themeMenu.DropDownItems.Add(item);
             }
             trayMenu.Items.Add(themeMenu); trayMenu.Items.Add(new ToolStripSeparator());
+            ToolStripMenuItem packActions = new ToolStripMenuItem("Pack actions") { Enabled = !busy };
+            foreach (ToolStripItem command in managePackMenu.Items) {
+                ToolStripMenuItem source = command as ToolStripMenuItem;
+                if (source == null) { packActions.DropDownItems.Add(new ToolStripSeparator()); continue; }
+                ToolStripMenuItem copy = new ToolStripMenuItem(source.Text) { Enabled = source.Enabled };
+                copy.Click += delegate {
+                    if (OwnedForms.Any(dialog => dialog.Visible)) { ActivateDialog(); return; }
+                    ShowSettings();
+                    bool trayEnabled = trayMenu.Enabled; trayMenu.Enabled = false;
+                    try { source.PerformClick(); }
+                    finally { trayMenu.Enabled = trayEnabled; }
+                };
+                packActions.DropDownItems.Add(copy);
+            }
+            trayMenu.Items.Add(packActions);
             ToolStripMenuItem reload = new ToolStripMenuItem("Refresh installed apps") { Enabled = !busy }; reload.Click += async delegate { await RefreshCatalog(); }; trayMenu.Items.Add(reload);
             ToolStripMenuItem restoreItem = new ToolStripMenuItem("Restore original icons...") { Enabled = !busy }; restoreItem.Click += async delegate { ShowSettings(); await RestoreIcons(); }; trayMenu.Items.Add(restoreItem);
-            ToolStripMenuItem settingsItem = new ToolStripMenuItem("Settings...") { Enabled = !busy }; settingsItem.Click += delegate { ShowSettings(); }; trayMenu.Items.Add(settingsItem);
+            ToolStripMenuItem settingsItem = new ToolStripMenuItem("Manage Icons...") { Enabled = !busy }; settingsItem.Click += delegate { ShowSettings(); }; trayMenu.Items.Add(settingsItem);
+            ToolStripMenuItem hotkeyItem = new ToolStripMenuItem("Change hotkey...") { Enabled = !busy && hotkey != null, ToolTipText = subtitle.Text };
+            hotkeyItem.Click += delegate { ChangeHotkey(); }; trayMenu.Items.Add(hotkeyItem);
             trayMenu.Items.Add(new ToolStripSeparator());
             ToolStripMenuItem quit = new ToolStripMenuItem("Exit BetterIcon") { Enabled = !busy }; quit.Click += delegate { ExitLauncher(); }; trayMenu.Items.Add(quit);
             if (appearancePalette != null) AppAppearance.ApplyMenu(trayMenu, appearancePalette);

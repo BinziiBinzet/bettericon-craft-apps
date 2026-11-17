@@ -39,12 +39,20 @@ static class AppearanceTests
         }
         throw new Exception("No empty grid area available for native background verification.");
     }
-    static void CheckBusyThemes(LauncherForm form, ComboBox modePicker, Action<bool, string> check)
+    static void SelectMode(LauncherForm form, string mode)
+    {
+        ((TabControl)Field(form, "pages")).SelectedIndex = 1;
+        Preferences preferences = (Preferences)Field(form, "preferences");
+        Button cycle = (Button)Field(form, "appearanceModeButton");
+        for (int i = 0; preferences.AppearanceMode != mode && i < 3; i++) cycle.PerformClick();
+        if (preferences.AppearanceMode != mode) throw new Exception("The theme cycle did not reach " + mode + ".");
+    }
+    static void CheckBusyThemes(LauncherForm form, Action<bool, string> check)
     {
         TabControl pages = (TabControl)Field(form, "pages");
         IconGridView[] grids = { (IconGridView)Field(form, "apps"), (IconGridView)Field(form, "packPreview") };
         foreach (string mode in new[] { "Dark", "Light", "System" }) {
-            modePicker.SelectedItem = mode;
+            SelectMode(form, mode);
             AppearancePalette palette = (AppearancePalette)Field(form, "appearancePalette");
             Invoke(form, "SetBusy", true, "Saving test artwork...");
             try {
@@ -134,50 +142,62 @@ static class AppearanceTests
         Preferences pref = (Preferences)Field(form, "preferences");
         string savedMode = pref.AppearanceMode, savedStyle = pref.AppIconStyle, savedVariant = pref.AppIconVariant;
         string otherPreferences = json.Serialize(new { pref.Theme, pref.Scope, pref.IconSize, pref.Hotkey, pref.DefaultShortcuts });
-        ComboBox modePicker = (ComboBox)Field(form, "appearanceModePicker"), stylePicker = (ComboBox)Field(form, "appIconStylePicker"), variantPicker = (ComboBox)Field(form, "appIconVariantPicker");
+        Button modeButton = (Button)Field(form, "appearanceModeButton"), iconButton = (Button)Field(form, "appIconButton");
+        ContextMenuStrip iconChoices = (ContextMenuStrip)Field(form, "appIconMenu");
+        Action<string> chooseIcon = text => iconChoices.Items.OfType<ToolStripMenuItem>().Single(item => item.Text == text).PerformClick();
         NotifyIcon tray = (NotifyIcon)Field(form, "tray");
-        PictureBox preview = (PictureBox)Field(form, "appIconPreview");
         TabControl pages = (TabControl)Field(form, "pages");
-        ContextMenuStrip[] menus = new[] { "trayMenu", "iconMenu", "importPackMenu", "managePackMenu" }.Select(name => (ContextMenuStrip)Field(form, name)).ToArray();
+        ContextMenuStrip[] menus = new[] { "trayMenu", "iconMenu", "importPackMenu", "managePackMenu", "appIconMenu" }.Select(name => (ContextMenuStrip)Field(form, name)).ToArray();
         try {
             form.ShowManager(); pages.SelectedIndex = 1;
-            check(modePicker.Items.Cast<string>().SequenceEqual(new[] { "System", "Dark", "Light" }) && stylePicker.Items.Count == 8 && variantPicker.Items.Count == 3, "Settings exposes appearance mode, eight colors and automatic or explicit icon variants");
-            modePicker.SelectedItem = "Dark";
-            variantPicker.SelectedIndex = 0;
+            string[] expectedChoices = new[] { "Match app theme" }.Concat(AppBranding.Styles.SelectMany(style => new[] { AppBranding.Title(style) + " Dark", AppBranding.Title(style) + " Light" })).ToArray();
+            check(iconChoices.Items.Cast<ToolStripItem>().Select(item => item.Text).SequenceEqual(expectedChoices) && iconChoices.Items.OfType<ToolStripMenuItem>().All(item => item.Image != null && item.DropDownItems.Count == 0), "The app-icon menu is one image-and-name list with all sixteen variants and automatic pairing");
+            check(!Descendants(form).OfType<ComboBox>().Any(control => control.AccessibleName == "App theme" || control.AccessibleName == "BetterIcon icon style" || control.AccessibleName == "BetterIcon icon variant"), "Appearance dropdowns are replaced by the two footer buttons");
+            SelectMode(form, "Dark");
+            foreach (string mode in new[] { "Light", "System", "Dark" }) {
+                modeButton.PerformClick();
+                check(pref.AppearanceMode == mode && json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).AppearanceMode == mode && modeButton.AccessibleName.Contains(mode), "The theme button immediately cycles to and saves " + mode);
+            }
+            chooseIcon("Match app theme");
+            iconButton.PerformClick(); Application.DoEvents();
+            check(iconChoices.Visible && (bool)typeof(LauncherForm).GetProperty("AppearanceMenuOpen", instance).GetValue(form, null) && Screen.FromControl(form).WorkingArea.Contains(iconChoices.Bounds), "The app-icon button opens its guarded menu entirely inside the monitor working area");
+            check(iconChoices.Items.Cast<ToolStripItem>().Zip(iconChoices.Items.Cast<ToolStripItem>().Skip(1), (first, second) => first.Bounds.Bottom <= second.Bounds.Top && first.Bounds.Left == second.Bounds.Left).All(value => value), "App-icon choices form a nonoverlapping vertical list");
+            iconChoices.Close();
             check(((AppearancePalette)Field(form, "appearancePalette")).Dark && form.BackColor == AppAppearance.Resolve("Dark").Background && ((Control)Field(form, "apps")).BackColor == AppAppearance.Resolve("Dark").Surface && ((Control)Field(form, "packPreview")).ForeColor == AppAppearance.Resolve("Dark").Text && !((ListView)Field(form, "apps")).OwnerDraw, "Dark appearance reaches the window and both grids retain native icon and label rendering");
             check(menus.All(menu => menu.BackColor == AppAppearance.Resolve("Dark").Surface && menu.Items.Cast<ToolStripItem>().All(item => item.ForeColor == AppAppearance.Resolve("Dark").Text)), "Dark appearance reaches tray, icon, import and pack action menus including rebuilt items");
             HashSet<string> signatures = new HashSet<string>();
             foreach (string style in AppBranding.Styles) foreach (string variant in new[] { "dark", "light" }) {
-                stylePicker.SelectedIndex = Array.IndexOf(AppBranding.Styles, style); variantPicker.SelectedIndex = variant == "dark" ? 1 : 2;
-                using (Icon expected = AppBranding.Load(style, variant)) using (Icon small = AppBranding.Load(style, variant, SystemInformation.SmallIconSize.Width)) using (Bitmap expectedPreview = AppBranding.Preview(style, variant, 48)) {
+                chooseIcon(AppBranding.Title(style) + " " + (variant == "dark" ? "Dark" : "Light"));
+                using (Icon expected = AppBranding.Load(style, variant)) using (Icon small = AppBranding.Load(style, variant, SystemInformation.SmallIconSize.Width)) using (Bitmap expectedPreview = AppBranding.Preview(style, variant, 32)) {
                     string signature = IconPixels(expected); signatures.Add(signature);
                     Preferences written = json.Deserialize<Preferences>(File.ReadAllText(preferencesPath));
-                    check(IconPixels(form.Icon) == signature && IconPixels(tray.Icon) == IconPixels(small) && Pixels(preview.Image) == Pixels(expectedPreview) && written.AppIconStyle == style && written.AppIconVariant == (variant == "dark" ? "Dark" : "Light"),
+                    check(IconPixels(form.Icon) == signature && IconPixels(tray.Icon) == IconPixels(small) && Pixels(iconButton.Image) == Pixels(expectedPreview) && written.AppIconStyle == style && written.AppIconVariant == (variant == "dark" ? "Dark" : "Light") && iconChoices.Items.OfType<ToolStripMenuItem>().Count(item => item.Checked) == 1,
                         "Selecting " + AppBranding.Title(style) + " " + variant + " updates the window, tray, preview and saved preference together");
                 }
             }
             check(signatures.Count == 16, "Every supplied color and variant produces distinct embedded artwork");
             using (Icon small = AppBranding.Load(pref.AppIconStyle, AppBranding.Variant(pref.AppIconVariant, AppAppearance.Resolve(pref.AppearanceMode).Dark), SystemInformation.SmallIconSize.Width))
                 check(tray.Icon.Size == small.Size && tray.Icon.Width <= 32, "The notification-area icon explicitly uses a small frame rather than the large window icon handle");
-            stylePicker.SelectedIndex = Array.IndexOf(AppBranding.Styles, "sage"); variantPicker.SelectedIndex = 0; modePicker.SelectedItem = "Dark";
+            chooseIcon("Sage Dark"); chooseIcon("Match app theme"); SelectMode(form, "Dark");
             using (Icon sage = AppBranding.Load("sage", "dark")) check(IconPixels(form.Icon) == IconPixels(sage), "Sage Dark is the default icon for Dark appearance");
-            modePicker.SelectedItem = "Light";
-            using (Icon sage = AppBranding.Load("sage", "light")) check(IconPixels(form.Icon) == IconPixels(sage) && !((AppearancePalette)Field(form, "appearancePalette")).Dark && modePicker.BackColor == AppAppearance.Resolve("Light").Input, "Switching to Light immediately selects the matching light icon and control palette");
-            variantPicker.SelectedIndex = 1;
+            SelectMode(form, "Light");
+            using (Icon sage = AppBranding.Load("sage", "light")) check(IconPixels(form.Icon) == IconPixels(sage) && !((AppearancePalette)Field(form, "appearancePalette")).Dark && form.BackColor == AppAppearance.Resolve("Light").Background, "Switching to Light immediately selects the matching light icon and control palette");
+            chooseIcon("Sage Dark");
             using (Icon sage = AppBranding.Load("sage", "dark")) check(IconPixels(form.Icon) == IconPixels(sage) && !((AppearancePalette)Field(form, "appearancePalette")).Dark, "A pinned Dark icon stays Dark in a Light app theme");
-            variantPicker.SelectedIndex = 0; modePicker.SelectedItem = "System";
+            chooseIcon("Match app theme"); SelectMode(form, "System");
             Invoke(form, "OnSystemAppearanceChanged", null, new UserPreferenceChangedEventArgs(UserPreferenceCategory.General));
             Application.DoEvents();
-            check(((AppearancePalette)Field(form, "appearancePalette")).Dark == AppAppearance.SystemIsDark() && (string)stylePicker.Tag == (AppAppearance.SystemIsDark() ? "dark" : "light"), "The Windows preference notification refreshes System appearance and its automatic pair");
+            using (Icon expected = AppBranding.Load("sage", AppAppearance.SystemIsDark() ? "dark" : "light"))
+                check(((AppearancePalette)Field(form, "appearancePalette")).Dark == AppAppearance.SystemIsDark() && IconPixels(form.Icon) == IconPixels(expected), "The Windows preference notification refreshes System appearance and its automatic pair");
             Preferences writtenFinal = json.Deserialize<Preferences>(File.ReadAllText(preferencesPath));
             check(json.Serialize(new { writtenFinal.Theme, writtenFinal.Scope, writtenFinal.IconSize, writtenFinal.Hotkey, writtenFinal.DefaultShortcuts }) == otherPreferences, "Appearance changes preserve all existing launcher, pack and shortcut preferences");
-            Invoke(form, "SetBusy", true, null);
-            check(!modePicker.Enabled && !stylePicker.Enabled && !variantPicker.Enabled, "Appearance controls cannot change during a shortcut operation");
+            iconButton.PerformClick(); Invoke(form, "SetBusy", true, null);
+            check(!modeButton.Enabled && !iconButton.Enabled && !iconChoices.Visible, "Appearance controls and their open menu pause during a shortcut operation");
             Invoke(form, "SetBusy", false, null);
 
-            CheckBusyThemes(form, modePicker, check); CheckGridInput(form, check);
+            CheckBusyThemes(form, check); CheckGridInput(form, check);
             foreach (string mode in new[] { "Dark", "Light" }) {
-                modePicker.SelectedItem = mode;
+                SelectMode(form, mode);
                 AppearancePalette p = (AppearancePalette)Field(form, "appearancePalette");
                 using (HotkeySettingsDialog dialog = new HotkeySettingsDialog(pref.Hotkey, false, value => null)) {
                     Invoke(form, "ApplyDialogAppearance", dialog); dialog.Show(form);
@@ -194,7 +214,7 @@ static class AppearanceTests
         }
         finally {
             Invoke(form, "SetBusy", false, null);
-            modePicker.SelectedItem = savedMode; stylePicker.SelectedIndex = Array.IndexOf(AppBranding.Styles, savedStyle); variantPicker.SelectedIndex = savedVariant == "Dark" ? 1 : savedVariant == "Light" ? 2 : 0;
+            iconChoices.Close(); pref.AppearanceMode = savedMode; pref.AppIconStyle = savedStyle; pref.AppIconVariant = savedVariant; Invoke(form, "ChangeAppearance");
             // Preserve the explicit automated-test identity after cycling branding.
             tray.Icon = SystemIcons.Information; tray.Text = "BetterIcon automated tests";
         }

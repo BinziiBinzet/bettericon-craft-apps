@@ -1,5 +1,14 @@
 # Windows installer changelog
 
+## 1.18.0 - 2026-11-17
+
+- Replace Settings with the cleaner Manage Icons layout: pack selection, direct Import/New pack/Remove pack actions, a growing preview grid, app-name and size controls, and Apply/Restore.
+- Give extra window height to the pack preview while retaining at least one complete icon row. Keep scrolling available when large artwork or a small screen cannot fit the controls and preview together.
+- Move BetterIcon's own icon control to the bottom right. Open an upward image-and-name menu with all 16 Dark/Light variants and Match app theme; update the tray and window icons immediately and remember the selection.
+- Replace the appearance dropdown with one button that cycles Dark, Light, and System. Preserve live system-theme updates, automatic icon pairing, and high contrast colors.
+- Move hotkey configuration to Change hotkey in the tray menu. Keep Customize, Edit pack, Export ZIP, and Restore built-in packs under the tray's Pack actions menu and the pack selector's right-click menu. Refresh and Exit remain available from the tray.
+- Retain native icon rendering, 32-pixel rounded corners, edge/corner resizing, themed loading states, and per-operation shortcut review and restoration.
+
 ## 1.17.0 - 2026-11-17
 
 - Remove the persistent shortcut-location dropdown from Settings. Ask Current user or All users each time Apply or Restore is invoked, including one-app context actions and the tray restore command.

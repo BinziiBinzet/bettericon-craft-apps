@@ -68,7 +68,7 @@ namespace BetterIcon.Tray
     public sealed partial class LauncherForm
     {
         readonly TabControl pages = new TabControl();
-        readonly TabPage launcherPage = new TabPage("Launcher"), settingsPage = new TabPage("Settings");
+        readonly TabPage launcherPage = new TabPage("Launcher"), settingsPage = new TabPage("Manage Icons");
         readonly IconGridView packPreview = new IconGridView();
         readonly List<Bitmap> packArtwork = new List<Bitmap>();
         readonly List<ArtworkSource> packSources = new List<ArtworkSource>();
@@ -80,6 +80,9 @@ namespace BetterIcon.Tray
         readonly Label iconSizeValue = new Label();
         readonly Button resetIconSize = new Button();
         readonly CheckBox showAppNames = new CheckBox();
+        readonly Button removePackButton = new Button();
+        readonly Label appVersion = new Label();
+        bool arrangingManageIcons;
         readonly List<Button> packButtons = new List<Button>();
         int iconWheelDelta;
         PackLibrary library;
@@ -90,7 +93,7 @@ namespace BetterIcon.Tray
         {
             bool selected = pages.SelectedIndex == e.Index;
             AppearancePalette palette = appearancePalette ?? AppAppearance.Resolve(preferences.AppearanceMode);
-            Color background = selected ? palette.Accent : palette.InactiveTab, foreground = selected ? Color.White : palette.Text;
+            Color background = selected ? palette.Surface : palette.InactiveTab, foreground = palette.Text;
             if (SystemInformation.HighContrast) { background = selected ? SystemColors.Highlight : SystemColors.Control; foreground = selected ? SystemColors.HighlightText : SystemColors.ControlText; }
             using (Brush brush = new SolidBrush(background)) e.Graphics.FillRectangle(brush, e.Bounds);
             using (Font font = new Font(Font, selected ? FontStyle.Bold : FontStyle.Regular))
@@ -123,7 +126,7 @@ namespace BetterIcon.Tray
         {
             preferences.ShowAppNames = showAppNames.Checked;
             apps.ShowAppNames = packPreview.ShowAppNames = preferences.ShowAppNames;
-            packPreview.Height = Math.Max(128, packPreview.GridCellSize.Height + 12);
+            LayoutManageIcons();
             try { WritePreferences(); status.Text = "App name visibility saved."; }
             catch (IOException) { status.Text = "App name visibility changed for this session, but could not be saved."; }
             catch (UnauthorizedAccessException) { status.Text = "App name visibility changed for this session, but could not be saved."; }
@@ -164,12 +167,20 @@ namespace BetterIcon.Tray
             root.RowCount = 2; root.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             settingsPage.Controls.Add(root);
             settingsScroll.Dock = DockStyle.Fill; settingsScroll.AutoScroll = true; settingsScroll.Margin = Padding.Empty;
-            settingsContent.Dock = DockStyle.Top; settingsContent.AutoSize = true; settingsContent.AutoSizeMode = AutoSizeMode.GrowAndShrink;
-            settingsContent.ColumnCount = 1; settingsContent.Padding = new Padding(16, 14, 16, 2); settingsContent.Margin = Padding.Empty;
+            settingsContent.Dock = DockStyle.Top; settingsContent.AutoSize = false;
+            settingsContent.ColumnCount = 1; settingsContent.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            settingsContent.RowCount = 4;
+            settingsContent.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            settingsContent.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            settingsContent.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            settingsContent.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            settingsContent.Padding = new Padding(32, 26, 32, 8); settingsContent.Margin = Padding.Empty;
             settingsScroll.Controls.Add(settingsContent); root.Controls.Add(settingsScroll, 0, 0);
 
-            TableLayoutPanel packs = SettingsSection("IconPackSection", "Icon pack");
+            TableLayoutPanel packs = SettingsTable(1); packs.Name = "IconPackSection";
+            SettingsRow(packs, new Label { Text = "Icon pack", AutoSize = true, Font = new Font(Font, FontStyle.Bold), Margin = new Padding(0, 0, 0, 8) });
             themes.DropDownStyle = ComboBoxStyle.DropDownList; themes.Dock = DockStyle.Top; themes.Margin = new Padding(0, 0, 0, 5); themes.AccessibleName = "Icon pack";
+            themes.AccessibleDescription = "Select an icon pack. Right-click for pack editing and ZIP export, also available in the tray Pack actions menu.";
             themes.SelectedIndexChanged += delegate { SelectPack(); };
             SettingsRow(packs, themes);
             packDetails.AutoSize = true; packDetails.Dock = DockStyle.Top; packDetails.Margin = new Padding(0, 0, 0, 10);
@@ -181,25 +192,32 @@ namespace BetterIcon.Tray
             importPackMenu.Items.Add("From folder...", null, delegate { ImportPack(false); });
             import.Click += delegate { importPackMenu.Show(import, new Point(0, import.Height)); };
             Button create = PackButton("New pack...", 120, delegate { EditPack(false, false); });
-            Button manage = PackButton("Pack actions...", 140, delegate { });
             managePackMenu.Items.Add("Customize...", null, delegate { EditPack(true, false); });
             managePackMenu.Items.Add("Edit pack...", null, delegate { EditPack(true, true); });
             managePackMenu.Items.Add("Export ZIP...", null, delegate { ExportPack(); });
             managePackMenu.Items.Add(new ToolStripSeparator());
-            managePackMenu.Items.Add("Remove pack", null, delegate { RemovePack(); });
             managePackMenu.Items.Add("Restore built-in packs", null, delegate { try { library.RestoreBundled(); ReloadLibrary(null); } catch (Exception error) { Report(error); } });
-            manage.Click += delegate { UpdatePackButtons(); managePackMenu.Show(manage, new Point(0, manage.Height)); };
-            int column = 0; foreach (Button button in new[] { import, create, manage }) { SettingsButton(button); actions.Controls.Add(button, column++, 0); }
+            managePackMenu.Opening += delegate { UpdatePackButtons(); };
+            themes.ContextMenuStrip = managePackMenu;
+            removePackButton.Text = "Remove pack"; removePackButton.AccessibleName = "Remove pack";
+            removePackButton.Click += delegate { RemovePack(); };
+            int column = 0; foreach (Button button in new[] { import, create, removePackButton }) { SettingsButton(button); actions.Controls.Add(button, column++, 0); }
             SettingsRow(packs, actions);
-            packPreview.Dock = DockStyle.Top; packPreview.Height = 128; packPreview.Margin = Padding.Empty;
+            settingsContent.Controls.Add(packs, 0, 0);
+            packPreview.Dock = DockStyle.Fill; packPreview.Margin = new Padding(0, 0, 0, 16);
             packPreview.ShowAppNames = preferences.ShowAppNames; packPreview.SetIconSize(preferences.IconSize);
             packPreview.MultiSelect = false; packPreview.HideSelection = false; packPreview.ShowItemToolTips = true;
             packPreview.BorderStyle = BorderStyle.None; packPreview.BackColor = Color.White; packPreview.AccessibleName = "Icon pack preview";
-            SettingsRow(packs, packPreview);
+            settingsContent.Controls.Add(packPreview, 0, 1);
 
             BuildAppearanceSettings();
 
-            TableLayoutPanel launcher = SettingsSection("LauncherSection", "Launcher");
+            TableLayoutPanel launcher = SettingsTable(1); launcher.Name = "LauncherSection";
+            showAppNames.Text = "Show app names"; showAppNames.AccessibleName = "Show app names";
+            showAppNames.AutoSize = true; showAppNames.Dock = DockStyle.Top;
+            showAppNames.Margin = new Padding(0, 0, 0, 14); showAppNames.Checked = preferences.ShowAppNames;
+            showAppNames.CheckedChanged += delegate { ChangeAppNames(); };
+            SettingsRow(launcher, showAppNames);
             TableLayoutPanel sizing = SettingsTable(4); sizing.Margin = new Padding(0, 0, 0, 10);
             sizing.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); sizing.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             sizing.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); sizing.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
@@ -213,34 +231,46 @@ namespace BetterIcon.Tray
             iconSizeSlider.ValueChanged += delegate { ChangeIconSize(); };
             sizing.Controls.Add(iconSizeSlider, 1, 0); sizing.Controls.Add(iconSizeValue, 2, 0); sizing.Controls.Add(resetIconSize, 3, 0);
             SettingsRow(launcher, sizing);
-            showAppNames.Text = "Show app names"; showAppNames.AccessibleName = "Show app names";
-            showAppNames.AutoSize = true; showAppNames.Dock = DockStyle.Top;
-            showAppNames.Margin = new Padding(0, 0, 0, 10); showAppNames.Checked = preferences.ShowAppNames;
-            showAppNames.CheckedChanged += delegate { ChangeAppNames(); };
-            SettingsRow(launcher, showAppNames);
-            TableLayoutPanel keyboard = SettingsTable(2);
-            keyboard.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); keyboard.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            subtitle.AutoSize = true; subtitle.Dock = DockStyle.Fill; subtitle.TextAlign = ContentAlignment.MiddleLeft; subtitle.Margin = new Padding(0, 0, 12, 0);
-            settings.Text = "Change hotkey..."; SettingsButton(settings);
-            settings.Click += delegate { if (hotkey != null) using (HotkeySettingsDialog dialog = new HotkeySettingsDialog(preferences.Hotkey, hotkey.IsRegistered, SaveHotkey)) { ApplyDialogAppearance(dialog); dialog.ShowDialog(this); } };
-            keyboard.Controls.Add(subtitle, 0, 0); keyboard.Controls.Add(settings, 1, 0); SettingsRow(launcher, keyboard);
+            settingsContent.Controls.Add(launcher, 0, 2);
 
-            TableLayoutPanel shortcuts = SettingsSection("ShortcutsSection", "Windows shortcuts");
+            TableLayoutPanel shortcuts = SettingsTable(1); shortcuts.Name = "ShortcutsSection";
             TableLayoutPanel applyRow = SettingsTable(2);
             applyRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50)); applyRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
             apply.Text = "Apply icons..."; apply.Tag = "PrimaryAction"; SettingsButton(apply); apply.BackColor = accent; apply.ForeColor = Color.White; apply.FlatStyle = FlatStyle.Flat; apply.Click += async delegate { await ApplyTheme(); };
             restore.Text = "Restore all defaults..."; SettingsButton(restore); restore.Click += async delegate { await RestoreIcons(); };
             applyRow.Controls.Add(apply, 0, 0); applyRow.Controls.Add(restore, 1, 0); SettingsRow(shortcuts, applyRow);
-            previewLabel.Text = "Choose locations when applying or restoring icons."; previewLabel.AutoSize = true; previewLabel.Dock = DockStyle.Top; previewLabel.Margin = new Padding(0, 8, 0, 0); SettingsRow(shortcuts, previewLabel);
+            status.Text = testing ? "Test library and shortcuts only." : "Changes are reviewed before they are applied.";
+            status.AutoSize = false; status.Height = Font.Height + 10; status.Dock = DockStyle.Top; status.AutoEllipsis = true;
+            status.Margin = new Padding(4, 8, 4, 0); status.AccessibleName = "Status";
+            SettingsRow(shortcuts, status); settingsContent.Controls.Add(shortcuts, 0, 3);
 
-            TableLayoutPanel footer = SettingsTable(3); footer.Padding = new Padding(16, 8, 16, 12);
+            TableLayoutPanel footer = SettingsTable(3); footer.Name = "ManageIconsFooter"; footer.Padding = new Padding(24, 6, 24, 12);
             footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            status.AutoSize = true; status.Dock = DockStyle.Fill; status.Margin = new Padding(0, 0, 0, 8);
-            status.Text = testing ? "Test library and shortcuts only." : "Finding installed apps...";
-            footer.Controls.Add(status, 0, 0); footer.SetColumnSpan(status, 3);
-            Button refresh = PackButton("Refresh apps", 132, async delegate { await RefreshCatalog(); }); SettingsButton(refresh);
-            exit.Text = "Exit"; SettingsButton(exit); exit.Click += delegate { ExitLauncher(); };
-            footer.Controls.Add(refresh, 1, 1); footer.Controls.Add(exit, 2, 1); root.Controls.Add(footer, 0, 1);
+            appVersion.Text = "Better Icon for ArtCraft version " + typeof(LauncherForm).Assembly.GetName().Version.ToString(3);
+            appVersion.AutoSize = true; appVersion.Dock = DockStyle.Fill; appVersion.TextAlign = ContentAlignment.MiddleRight;
+            appVersion.Margin = new Padding(0, 0, 10, 0); appVersion.Tag = "SecondaryText";
+            footer.Controls.Add(appVersion, 0, 0); footer.Controls.Add(appIconButton, 1, 0); footer.Controls.Add(appearanceModeButton, 2, 0);
+            root.Controls.Add(footer, 0, 1);
+            settingsScroll.ClientSizeChanged += delegate { LayoutManageIcons(); };
+            settingsContent.Layout += delegate { LayoutManageIcons(); };
+            settingsPage.VisibleChanged += delegate { if (settingsPage.Visible) LayoutManageIcons(); };
+        }
+        void LayoutManageIcons()
+        {
+            if (arrangingManageIcons || settingsContent.Controls.Count < 4 || settingsScroll.ClientSize.Width <= 0) return;
+            arrangingManageIcons = true;
+            try {
+                int rowHeight = packPreview.GridCellSize.Height + 12;
+                if (packPreview.MinimumSize.Height != rowHeight) packPreview.MinimumSize = new Size(0, rowHeight);
+                int width = Math.Max(1, settingsScroll.ClientSize.Width - settingsContent.Padding.Horizontal - SystemInformation.VerticalScrollBarWidth);
+                int minimum = settingsContent.Padding.Vertical + rowHeight + packPreview.Margin.Vertical;
+                foreach (Control control in settingsContent.Controls) if (control != packPreview)
+                    minimum += control.GetPreferredSize(new Size(width, 0)).Height + control.Margin.Vertical;
+                int height = Math.Max(settingsScroll.ClientSize.Height, minimum);
+                if (settingsContent.Height != height) settingsContent.Height = height;
+                settingsScroll.AutoScrollMinSize = new Size(0, minimum);
+            }
+            finally { arrangingManageIcons = false; }
         }
         void ReloadLibrary(string selectId)
         {
@@ -281,7 +311,7 @@ namespace BetterIcon.Tray
                 EnsureArtworkSize(packArtwork, packSources, preferences.IconSize);
                 packPreview.SetArtwork(packArtwork, preferences.IconSize);
                 // Leave room for at least one complete row, including names, at the largest size.
-                packPreview.Height = Math.Max(128, packPreview.GridCellSize.Height + 12);
+                LayoutManageIcons();
                 if (packPreview.SelectedItems.Count == 1) packPreview.SelectedItems[0].EnsureVisible();
             }
             finally { packPreview.EndUpdate(); }
@@ -295,6 +325,7 @@ namespace BetterIcon.Tray
                 item.Enabled = !busy && (item.Text == "Restore built-in packs" || (SelectedTheme != null && !SelectedTheme.IsDefault && (!needsPersonal || SelectedTheme.Managed)));
             }
             bool defaults = SelectedTheme != null && SelectedTheme.IsDefault;
+            removePackButton.Enabled = !busy && SelectedTheme != null && !defaults;
             apply.Text = defaults ? "Restore ArtCraft defaults..." : "Apply icons...";
             restore.Visible = !defaults;
             TableLayoutPanel applyRow = apply.Parent as TableLayoutPanel;

@@ -489,7 +489,8 @@ static class TrayTests
         call("ReloadLibrary", new object[] { null });
         Check(themes.SelectedIndex == 0 && ((ThemeEntry)themes.SelectedItem).IsDefault,
             "Refreshing the pack library preserves the default selection");
-        Check(new[] { "Customize...", "Edit pack...", "Export ZIP...", "Remove pack" }.All(name => !menu.Items.Cast<ToolStripItem>().First(item => item.Text == name).Enabled)
+        Check(new[] { "Customize...", "Edit pack...", "Export ZIP..." }.All(name => !menu.Items.Cast<ToolStripItem>().First(item => item.Text == name).Enabled)
+            && !((Button)field("removePackButton")).Enabled
             && menu.Items.Cast<ToolStripItem>().First(item => item.Text == "Restore built-in packs").Enabled,
             "The virtual default cannot be customized, edited, exported or removed");
         Check(apply.Enabled && apply.Text == "Restore ArtCraft defaults...", "Choosing the default presents the restore-all action");
@@ -786,7 +787,7 @@ static class TrayTests
                         Action<string> type = value => PlainText(form, value);
                         Action<Keys> key = delegate(Keys value) { keyDown.Invoke(form, new object[] { new KeyEventArgs(value) }); };
                         TabControl pages = (TabControl)typeof(LauncherForm).GetField("pages", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
-                        Check(pages.TabPages.Count == 2 && pages.TabPages[0].Text == "Launcher" && pages.TabPages[1].Text == "Settings", "Launcher and Settings occupy the left and right tabs");
+                        Check(pages.TabPages.Count == 2 && pages.TabPages[0].Text == "Launcher" && pages.TabPages[1].Text == "Manage Icons", "Launcher and Manage Icons occupy the left and right tabs");
                         Check(pages.TabPages[0].Controls.Count == 2 && !filter.Visible, "The populated Launcher page contains only the app grid");
                         TrackBar slider = (TrackBar)typeof(LauncherForm).GetField("iconSizeSlider", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
                         List<Bitmap> cached = (List<Bitmap>)typeof(LauncherForm).GetField("appArtwork", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
@@ -850,31 +851,83 @@ static class TrayTests
                         ComboBox themePicker = (ComboBox)typeof(LauncherForm).GetField("themes", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
                         Panel settingsScroll = (Panel)typeof(LauncherForm).GetField("settingsScroll", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
                         TableLayoutPanel settingsContent = (TableLayoutPanel)typeof(LauncherForm).GetField("settingsContent", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
-                        Check(new[] { "IconPackSection", "AppearanceSection", "LauncherSection", "ShortcutsSection" }.All(name => settingsContent.Controls.Find(name, true).Length == 1), "Settings groups pack management, appearance, launcher preferences, and Windows shortcuts into separate sections");
+                        Button removePack = (Button)typeof(LauncherForm).GetField("removePackButton", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
+                        Check(removePack.Visible && removePack.Text == "Remove pack" && removePack.ContextMenuStrip == null
+                            && !Descendants(pages.TabPages[1]).OfType<Button>().Any(button => button.Text == "Pack actions..." || button.Text == "Change hotkey..." || button.Text == "Exit" || button.Text == "Refresh apps"),
+                            "Manage Icons has a direct Remove pack button and no old pack-actions, hotkey or utility buttons");
+                        Check(previewGrid.Dock == DockStyle.Fill && previewGrid.Parent == settingsContent,
+                            "The pack preview occupies the flexible middle row of Manage Icons");
                         Size previousSize = form.Size; int previousIconSize = slider.Value;
                         try {
-                            foreach (Size windowSize in new[] { new Size(790, 570), new Size(900, 690) }) foreach (int iconSize in new[] { 24, 128 }) {
+                            foreach (Size windowSize in new[] { new Size(790, 570), new Size(900, 690), new Size(900, 900) }) foreach (int iconSize in new[] { 24, 128, 184 }) {
                                 form.Size = windowSize; slider.Value = iconSize; settingsScroll.AutoScrollPosition = Point.Empty;
                                 form.PerformLayout(); settingsContent.PerformLayout(); Application.DoEvents();
                                 string layoutProblem = SettingsLayoutProblem(settingsContent);
-                                Check(layoutProblem == null && settingsContent.Width <= settingsScroll.ClientSize.Width && !settingsScroll.HorizontalScroll.Visible,
-                                    "Settings controls remain separated and fit horizontally at " + windowSize.Width + "x" + windowSize.Height + ", " + iconSize + "-pixel icons" + (layoutProblem == null ? "" : ": " + layoutProblem));
+                                Check(layoutProblem == null && settingsContent.Width <= settingsScroll.ClientSize.Width && !settingsScroll.HorizontalScroll.Visible && previewGrid.Height >= ((IconGridView)previewGrid).GridCellSize.Height,
+                                    "Manage Icons fits its controls and at least one complete icon row at " + windowSize.Width + "x" + windowSize.Height + ", " + iconSize + "-pixel icons" + (layoutProblem == null ? "" : ": " + layoutProblem));
                             }
+                            slider.Value = 64; form.Size = new Size(900, 690); form.PerformLayout(); Application.DoEvents();
+                            int compactPreview = previewGrid.Height;
+                            form.Size = new Size(900, 900); form.PerformLayout(); Application.DoEvents();
+                            Check(previewGrid.Height >= compactPreview + 190,
+                                "Increasing window height gives the pack preview additional visible rows instead of adding empty space");
                         }
                         finally { form.Size = previousSize; slider.Value = previousIconSize; settingsScroll.AutoScrollPosition = Point.Empty; form.PerformLayout(); }
                         ContextMenuStrip importMenu = (ContextMenuStrip)typeof(LauncherForm).GetField("importPackMenu", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
                         ContextMenuStrip manageMenu = (ContextMenuStrip)typeof(LauncherForm).GetField("managePackMenu", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
+                        ContextMenuStrip trayCommands = (ContextMenuStrip)typeof(LauncherForm).GetField("trayMenu", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
+                        ToolStripMenuItem packCommands = trayCommands.Items.OfType<ToolStripMenuItem>().Single(item => item.Text == "Pack actions");
+                        Check(new[] { "Customize...", "Edit pack...", "Export ZIP...", "Restore built-in packs" }.All(text => packCommands.DropDownItems.Cast<ToolStripItem>().Any(item => item.Text == text)) && themePicker.ContextMenuStrip == manageMenu,
+                            "Pack editing, customization, ZIP sharing and built-in recovery remain reachable from the tray and pack selector");
                         ToolStripItem[] manageItems = manageMenu.Items.Cast<ToolStripItem>().ToArray();
                         Check(new[] { "Edit pack...", "Export ZIP..." }.All(text => manageItems.Single(item => item.Text == text).Enabled == false) && manageItems.Single(item => item.Text == "Customize...").Enabled,
                             "Built-in packs offer Customize while personal-only Edit and Export actions stay disabled");
+                        ThemeEntry beforeCustomize = (ThemeEntry)themePicker.SelectedItem;
+                        byte[] beforeCustomizePreferences = File.ReadAllBytes(preferencesPath);
+                        string[] beforeCustomizeThemes = themePicker.Items.Cast<ThemeEntry>().Select(theme => theme.Id).ToArray();
+                        PackLibrary fixtureLibrary = (PackLibrary)typeof(LauncherForm).GetField("library", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
+                        Func<string[]> libraryFiles = () => Directory.Exists(fixtureLibrary.Root) ? Directory.GetFileSystemEntries(fixtureLibrary.Root, "*", SearchOption.AllDirectories).OrderBy(path => path).ToArray() : new string[0];
+                        string[] beforeCustomizeFiles = libraryFiles();
+                        string libraryManifest = Path.Combine(fixtureLibrary.Root, "library.json");
+                        Func<string> manifestBytes = () => File.Exists(libraryManifest) ? Convert.ToBase64String(File.ReadAllBytes(libraryManifest)) : null;
+                        string beforeCustomizeManifest = manifestBytes();
+                        bool customizeSeen = false, customizeTrayDisabled = false, customizeHasBasis = false;
+                        Exception customizeFailure = null;
+                        DateTime customizeDeadline = DateTime.UtcNow.AddSeconds(10);
+                        using (System.Windows.Forms.Timer closeCustomize = new System.Windows.Forms.Timer { Interval = 25 }) {
+                            closeCustomize.Tick += delegate {
+                                if (DateTime.UtcNow > customizeDeadline) {
+                                    customizeFailure = new Exception("The tray Customize command did not open the pack editor within ten seconds.");
+                                    foreach (Form dialog in form.OwnedForms) { dialog.DialogResult = DialogResult.Cancel; dialog.Close(); }
+                                    closeCustomize.Stop(); return;
+                                }
+                                PackEditor editor = form.OwnedForms.OfType<PackEditor>().FirstOrDefault();
+                                if (editor == null) return;
+                                customizeSeen = true;
+                                customizeTrayDisabled = !((ContextMenuStrip)typeof(LauncherForm).GetField("trayMenu", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form)).Enabled;
+                                customizeHasBasis = Descendants(editor).OfType<TextBox>().Single(box => box.AccessibleName == "Pack name").Text == beforeCustomize.Name + " custom";
+                                closeCustomize.Stop(); ((Button)editor.CancelButton).PerformClick();
+                            };
+                            closeCustomize.Start();
+                            packCommands.DropDownItems.OfType<ToolStripMenuItem>().Single(item => item.Text == "Customize...").PerformClick();
+                            closeCustomize.Stop();
+                        }
+                        if (customizeFailure != null) throw customizeFailure;
+                        trayCommands = (ContextMenuStrip)typeof(LauncherForm).GetField("trayMenu", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
+                        Check(customizeSeen && customizeHasBasis, "The tray Customize command opens the existing editor with the selected pack as its basis");
+                        Check(customizeTrayDisabled && trayCommands.Enabled, "The pack editor pauses tray commands and restores them after cancellation");
+                        Check(((ThemeEntry)themePicker.SelectedItem).Id == beforeCustomize.Id && themePicker.Items.Cast<ThemeEntry>().Select(theme => theme.Id).SequenceEqual(beforeCustomizeThemes)
+                            && File.ReadAllBytes(preferencesPath).SequenceEqual(beforeCustomizePreferences) && libraryFiles().SequenceEqual(beforeCustomizeFiles) && manifestBytes() == beforeCustomizeManifest,
+                            "Canceling tray customization preserves pack selection, library files and preferences without creating a pack");
                         pages.SelectedIndex = 0;
                         PropertyInfo canFilter = typeof(LauncherForm).GetProperty("CanFilter", BindingFlags.Instance | BindingFlags.NonPublic);
-                        foreach (ContextMenuStrip menu in new[] { importMenu, manageMenu }) {
+                        ContextMenuStrip brandingMenu = (ContextMenuStrip)typeof(LauncherForm).GetField("appIconMenu", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
+                        foreach (ContextMenuStrip menu in new[] { importMenu, manageMenu, brandingMenu }) {
                             try {
                                 menu.Show(list, new Point(8, 8));
                                 bool filteringBlocked = !(bool)canFilter.GetValue(form, null);
                                 type("zzz");
-                                Check(menu.Visible && filteringBlocked && list.Items.Count == 3, (menu == importMenu ? "Import" : "Pack actions") + " menu keeps keyboard input out of launcher filtering");
+                                Check(menu.Visible && filteringBlocked && list.Items.Count == 3, (menu == importMenu ? "Import" : menu == manageMenu ? "Pack actions" : "App icon") + " menu keeps keyboard input out of launcher filtering");
                             }
                             finally { menu.Close(); }
                         }
@@ -893,6 +946,20 @@ static class TrayTests
                         Check(list.Items.Count == 3, "Ctrl+Backspace clears the entire filter");
                         key(Keys.Escape); Check(!form.Visible, "Escape with no filter closes the popup");
                         form.ShowManager();
+                        bool hotkeyDialogSeen = false, hotkeyTrayDisabled = false;
+                        using (System.Windows.Forms.Timer closeHotkey = new System.Windows.Forms.Timer { Interval = 25 }) {
+                            closeHotkey.Tick += delegate {
+                                HotkeySettingsDialog dialog = form.OwnedForms.OfType<HotkeySettingsDialog>().FirstOrDefault();
+                                if (dialog == null) return;
+                                hotkeyDialogSeen = true; hotkeyTrayDisabled = !trayCommands.Enabled;
+                                dialog.DialogResult = DialogResult.Cancel; dialog.Close();
+                            };
+                            closeHotkey.Start();
+                            trayCommands.Items.OfType<ToolStripMenuItem>().Single(item => item.Text == "Change hotkey...").PerformClick();
+                            closeHotkey.Stop();
+                        }
+                        Check(hotkeyDialogSeen, "The tray Change hotkey command opens the existing configuration and disable dialog");
+                        Check(hotkeyTrayDisabled && trayCommands.Enabled, "The hotkey dialog pauses tray commands and restores them after cancellation");
                         MethodInfo saveHotkey = typeof(LauncherForm).GetMethod("SaveHotkey", BindingFlags.Instance | BindingFlags.NonPublic);
                         string themeBefore = json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).Theme;
                         Check(saveHotkey.Invoke(form, new object[] { second }) == null, "Settings apply a custom combination without restarting");

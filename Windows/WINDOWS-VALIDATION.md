@@ -1,5 +1,25 @@
 # Windows validation
 
+## 1.18.0 Manage Icons redesign - 2026-11-17
+
+Local native regression coverage exercises the direct Remove pack button and
+default-pack protection; the renamed Manage Icons tab; footer app-icon selection
+and persistence for all sixteen variants; automatic dark/light pairing; the
+Dark, Light, System cycle; menu placement and input guards; and tray hotkey and
+pack-command dialogs, including cancellation and recovery of tray input.
+
+Layout checks cover 790x570, 900x690 and 900x900 windows at 24, 128 and 184-pixel
+icon sizes, plus larger artwork and label visibility. Vertical growth goes to
+the pack preview, which retains at least one complete icon/name row. Short
+windows and oversized artwork use the surrounding scroll area without overlapping
+the controls or footer. Existing SVG, native alpha rendering, loading, shortcut
+location choice, and exact restoration checks remain in the suite.
+
+The user requested skipping Computer Use. These are automated native fixture
+checks on disposable packs and shortcuts, not physical mouse/keyboard inspection.
+No installed ArtCraft shortcut is modified by this validation. The shortcut
+installer backend is unchanged from the previously tested version.
+
 ## 1.17.0 shortcut locations chosen per operation - 2026-11-17
 
 All 21 focused native checks passed for the new location flow. Settings has no
