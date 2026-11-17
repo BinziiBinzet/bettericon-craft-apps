@@ -1,5 +1,10 @@
 # Windows installer changelog
 
+## 1.18.1 - 2026-11-17
+
+- Remove the light native outlines around the main popup and tab pages. Paint the tab strip in the selected app theme while retaining native tab navigation, accessibility, 32-pixel corners, and edge/corner resizing.
+- Preserve system border behavior in Windows high contrast mode.
+
 ## 1.18.0 - 2026-11-17
 
 - Replace Settings with the cleaner Manage Icons layout: pack selection, direct Import/New pack/Remove pack actions, a growing preview grid, app-name and size controls, and Apply/Restore.

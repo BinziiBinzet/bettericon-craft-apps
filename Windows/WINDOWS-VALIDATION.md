@@ -1,5 +1,19 @@
 # Windows validation
 
+## 1.18.1 flat window and tab edges - 2026-11-17
+
+Native rendered-pixel checks cover the tab headers and page perimeter in Dark,
+Light and System, at minimum/default/tall sizes, with either tab selected and
+after handle recreation. The previous 1.18.0 executable fails the border-pixel
+checks, detecting its white/gray native outlines. DWM border-color readback is
+unavailable on the local host (HRESULT 80070057) and is explicitly skipped;
+the main popup requests no decorative DWM border while high contrast keeps the
+system default. Existing native edge/corner hit-test,
+rounded-region, keyboard, layout and menu checks remain in the full suite.
+
+Computer Use remains skipped. The paint regression uses isolated native test
+controls and does not capture or operate the user's desktop.
+
 ## 1.18.0 Manage Icons redesign - 2026-11-17
 
 Local native regression coverage exercises the direct Remove pack button and

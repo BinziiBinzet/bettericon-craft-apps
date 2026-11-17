@@ -16,6 +16,7 @@ static class AppearanceTests
 {
     [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll")] static extern bool IsWindowEnabled(IntPtr window);
+    [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr window, int attribute, out uint value, int size);
     static readonly BindingFlags instance = BindingFlags.Instance | BindingFlags.NonPublic;
     static object Field(LauncherForm form, string name) { return typeof(LauncherForm).GetField(name, instance).GetValue(form); }
     static void Invoke(LauncherForm form, string name, params object[] args) { typeof(LauncherForm).GetMethod(name, instance).Invoke(form, args); }
@@ -38,6 +39,84 @@ static class AppearanceTests
             foreach (Point point in empty) if (!grid.Items.Cast<ListViewItem>().Any(item => item.Bounds.Contains(point))) return bitmap.GetPixel(point.X, point.Y);
         }
         throw new Exception("No empty grid area available for native background verification.");
+    }
+    static string ChromePixels(TabControl pages, AppearancePalette palette)
+    {
+        using (Bitmap bitmap = new Bitmap(pages.Width, pages.Height)) {
+            pages.Refresh(); pages.DrawToBitmap(bitmap, pages.ClientRectangle);
+            Func<int, int, Color, string> pixel = (x, y, expected) => {
+                Color actual = bitmap.GetPixel(x, y);
+                return actual.ToArgb() == expected.ToArgb() ? null : "pixel " + x + "," + y + " was " + actual + ", expected " + expected;
+            };
+            int headerBottom = Enumerable.Range(0, pages.TabCount).Max(index => pages.GetTabRect(index).Bottom);
+            // The page frame is empty chrome, not app content; inspect its real
+            // rendered perimeter rather than a control BackColor property.
+            for (int y = headerBottom + 2; y < bitmap.Height; y++) foreach (int x in new[] { 0, 1, bitmap.Width - 2, bitmap.Width - 1 }) {
+                string problem = pixel(x, y, palette.Surface); if (problem != null) return "page border: " + problem;
+            }
+            for (int x = 0; x < bitmap.Width; x++) foreach (int y in new[] { bitmap.Height - 2, bitmap.Height - 1 }) {
+                string problem = pixel(x, y, palette.Surface); if (problem != null) return "bottom border: " + problem;
+            }
+            for (int index = 0; index < pages.TabCount; index++) {
+                Rectangle tab = pages.GetTabRect(index);
+                Color expected = index == pages.SelectedIndex ? palette.HighContrast ? SystemColors.Highlight : palette.Surface : palette.HighContrast ? SystemColors.Control : palette.InactiveTab;
+                // Stay outside both the centered label and the inset keyboard
+                // focus rectangle, while checking all four header edges.
+                for (int x = tab.Left + 1; x < tab.Right - 1; x++) foreach (int y in new[] { tab.Top + 1, tab.Bottom - 2 }) {
+                    string problem = pixel(x, y, expected); if (problem != null) return "tab " + index + ": " + problem;
+                }
+                for (int y = tab.Top + 1; y < tab.Bottom - 1; y++) foreach (int x in new[] { tab.Left + 1, tab.Right - 2 }) {
+                    string problem = pixel(x, y, expected); if (problem != null) return "tab " + index + ": " + problem;
+                }
+            }
+        }
+        return null;
+    }
+    static void CheckWindowBorder(LauncherForm form, Action<bool, string> check, string phase)
+    {
+        uint value;
+        int result = DwmGetWindowAttribute(form.Handle, 34, out value, sizeof(uint));
+        if (result == 0) check(value == (SystemInformation.HighContrast ? 0xFFFFFFFF : 0xFFFFFFFE), "Windows DWM uses the requested outer window border policy " + phase + " (value " + value.ToString("X8") + ")");
+        else Console.WriteLine("SKIP: This Windows build does not expose DWM border-color readback " + phase + " (HRESULT " + result.ToString("X8") + ")");
+    }
+    public static void CheckChrome(LauncherForm form, Action<bool, string> check)
+    {
+        TabControl pages = (TabControl)Field(form, "pages");
+        Preferences preferences = (Preferences)Field(form, "preferences");
+        string savedMode = preferences.AppearanceMode; int savedPage = pages.SelectedIndex; Size savedSize = form.Size;
+        try {
+            foreach (string mode in new[] { "Dark", "Light", "System" }) {
+                preferences.AppearanceMode = mode; Invoke(form, "ApplyAppearance");
+                foreach (Size size in new[] { new Size(790, 570), new Size(900, 818), new Size(1100, 900) }) {
+                    form.Size = size;
+                    typeof(Form).GetMethod("OnResizeEnd", instance).Invoke(form, new object[] { EventArgs.Empty });
+                    for (int page = 0; page < pages.TabCount; page++) {
+                        pages.SelectedIndex = page; form.PerformLayout(); pages.PerformLayout(); Application.DoEvents();
+                        string problem = ChromePixels(pages, (AppearancePalette)Field(form, "appearancePalette"));
+                        check(problem == null, mode + " native tab and page edges have no system outline at " + size.Width + "x" + size.Height + ", page " + page + (problem == null ? "" : ": " + problem));
+                    }
+                }
+                typeof(Control).GetMethod("RecreateHandle", instance).Invoke(pages, null);
+                Application.DoEvents();
+                string recreated = ChromePixels(pages, (AppearancePalette)Field(form, "appearancePalette"));
+                check(recreated == null, mode + " tab chrome remains flat after native handle recreation" + (recreated == null ? "" : ": " + recreated));
+            }
+            pages.SelectedIndex = 0; pages.Focus();
+            SendMessage(pages.Handle, 0x0100, new IntPtr((int)Keys.Right), IntPtr.Zero);
+            SendMessage(pages.Handle, 0x0101, new IntPtr((int)Keys.Right), IntPtr.Zero);
+            check(pages.SelectedIndex == 1, "The borderless tab control retains native keyboard navigation to Manage Icons");
+            SendMessage(pages.Handle, 0x0100, new IntPtr((int)Keys.Left), IntPtr.Zero);
+            SendMessage(pages.Handle, 0x0101, new IntPtr((int)Keys.Left), IntPtr.Zero);
+            check(pages.SelectedIndex == 0, "Native keyboard navigation returns to Launcher after tab handle recreation");
+            CheckWindowBorder(form, check, "after theme changes");
+            typeof(Control).GetMethod("RecreateHandle", instance).Invoke(form, null); Application.DoEvents();
+            CheckWindowBorder(form, check, "after native window recreation");
+        }
+        finally {
+            form.Size = savedSize; preferences.AppearanceMode = savedMode; Invoke(form, "ApplyAppearance");
+            typeof(Form).GetMethod("OnResizeEnd", instance).Invoke(form, new object[] { EventArgs.Empty });
+            pages.SelectedIndex = savedPage; form.PerformLayout();
+        }
     }
     static void SelectMode(LauncherForm form, string mode)
     {
@@ -195,7 +274,7 @@ static class AppearanceTests
             check(!modeButton.Enabled && !iconButton.Enabled && !iconChoices.Visible, "Appearance controls and their open menu pause during a shortcut operation");
             Invoke(form, "SetBusy", false, null);
 
-            CheckBusyThemes(form, check); CheckGridInput(form, check);
+            CheckChrome(form, check); CheckBusyThemes(form, check); CheckGridInput(form, check);
             foreach (string mode in new[] { "Dark", "Light" }) {
                 SelectMode(form, mode);
                 AppearancePalette p = (AppearancePalette)Field(form, "appearancePalette");

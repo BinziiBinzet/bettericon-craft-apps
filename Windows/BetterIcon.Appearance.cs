@@ -143,6 +143,12 @@ namespace BetterIcon.Tray
                     DwmSetWindowAttribute(control.Handle, 20, ref dark, 4);
                     int caption = ColorTranslator.ToWin32(p.Background), text = ColorTranslator.ToWin32(p.Text);
                     DwmSetWindowAttribute(control.Handle, 35, ref caption, 4); DwmSetWindowAttribute(control.Handle, 36, ref text, 4);
+                    if (control is LauncherForm) {
+                        // Keep the resize frame and rounded region, without DWM's
+                        // decorative outline. Restore OS borders in high contrast.
+                        int border = p.HighContrast ? -1 : -2; // COLOR_DEFAULT / COLOR_NONE.
+                        DwmSetWindowAttribute(control.Handle, 34, ref border, 4);
+                    }
                 }
                 catch (DllNotFoundException) { }
                 catch (EntryPointNotFoundException) { }

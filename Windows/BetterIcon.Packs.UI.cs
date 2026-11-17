@@ -65,9 +65,41 @@ namespace BetterIcon.Tray
         }
     }
 
+    // OwnerDrawFixed customizes only the headers; the native tab control still
+    // paints a light page frame. Paint its chrome while retaining its native
+    // pages, selection, keyboard navigation, hit testing and accessibility.
+    public sealed class ThemedTabControl : TabControl
+    {
+        public ThemedTabControl()
+        {
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint |
+                ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+        }
+        protected override void OnPaintBackground(PaintEventArgs e)
+        {
+            using (Brush brush = new SolidBrush(SelectedTab == null ? BackColor : SelectedTab.BackColor))
+                e.Graphics.FillRectangle(brush, ClientRectangle);
+        }
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+            for (int index = 0; index < TabCount; index++) {
+                Rectangle bounds = GetTabRect(index);
+                if (!e.ClipRectangle.IntersectsWith(bounds)) continue;
+                DrawItemState state = index == SelectedIndex ? DrawItemState.Selected : DrawItemState.None;
+                if (Focused && ShowFocusCues && index == SelectedIndex) state |= DrawItemState.Focus;
+                if (!Enabled) state |= DrawItemState.Disabled;
+                OnDrawItem(new DrawItemEventArgs(e.Graphics, Font, bounds, index, state));
+            }
+        }
+        protected override void OnSelectedIndexChanged(EventArgs e) { base.OnSelectedIndexChanged(e); Invalidate(); }
+        protected override void OnGotFocus(EventArgs e) { base.OnGotFocus(e); Invalidate(); }
+        protected override void OnLostFocus(EventArgs e) { base.OnLostFocus(e); Invalidate(); }
+    }
+
     public sealed partial class LauncherForm
     {
-        readonly TabControl pages = new TabControl();
+        readonly TabControl pages = new ThemedTabControl();
         readonly TabPage launcherPage = new TabPage("Launcher"), settingsPage = new TabPage("Manage Icons");
         readonly IconGridView packPreview = new IconGridView();
         readonly List<Bitmap> packArtwork = new List<Bitmap>();
@@ -98,7 +130,7 @@ namespace BetterIcon.Tray
             using (Brush brush = new SolidBrush(background)) e.Graphics.FillRectangle(brush, e.Bounds);
             using (Font font = new Font(Font, selected ? FontStyle.Bold : FontStyle.Regular))
                 TextRenderer.DrawText(e.Graphics, pages.TabPages[e.Index].Text, font, e.Bounds, foreground, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
-            if (selected && pages.Focused) ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(e.Bounds, -5, -5), foreground, background);
+            if (selected && (e.State & DrawItemState.Focus) != 0) ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(e.Bounds, -5, -5), foreground, background);
         }
         void SizeTabs() { Size size = new Size(Math.Max(80, (pages.ClientSize.Width - 10) / 2), 38); if (pages.ItemSize != size) pages.ItemSize = size; }
 
