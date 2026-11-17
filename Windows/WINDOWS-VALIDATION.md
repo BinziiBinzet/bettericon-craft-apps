@@ -1,5 +1,13 @@
 # Windows validation
 
+## 1.19.2 smooth dark-mode glyph - 2026-11-17
+
+Offscreen comparisons of the real 32px glyph show 78 partially transparent edge
+pixels instead of a binary edge. The crescent retains transparent margins and
+the existing silhouette. Sun and System glyphs are pixel-identical across four
+palette colors. Native-size and enlarged generated images were inspected;
+Computer Use was not performed.
+
 ## 1.19.1 unselected launcher opening - 2026-11-17
 
 Native checks cover opening from the tray, cursor hotkey and show signal with

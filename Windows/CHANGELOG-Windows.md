@@ -1,5 +1,9 @@
 # Windows installer changelog
 
+## 1.19.2 - 2026-11-17
+
+- Smooth the dark-mode moon glyph with an antialiased crescent while preserving its transparent background and theme color.
+
 ## 1.19.1 - 2026-11-17
 
 - Open the launcher without selecting an app automatically. Preserve explicit selections during resizing and select the first matching result when typing to filter.

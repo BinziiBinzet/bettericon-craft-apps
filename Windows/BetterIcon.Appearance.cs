@@ -379,9 +379,12 @@ namespace BetterIcon.Tray
             using (Graphics canvas = Graphics.FromImage(image)) using (Pen pen = new Pen(color, 2F)) using (Brush brush = new SolidBrush(color)) {
                 canvas.Clear(Color.Transparent); canvas.SmoothingMode = SmoothingMode.AntiAlias;
                 if (mode == "Dark") {
-                    using (GraphicsPath outer = new GraphicsPath()) using (GraphicsPath cutout = new GraphicsPath()) {
-                        outer.AddEllipse(5, 4, 23, 24); cutout.AddEllipse(12, 0, 22, 24);
-                        using (Region crescent = new Region(outer)) { crescent.Exclude(cutout); canvas.FillRegion(brush, crescent); }
+                    // FillRegion ignores antialiasing. Join the same two ellipses
+                    // at their intersections so both edges receive smooth alpha coverage.
+                    using (GraphicsPath crescent = new GraphicsPath()) {
+                        crescent.AddArc(5F, 4F, 23F, 24F, 40.146624F, 220.742574F);
+                        crescent.AddArc(12F, 0F, 22F, 24F, 220.847704F, -142.866538F);
+                        crescent.CloseFigure(); canvas.FillPath(brush, crescent);
                     }
                 }
                 else if (mode == "Light") {
