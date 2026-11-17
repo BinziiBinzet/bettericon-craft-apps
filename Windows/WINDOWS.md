@@ -1,10 +1,10 @@
 # BetterIcon-Craft Apps for Windows
 
-Windows version **1.20.0** includes a native tray launcher and a Windows app installer alongside the existing shortcut-icon tools. It shares the repository's artwork and leaves Craft executables, app settings, and file associations unchanged.
+Windows version **1.21.0** includes a native tray launcher and a Windows app installer alongside the existing shortcut-icon tools. It shares the repository's artwork and leaves Craft executables, app settings, and file associations unchanged.
 
 ## Start here
 
-Run **BetterIcon-Setup-1.20.0.exe**, then open **BetterIcon** from Start. Setup installs for your Windows account without administrator access, adds a Start-menu shortcut, and offers an optional desktop shortcut. It includes the app, helper scripts, and bundled icon packs; Git, a compiler, and an internet connection are not needed to use it. Windows 10/11 with .NET Framework 4.8 or later is required. Setup reports a missing framework before making changes. This build is unsigned, so Windows may show an unknown-publisher or SmartScreen warning.
+Run **BetterIcon-Setup-1.21.0.exe**, then open **BetterIcon** from Start. Setup installs for your Windows account without administrator access, adds a Start-menu shortcut, and offers an optional desktop shortcut. It includes the app, helper scripts, and bundled icon packs; Git, a compiler, and an internet connection are not needed to use it. Windows 10/11 with .NET Framework 4.8 or later is required. Setup reports a missing framework before making changes. This build is unsigned, so Windows may show an unknown-publisher or SmartScreen warning.
 
 Run a newer Setup to upgrade. Finish any icon operation and close BetterIcon's dialogs first; Setup waits for a graceful exit and refuses to continue if the app stays busy. It never force-terminates BetterIcon. Preferences, personal packs, shortcut backups, and already-applied icons are preserved. Setup registers BetterIcon in **Settings > Apps > Installed apps** for normal removal. Uninstall preserves those same files so existing shortcuts retain their icons and a reinstall can recover your preferences. It does not restore ArtCraft shortcuts; use BetterIcon's Restore actions before uninstalling if that is what you want.
 
@@ -47,7 +47,7 @@ Right-click the system tray icon and choose **Change hotkey...** to change the c
 
 The tray finds existing shortcuts in both your own and the shared Desktop/Start menu. It includes the ArtCraft Launcher and custom Craft launchers, and skips shortcuts whose installed target is missing. Portable apps without these shortcuts need a shortcut added to one of those locations, followed by **Refresh installed apps** in the tray's right-click menu. That menu also lists apps for direct launching. Duplicate launch variants are shown separately so their arguments are preserved.
 
-Current user covers your personal Desktop and Start menu. All users covers the shared Desktop and Start menu, visible to everyone on the computer; it does not edit other users' private profile folders. The two scopes are independent; apply both separately if you have both kinds of shortcut. Each Apply or Restore asks again, with no persistent location dropdown. No shortcuts are created for missing apps. Launchers whose names start with a supported Craft app name, such as `PhotoCraft with custom launcher`, retain their launch configuration. Uninstall/help shortcuts are excluded.
+Current user covers your personal Desktop, Start menu, and matching taskbar shortcuts. All users covers the shared Desktop and Start menu, visible to everyone on the computer; it does not edit other users' private profile folders. The two scopes are independent; apply both separately if you have both kinds of shortcut. Each Apply or Restore asks again, with no persistent location dropdown. No shortcuts are created for missing apps. Launchers whose names start with a supported Craft app name, such as `PhotoCraft with custom launcher`, retain their launch configuration. Uninstall/help shortcuts are excluded.
 
 The launcher uses Windows PowerShell 5.1 and .NET Framework 4.8 on Windows 10/11. Source builds use the local .NET Framework compiler. Their execution-policy override applies only to that process; it does not change the machine's policy. Organizational policies may still prevent execution. The command-line installer also supports PowerShell 7. No internet connection or package installation is needed.
 
@@ -139,8 +139,8 @@ Symbolic links and directory junctions are skipped or refused. Cloud-managed fol
 ## What changes on screen
 
 - **Supported:** icons on existing `.lnk` shortcuts in the selected Desktop/Start-menu locations, or explicitly selected folders.
-- **Existing taskbar pins:** may need to be unpinned and pinned again from the updated shortcut. The installer does not edit the taskbar database or automatically pin apps.
-- **Running windows/taskbar groups:** may use the icon supplied by the application itself. A shortcut icon change does not promise a change inside the app, in Alt+Tab, or on every running taskbar button.
+- **Existing taskbar pins.** Choose **Apply icons → Current user**. The review includes existing personal taskbar shortcut files that match an installed ArtCraft shortcut by executable and launch arguments. Applying the pack updates those pins in place. Restore uses their original backups. If a pin is absent from the review and still looks old, unpin it and pin the updated shortcut from Start. Pins managed by Windows or an organization may follow different rules.
+- **While an app is running.** Leave BetterIcon in the tray. It applies the installed artwork to matching ArtCraft windows that are already open or open later. For apps that publish their own taskbar group icon, BetterIcon updates that icon while preserving the group identity. If both scopes have artwork, restoring your personal choice lets the shared choice take over. Restoring both scopes or exiting BetterIcon releases the running-window override. If two personal shortcuts launch the same executable with different artwork, the running window keeps its own icon. Choosing a pack for preview leaves running windows alone. After applying or restoring with the command-line tools, choose **Refresh installed apps** in the tray menu. Elevated apps, generic custom launchers, and some taskbar groups with their own icon can still display other artwork.
 - **App updates:** can replace shortcuts. Re-preview after an update; any conflict with an earlier installation is reported instead of overwriting the update.
 
 The installer sends a Shell change notification. It does not kill Explorer, clear system caches, patch signed executables, or restart running apps.
@@ -155,6 +155,10 @@ pwsh.exe -NoProfile -File .\Test-Windows.ps1
 # Also test copies of installed Craft shortcuts, leaving originals unchanged.
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Test-Windows.ps1 -TestInstalledCopies
 
+# Exercise pin updates and running-window icons using disposable fixtures.
+.\Test-TaskbarPins.ps1
+.\Test-TaskbarWindows.ps1 -ArtifactDirectory 'D:\tmp'
+
 # Exercise the JSON bridge, then native popup placement and tray events.
 .\Test-Tray.ps1 -ArtifactDirectory 'D:\tmp'
 .\Test-TrayUI.ps1 -ArtifactDirectory 'D:\tmp'
@@ -165,7 +169,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Test-Windows.ps1 -Test
 
 # Build a Setup EXE from a locally built Windows ZIP (Inno Setup on this machine).
 .\Build-AppInstaller.ps1 -OutputDirectory 'C:\path\to\setup-output' `
-  -PackagePath 'C:\path\to\BetterIcon-Craft-Apps-Windows-1.20.0.zip' `
+  -PackagePath 'C:\path\to\BetterIcon-Craft-Apps-Windows-1.21.0.zip' `
   -CompilerPath 'C:\path\to\Inno Setup\ISCC.exe'
 
 # Actual install, upgrade, and uninstall using a unique disposable installer identity.

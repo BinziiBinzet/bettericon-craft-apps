@@ -22,6 +22,9 @@ namespace BetterIcon.Tray
         public string Application { get; set; }
         public string Name { get; set; }
         public string Shortcut { get; set; }
+        public string Target { get; set; }
+        public string AppliedIconPath { get; set; }
+        public string AppliedIconScope { get; set; }
         public string Scope { get; set; }
         public string IconPath { get; set; }
         public int IconIndex { get; set; }
@@ -293,6 +296,7 @@ namespace BetterIcon.Tray
         readonly System.Windows.Forms.Timer dismissTimer = new System.Windows.Forms.Timer();
         readonly string preferencesPath;
         readonly string fixtureLog;
+        RunningTaskbarIcons runningTaskbarIcons;
         readonly bool startInTray;
         Catalog catalog;
         Preferences preferences = new Preferences();
@@ -373,6 +377,7 @@ namespace BetterIcon.Tray
 
         protected override void Dispose(bool disposing)
         {
+            if (disposing && runningTaskbarIcons != null) runningTaskbarIcons.Dispose();
             if (disposing) { DisposeRoundedWindow(); if (hotkey != null) hotkey.Dispose(); DisposeAppearance(); ClearAppArtwork(); ClearPackArtwork(); }
             base.Dispose(disposing);
         }
@@ -551,6 +556,10 @@ namespace BetterIcon.Tray
             try {
                 WorkerReply reply = await worker.Run(new WorkerRequest { Action = "Catalog", Scope = Scope }, false);
                 catalog = reply.Catalog;
+                if (fixtureLog == null && !IsDisposed) {
+                    if (runningTaskbarIcons == null) runningTaskbarIcons = new RunningTaskbarIcons();
+                    runningTaskbarIcons.Update(catalog.Apps);
+                }
                 bundledThemes = catalog.Themes;
                 ReloadLibrary(null);
                 status.Text = "Changes are reviewed before they are applied.";
@@ -859,8 +868,8 @@ namespace BetterIcon.Tray
             try {
                 WorkerReply preview = await worker.Run(new WorkerRequest { Action = "Preview", Theme = theme, Scope = scope }, false);
                 int count = preview.Plan.Count(p => p.Status == "Ready");
-                string note = "Apply " + SelectedTheme + " to " + count + " shortcut(s) in " + (scope == "AllUsers" ? "the shared Desktop and Start menu" : "your Desktop and Start menu") + (fixtureLog != null ? " (test shortcuts only)" : "") + ". Original shortcuts are backed up.\r\n" +
-                    (scope == "AllUsers" ? "Windows will request administrator access. " : "") + "Missing or ambiguous artwork is skipped. Existing taskbar pins may need re-pinning.";
+                string note = "Apply " + SelectedTheme + " to " + count + " shortcut(s) in " + (scope == "AllUsers" ? "the shared Desktop and Start menu" : "your Desktop and Start menu, including matching taskbar pins") + (fixtureLog != null ? " (test shortcuts only)" : "") + ". Original shortcuts are backed up.\r\n" +
+                    (scope == "AllUsers" ? "Windows will request administrator access. " : "") + "Missing or ambiguous artwork is skipped.";
                 if (!Review("Review icon changes", note, preview.Plan.Select(p => new[] { p.Status, p.Shortcut, p.Reason }), count > 0, "Apply theme")) { status.Text = "Cancelled. No icons changed."; return; }
                 status.Text = "Applying theme...";
                 WorkerReply result = await worker.Run(new WorkerRequest { Action = "Apply", Theme = theme, Scope = scope, ExpectedPlan = preview.Plan }, scope == "AllUsers" && !IsAdministrator());
@@ -895,20 +904,23 @@ namespace BetterIcon.Tray
             bool refresh = false;
             string scope = ChooseShortcutScope(true, application);
             if (scope == null) { status.Text = "Cancelled. No icons changed."; return; }
-            if (application != null && catalog != null) {
-                AppEntry[] matches = catalog.Apps.Where(app => app.Application == application && app.Scope == scope).ToArray();
-                if (!matches.Any(app => app.RestoreAvailable) && matches.Any(app => app.UsingDefaultIcon)) {
-                    // Nothing changed on disk: restore the default launcher preview too.
-                    RememberRestoredShortcuts(matches.Where(app => app.UsingDefaultIcon).Select(app => new ResultItem { Shortcut = app.Shortcut, Status = "Restored" }).ToArray(), true);
-                    RenderSelection();
-                    status.Text = (application == "ArtCraftLauncher" ? "ArtCraft Launcher" : application) + " is using its ArtCraft default icon. Its Windows shortcut was already at the default.";
-                    return;
-                }
-            }
             SetBusy(true, "Checking original shortcut backups...");
             try {
                 WorkerReply preview = await worker.Run(new WorkerRequest { Action = "RestorePreview", Scope = scope, Application = application }, false);
-                if (preview.Results.Length == 0) { status.Text = "No BetterIcon changes to restore" + (application == null ? "" : " for " + application) + " in these locations."; return; }
+                if (preview.Results.Length == 0) {
+                    // A pin can have its own backup even if the Start shortcut is already at the default.
+                    if (application != null && catalog != null) {
+                        AppEntry[] matches = catalog.Apps.Where(app => app.Application == application && app.Scope == scope).ToArray();
+                        if (!matches.Any(app => app.RestoreAvailable) && matches.Any(app => app.UsingDefaultIcon)) {
+                            RememberRestoredShortcuts(matches.Where(app => app.UsingDefaultIcon).Select(app => new ResultItem { Shortcut = app.Shortcut, Status = "Restored" }).ToArray(), true);
+                            RenderSelection();
+                            status.Text = (application == "ArtCraftLauncher" ? "ArtCraft Launcher" : application) + " is using its ArtCraft default icon. Its Windows shortcut was already at the default.";
+                            return;
+                        }
+                    }
+                    status.Text = "No BetterIcon changes to restore" + (application == null ? "" : " for " + application) + " in these locations.";
+                    return;
+                }
                 string note = "Restore " + (application == null ? "all original ArtCraft shortcuts" : "only " + application + " shortcuts") + " in " + (scope == "AllUsers" ? "shared locations (administrator access required)." : "your locations.") + (fixtureLog != null ? " Test shortcuts only." : "") + "\r\nLater user edits and app updates are preserved. Backups and icon files remain available for recovery.";
                 if (!Review("Review restoration", note, preview.Results.Select(r => new[] { r.Status, r.Shortcut, r.Message }), true, "Restore original icons")) { status.Text = "Cancelled. No icons changed."; return; }
                 status.Text = "Restoring original icons...";
@@ -924,7 +936,7 @@ namespace BetterIcon.Tray
         {
             int failed = results.Count(r => r.Status != "Applied" && r.Status != "Unchanged" && r.Status != "Restored");
             status.Text = failed == 0 ? success + ". " + results.Length + " shortcut(s)." : "Finished with " + failed + " skipped or failed shortcut(s).";
-            Review("Operation results", status.Text + "\r\nRunning app icons and existing taskbar pins can keep their own artwork.", results.Select(r => new[] { r.Status, r.Shortcut, r.Message }), true, "Done");
+            Review("Operation results", status.Text, results.Select(r => new[] { r.Status, r.Shortcut, r.Message }), true, "Done");
         }
         void Report(Exception error)
         {

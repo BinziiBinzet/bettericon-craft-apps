@@ -23,7 +23,7 @@ namespace BetterIcon.Tray
             layout.Controls.Add(question, 0, 0);
             TableLayoutPanel choices = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, RowCount = 1, Margin = Padding.Empty };
             choices.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50)); choices.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-            Button current = Choice("Current user", "Your Desktop and Start menu", "CurrentUser");
+            Button current = Choice("Current user", "Desktop, Start menu and taskbar pins", "CurrentUser");
             Button all = Choice("All users", "Shared Desktop and Start menu", "AllUsers");
             current.Margin = new Padding(0, 0, 8, 0); all.Margin = new Padding(8, 0, 0, 0);
             choices.Controls.Add(current, 0, 0); choices.Controls.Add(all, 1, 0); layout.Controls.Add(choices, 0, 1);

@@ -1,5 +1,10 @@
 # Windows installer changelog
 
+## 1.21.0 - 2026-11-17
+
+- Include matching personal taskbar shortcuts in the Current user Apply and Restore review. Changing a pack updates those pins in place and preserves their original backups.
+- Show applied artwork on matching running ArtCraft windows while BetterIcon is in the tray, including windows opened after the pack was applied.
+
 ## 1.20.0 - 2026-11-17
 
 - Add an offline per-user Setup EXE with Start-menu and optional desktop shortcuts, normal Windows uninstall registration, and upgrades that retain settings, personal packs, cached shortcut icons, and backups.

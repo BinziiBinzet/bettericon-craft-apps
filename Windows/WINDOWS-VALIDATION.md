@@ -1,5 +1,19 @@
 # Windows validation
 
+## 1.21.0 taskbar shortcuts and running apps - 2026-11-17
+
+Disposable Windows shell links exercised two icon packs, renamed pins, exact executable
+and argument matching, changed links, individual restore, and byte-for-byte recovery.
+The fixture uses a private taskbar folder. The existing shortcut suite also passed
+against copies of installed ArtCraft shortcuts, including MSI-advertised targets.
+
+Separate WinForms processes exercised already-open and newly opened windows. The
+tests read the installed small and large icons back from those windows and checked
+the property Windows uses for an explicit taskbar group's icon. They also checked
+that group identity survived switching and restoring artwork. The fixture did not
+create or update real pins. Explorer's rendered taskbar button was unavailable for
+visual inspection on the test host.
+
 ## 1.20.0 app installer and outer window frame - 2026-11-17
 
 The native outer-frame fixture passed 76 checks across activation, forced

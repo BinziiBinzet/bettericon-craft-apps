@@ -1,7 +1,7 @@
-# BetterIcon-Craft Apps Windows support, version 1.20.0.
+# BetterIcon-Craft Apps Windows support, version 1.21.0.
 # Packaged runtime uses no network, executable patching, registry changes, or Explorer restart.
 Set-StrictMode -Version Latest
-$script:Version = '1.20.0'
+$script:Version = '1.21.0'
 $script:SvgArtworkType = $null
 $script:RepositoryRoot = Split-Path -Parent $PSScriptRoot
 $script:Applications = @('PhotoCraft','VectorCraft','FilmCraft','LightCraft','PdfCraft',
@@ -111,6 +111,62 @@ function Get-AppName([string]$Name, [switch]$Icon) {
             if ($Name -match "(?i)^$pattern(?:[\s_.-].*)?`$") { return $app }
         }
         elseif ($Name -match "(?i)^$pattern(?:[\s_.-].*)?`$") { return $app }
+    }
+}
+
+function Get-TaskbarDirectory {
+    Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar'
+}
+
+function Get-LaunchExecutable($Info) {
+    $target = [Environment]::ExpandEnvironmentVariables($Info.LaunchTarget)
+    if ($Info.InstallerIdentity) { $target = $target -replace '^3:', '' }
+    $target
+}
+
+function Get-CraftLaunchKey($Info) {
+    $target = Get-LaunchExecutable $Info
+    # A renamed pin can identify an app. Generic hosts, documents and shell IDs cannot.
+    if ($target -notmatch '^[a-z]:[\\/]' -or [IO.Path]::GetExtension($target) -ine '.exe') { return }
+    if (-not (Get-AppName ([IO.Path]::GetFileNameWithoutExtension($target)))) { return }
+    [IO.Path]::GetFullPath($target).ToUpperInvariant() + [char]0 + $Info.Arguments
+}
+
+function Get-TaskbarCandidates([string]$Directory) {
+    if (-not (Test-Path -LiteralPath $Directory -PathType Container)) { return }
+    Assert-RegularPath $Directory
+    $pins = @(Get-ChildItem -LiteralPath $Directory -File -Filter '*.lnk' -ErrorAction Stop | Sort-Object FullName)
+    if (-not $pins.Count) { return }
+    # Arguments are case-sensitive. Only the executable path is case-folded.
+    $apps = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
+    foreach ($root in (@(Get-ShortcutRoots 'CurrentUser') + @(Get-ShortcutRoots 'AllUsers'))) {
+        foreach ($file in @(Get-RegularFiles $root '.lnk')) {
+            $app = Get-AppName $file.BaseName
+            if (-not $app) { continue }
+            try {
+                $info = [BetterIcon.Windows.ShellLink]::Read($file.FullName)
+                $key = Get-CraftLaunchKey $info
+                if (-not $key) { continue }
+                $target = Get-LaunchExecutable $info
+                if (-not (Test-Path -LiteralPath $target -PathType Leaf)) { continue }
+                if ((Get-AppName ([IO.Path]::GetFileNameWithoutExtension($target))) -ine $app -or
+                    ($apps.ContainsKey($key) -and $apps[$key] -ine $app)) { $apps[$key] = ''; continue }
+                $apps[$key] = $app
+            }
+            catch { Write-Verbose "Cannot identify shortcut $($file.FullName): $($_.Exception.Message)" }
+        }
+    }
+    foreach ($file in $pins) {
+        try {
+            if (Test-RedirectedItem $file) { continue }
+            $digest = Get-FileDigest $file.FullName
+            $info = [BetterIcon.Windows.ShellLink]::Read($file.FullName)
+            $key = Get-CraftLaunchKey $info
+            if ($key -and $apps.ContainsKey($key) -and $apps[$key]) {
+                [pscustomobject]@{ File = $file; Application = $apps[$key]; PinHash = $digest }
+            }
+        }
+        catch { Write-Verbose "Cannot identify taskbar shortcut $($file.FullName): $($_.Exception.Message)" }
     }
 }
 
@@ -283,13 +339,57 @@ function Get-BetterIconBytes {
     finally { $writer.Dispose(); $output.Dispose() }
 }
 
+function Get-CatalogState([string]$Scope, [string]$StateDirectory) {
+    $directory = if ($StateDirectory) { Get-FullPath $StateDirectory } else { Get-BetterIconStateDirectory $Scope }
+    $catalogState = @{ Directory = $directory; Entries = @{} }
+    try {
+        Assert-RegularPath $directory
+        $state = Read-State $directory $Scope
+        foreach ($entry in @($state.Entries)) { $catalogState.Entries[$entry.Path] = $entry }
+    }
+    catch { Write-Verbose "Cannot inspect $Scope icon backups: $($_.Exception.Message)" }
+    $catalogState
+}
+
+function Get-VerifiedManagedIcon($Entry, [string]$Directory, $Info) {
+    # Only supply the running-window icon from an intact, journaled install.
+    if (-not $Entry.IconFile -or $Info.IconIndex -ne 0) { return }
+    $icon = Join-Path (Join-Path $Directory 'icons') $Entry.IconFile
+    if ($Info.IconPath -ine $icon -or $Entry.IconFile -notmatch '-([0-9a-f]{16})\.ico$') { return }
+    $iconHashPrefix = $Matches[1]
+    try {
+        Assert-RegularPath $icon
+        if ((Test-OwnedHash $Entry (Get-FileDigest $Entry.Path)) -and
+            (Get-FileDigest $icon).StartsWith($iconHashPrefix, [StringComparison]::OrdinalIgnoreCase)) { $icon }
+    }
+    catch { Write-Verbose "Cannot verify managed icon '$icon': $($_.Exception.Message)" }
+}
+
 function Get-BetterIconApplication {
     [CmdletBinding()]
     param([string[]]$ShortcutDirectory, [string]$StateDirectory)
     Initialize-BetterIcon
     $roots = if ($ShortcutDirectory) { $ShortcutDirectory } else { @(Get-ShortcutRoots 'CurrentUser') + @(Get-ShortcutRoots 'AllUsers') }
     $seen = @{}
-    $states = @{}
+    $states = @{ CurrentUser = Get-CatalogState 'CurrentUser' $StateDirectory }
+    $pinIcons = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
+    if (-not $ShortcutDirectory) {
+        $pinDirectory = Get-TaskbarDirectory
+        foreach ($entry in $states.CurrentUser.Entries.Values) {
+            if ([IO.Path]::GetDirectoryName($entry.Path) -ine $pinDirectory) { continue }
+            try {
+                Assert-RegularPath $entry.Path
+                $null = Get-BackupPath $entry $states.CurrentUser.Directory
+                $info = [BetterIcon.Windows.ShellLink]::Read($entry.Path)
+                $key = Get-CraftLaunchKey $info
+                $icon = Get-VerifiedManagedIcon $entry $states.CurrentUser.Directory $info
+                if (-not $key -or -not $icon) { continue }
+                if ($pinIcons.ContainsKey($key) -and $pinIcons[$key] -ine $icon) { $pinIcons[$key] = '' }
+                else { $pinIcons[$key] = $icon }
+            }
+            catch { Write-Verbose "Cannot inspect managed taskbar icon $($entry.Path): $($_.Exception.Message)" }
+        }
+    }
     $managedRoots = @((Get-BetterIconStateDirectory 'CurrentUser'), (Get-BetterIconStateDirectory 'AllUsers'))
     if ($StateDirectory) { $managedRoots += Get-FullPath $StateDirectory }
     foreach ($root in $roots) {
@@ -301,19 +401,11 @@ function Get-BetterIconApplication {
                 $info = [BetterIcon.Windows.ShellLink]::Read($file.FullName)
                 # Never launch the MSI icon-resource target. The original .lnk is
                 # the launch contract, including custom launch arguments.
-                $target = [Environment]::ExpandEnvironmentVariables($info.LaunchTarget)
-                if ($info.InstallerIdentity) { $target = $target -replace '^3:', '' }
+                $target = Get-LaunchExecutable $info
                 if (-not $target -or -not (Test-Path -LiteralPath $target -PathType Leaf)) { continue }
                 $scope = if (Test-CommonShortcut $file.FullName) { 'AllUsers' } else { 'CurrentUser' }
                 if (-not $states.ContainsKey($scope)) {
-                    $directory = if ($StateDirectory) { Get-FullPath $StateDirectory } else { Get-BetterIconStateDirectory $scope }
-                    $states[$scope] = @{ Directory = $directory; Entries = @{} }
-                    try {
-                        Assert-RegularPath $directory
-                        $state = Read-State $directory $scope
-                        foreach ($entry in @($state.Entries)) { $states[$scope].Entries[$entry.Path] = $entry }
-                    }
-                    catch { Write-Verbose "Cannot inspect $scope icon backups: $($_.Exception.Message)" }
+                    $states[$scope] = Get-CatalogState $scope $StateDirectory
                 }
                 $original = $info; $verifiedBackup = $false
                 $entry = $states[$scope].Entries[$file.FullName]
@@ -347,9 +439,16 @@ function Get-BetterIconApplication {
                 }
                 $implicitIcon = [string]::IsNullOrWhiteSpace($info.IconPath)
                 $usingDefault = -not $entry -and ($implicitIcon -or ($candidate -ieq $target -and $info.IconIndex -eq 0))
+                $appliedIcon = ''
+                $key = Get-CraftLaunchKey $info
+                $hasPin = $key -and $pinIcons.ContainsKey($key)
+                if ($hasPin) { $appliedIcon = $pinIcons[$key] }
+                elseif ($verifiedBackup) { $appliedIcon = Get-VerifiedManagedIcon $entry $states[$scope].Directory $info }
                 [pscustomobject]@{ Application = $app; Name = $file.BaseName; Shortcut = $file.FullName;
+                    Target = $target; AppliedIconPath = [string]$appliedIcon;
+                    AppliedIconScope = $(if ($appliedIcon) { if ($hasPin) { 'CurrentUser' } else { $scope } } else { '' });
                     Scope = $scope; IconPath = $(if ($implicitIcon) { $target } else { $info.IconPath }); IconIndex = $(if ($implicitIcon) { 0 } else { $info.IconIndex });
-                    OriginalIconPath = $originalPath; OriginalIconIndex = $originalIndex; RestoreAvailable = $verifiedBackup; UsingDefaultIcon = [bool]$usingDefault }
+                    OriginalIconPath = $originalPath; OriginalIconIndex = $originalIndex; RestoreAvailable = ($verifiedBackup -or $hasPin); UsingDefaultIcon = ($usingDefault -and -not $hasPin) }
             }
             catch { Write-Verbose "Cannot inspect $($file.FullName): $($_.Exception.Message)" }
         }
@@ -365,32 +464,42 @@ function Get-BetterIconPlan {
     $selected = Resolve-Theme $Theme $Repository
     $icons = Get-IconMap $selected
     $roots = if ($ShortcutDirectory) { @($ShortcutDirectory | ForEach-Object { Get-FullPath $_ }) } else { @(Get-ShortcutRoots $Scope) }
+    $pinDirectory = Get-TaskbarDirectory
     $seen = @{}
-    foreach ($root in $roots) {
+    $candidates = @(foreach ($root in $roots) {
         if (-not (Test-Path -LiteralPath $root -PathType Container)) { throw "Shortcut directory does not exist: $root" }
         foreach ($file in @(Get-RegularFiles $root '.lnk' | Sort-Object FullName)) {
-            $path = Get-FullPath $file.FullName
-            if ($seen.ContainsKey($path)) { continue }
-            $seen[$path] = $true
+            if ($file.DirectoryName -ieq $pinDirectory -or $seen.ContainsKey($file.FullName)) { continue }
+            $seen[$file.FullName] = $true
             $app = Get-AppName $file.BaseName
             if (-not $app) { continue }
-            $status = 'Ready'; $icon = ''; $reason = ''; $digest = ''
-            if ($Scope -eq 'CurrentUser' -and (Test-CommonShortcut $path)) { $status = 'Skipped'; $reason = 'Use -Scope AllUsers for shared shortcuts.' }
-            elseif (-not $icons.ContainsKey($app)) { $status = 'Missing icon'; $reason = "No ICO or PNG found for $app." }
-            elseif (@($icons[$app]).Count -ne 1) { $status = 'Ambiguous icon'; $reason = "Multiple artwork files match $app." }
-            else {
-                $icon = $icons[$app][0]
-                try {
-                    Assert-RegularPath $path
-                    if ($file.Attributes -band [IO.FileAttributes]::ReadOnly) { throw 'The shortcut is read-only.' }
-                    $digest = Get-FileDigest $path
-                    $null = [BetterIcon.Windows.ShellLink]::Read($path)
-                }
-                catch { $status = 'Unreadable'; $reason = $_.Exception.Message }
-            }
-            [pscustomobject]@{ Application = $app; Shortcut = $path; Icon = $icon; Theme = $selected.Id;
-                Status = $status; Reason = $reason; OriginalHash = $digest }
+            [pscustomobject]@{ File = $file; Application = $app; PinHash = '' }
         }
+    })
+    if ($Scope -eq 'CurrentUser' -and -not $ShortcutDirectory) {
+        try { $candidates += @(Get-TaskbarCandidates $pinDirectory) }
+        catch { Write-Verbose "Cannot verify existing taskbar pins: $($_.Exception.Message)" }
+    }
+    foreach ($candidate in $candidates) {
+        $file = $candidate.File; $app = $candidate.Application; $path = $file.FullName
+        $status = 'Ready'; $icon = ''; $reason = ''; $digest = ''
+        if ($Scope -eq 'CurrentUser' -and (Test-CommonShortcut $path)) { $status = 'Skipped'; $reason = 'Use -Scope AllUsers for shared shortcuts.' }
+        elseif (-not $icons.ContainsKey($app)) { $status = 'Missing icon'; $reason = "No SVG, ICO or PNG found for $app." }
+        elseif (@($icons[$app]).Count -ne 1) { $status = 'Ambiguous icon'; $reason = "Multiple artwork files match $app." }
+        else {
+            $icon = $icons[$app][0]
+            try {
+                Assert-RegularPath $path
+                if ($file.Attributes -band [IO.FileAttributes]::ReadOnly) { throw 'The shortcut is read-only.' }
+                $digest = Get-FileDigest $path
+                if ($candidate.PinHash -and $digest -cne $candidate.PinHash) { throw 'Taskbar shortcut changed during discovery.' }
+                $null = [BetterIcon.Windows.ShellLink]::Read($path)
+                if ($candidate.PinHash) { $reason = 'Existing taskbar pin' }
+            }
+            catch { $status = 'Unreadable'; $reason = $_.Exception.Message }
+        }
+        [pscustomobject]@{ Application = $app; Shortcut = $path; Icon = $icon; Theme = $selected.Id;
+            Status = $status; Reason = $reason; OriginalHash = $digest }
     }
 }
 
@@ -415,6 +524,7 @@ function Read-State([string]$Directory, [string]$Scope) {
             if ($entry.IconFile -and ($entry.IconFile -cnotmatch '^[a-zA-Z0-9_.-]+\.ico$')) { throw 'Invalid icon filename.' }
             $null = $entry.Theme
             if ($Scope -eq 'CurrentUser' -and (Test-CommonShortcut $entry.Path)) { throw 'A user manifest cannot manage shared shortcuts.' }
+            if ($Scope -eq 'AllUsers' -and [IO.Path]::GetDirectoryName($entry.Path) -ieq (Get-TaskbarDirectory)) { throw 'An all-users manifest cannot manage personal taskbar pins.' }
         }
         $state.Entries = @($state.Entries)
         return $state
@@ -512,7 +622,8 @@ function Install-BetterIconTheme {
                     New-Result $item.Shortcut 'Unchanged' 'This theme is already applied.'
                     continue
                 }
-                $temporary = Join-Path ([IO.Path]::GetDirectoryName($item.Shortcut)) ('.bettericon-' + [guid]::NewGuid().ToString('N') + '.lnk')
+                # Keep staging files out of Shell shortcut enumeration, including the pin folder.
+                $temporary = Join-Path ([IO.Path]::GetDirectoryName($item.Shortcut)) ('.bettericon-' + [guid]::NewGuid().ToString('N') + '.tmp')
                 [IO.File]::Copy($item.Shortcut, $temporary, $false)
                 [BetterIcon.Windows.ShellLink]::SetIcon($temporary, $installedIcon)
                 $after = [BetterIcon.Windows.ShellLink]::Read($temporary)
@@ -526,7 +637,7 @@ function Install-BetterIconTheme {
                     Assert-RegularPath $backup
                     if (-not (Test-Path -LiteralPath $backup)) { [IO.File]::Copy($item.Shortcut, $backup, $false) }
                     if ((Get-FileDigest $backup) -cne $currentHash) { throw 'Original backup failed integrity verification.' }
-                    $entry = [pscustomobject]@{ Id = $id; Path = $item.Shortcut; OriginalHash = $currentHash; BackupFile = $backupFile;
+                    $entry = [pscustomobject]@{ Id = $id; Path = $item.Shortcut; Application = $item.Application; OriginalHash = $currentHash; BackupFile = $backupFile;
                         AppliedHash = $currentHash; PendingHash = ''; IconFile = ''; Theme = '' }
                     $state.Entries = @($state.Entries) + $entry
                 }
@@ -549,6 +660,11 @@ function Install-BetterIconTheme {
     finally { $lock.Dispose() }
 }
 
+function Get-EntryApplication($Entry) {
+    if ($Entry.PSObject.Properties['Application']) { return $Entry.Application }
+    Get-AppName ([IO.Path]::GetFileNameWithoutExtension($Entry.Path))
+}
+
 function Restore-BetterIcon {
     [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium')]
     param([ValidateSet('CurrentUser','AllUsers')][string]$Scope = 'CurrentUser', [string]$StateDirectory, [string]$ExpectedStateHash,
@@ -559,7 +675,7 @@ function Restore-BetterIcon {
     $directory = if ($StateDirectory) { Get-FullPath $StateDirectory } else { Get-BetterIconStateDirectory $Scope }
     Assert-RegularPath $directory
     $preview = Read-State $directory $Scope
-    $selected = @($preview.Entries | Where-Object { -not $Application -or (Get-AppName ([IO.Path]::GetFileNameWithoutExtension($_.Path))) -ieq $Application })
+    $selected = @($preview.Entries | Where-Object { -not $Application -or (Get-EntryApplication $_) -ieq $Application })
     if (-not $selected.Count) { return }
     if (-not $PSCmdlet.ShouldProcess("$($selected.Count) $Scope shortcut(s)", 'Restore original icons and shortcuts')) {
         foreach ($entry in $selected) { New-Result $entry.Path 'Preview' 'Restore original backup if the shortcut is unchanged.' }
@@ -574,7 +690,7 @@ function Restore-BetterIcon {
         }
         $state = Read-State $directory $Scope
         foreach ($entry in @($state.Entries)) {
-            if ($Application -and (Get-AppName ([IO.Path]::GetFileNameWithoutExtension($entry.Path))) -ine $Application) { continue }
+            if ($Application -and (Get-EntryApplication $entry) -ine $Application) { continue }
             $temporary = $null
             try {
                 Assert-RegularPath $entry.Path
@@ -583,7 +699,7 @@ function Restore-BetterIcon {
                 $currentHash = Get-FileDigest $entry.Path
                 if (-not (Test-OwnedHash $entry $currentHash)) { throw 'Shortcut changed after installation. Left untouched; original backup retained.' }
                 if ($currentHash -cne $entry.OriginalHash) {
-                    $temporary = Join-Path ([IO.Path]::GetDirectoryName($entry.Path)) ('.bettericon-' + [guid]::NewGuid().ToString('N') + '.lnk')
+                    $temporary = Join-Path ([IO.Path]::GetDirectoryName($entry.Path)) ('.bettericon-' + [guid]::NewGuid().ToString('N') + '.tmp')
                     [IO.File]::Copy($backup, $temporary, $false)
                     if ((Get-FileDigest $temporary) -cne $entry.OriginalHash) { throw 'Restoration copy failed integrity verification.' }
                     if ((Get-FileDigest $entry.Path) -cne $currentHash) { throw 'Shortcut changed before restoration. Left untouched.' }

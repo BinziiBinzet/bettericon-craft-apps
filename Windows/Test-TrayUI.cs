@@ -485,6 +485,8 @@ static class TrayTests
             ToolStripMenuItem restore = (ToolStripMenuItem)field("restoreIconDefault");
             Check(restore.Enabled && ((AppEntry)field("iconMenuTarget")).Scope == "CurrentUser", "The launcher default action is available without a backup and targets its own locations");
             ShortcutScopeTests.SelectScope(() => restore.PerformClick(), "CurrentUser"); ((ContextMenuStrip)field("iconMenu")).Close();
+            DateTime restoreDeadline = DateTime.UtcNow.AddSeconds(30);
+            while ((bool)field("busy") && DateTime.UtcNow < restoreDeadline) { Application.DoEvents(); System.Threading.Thread.Sleep(10); }
             Check(artwork[0].GetPixel(64, 64).ToArgb() == Color.Red.ToArgb() && preferences.DefaultShortcuts.Contains(shortcut) && File.ReadAllBytes(shortcut).SequenceEqual(bytes) && ((Label)field("status")).Text.Contains("already at the default"), "Restoring an already-default launcher resets its preview and reports success without rewriting the shortcut");
             pages.SelectedIndex = 1;
             ListView preview = (ListView)field("packPreview"); RequestIconMenu(preview, preview.Items[0]);
