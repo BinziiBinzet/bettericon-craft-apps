@@ -1,5 +1,11 @@
 # Windows installer changelog
 
+## 1.19.0 - 2026-11-17
+
+- Center the icon-size slider track with its label, value, and Reset button.
+- Type an exact pixel size in the value field. Enter or leaving the field applies it to both grids; Escape cancels. Keep slider, wheel zoom, Reset, artwork-based limits and saved preferences synchronized.
+- Use the active HyGel artwork in operational test fixtures, preserving legacy preference migration coverage.
+
 ## 1.18.3 - 2026-11-17
 
 - Keep the divider between Launcher and Manage Icons straight, round only their two outer upper corners, and dim the inactive tab label. Retain the continuous window surface, keyboard focus cues, high-contrast colors, and resizing.

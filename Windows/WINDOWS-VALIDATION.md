@@ -1,5 +1,20 @@
 # Windows validation
 
+## 1.19.0 aligned slider and exact size entry - 2026-11-17
+
+Local native checks measure the slider's actual channel and thumb against the
+size-row text and Reset button. Typed-size coverage includes Enter, focus loss,
+Escape, invalid values, artwork limits, persistence and synchronization with
+slider, reset and wheel changes. Both icon grids retain native rendering.
+
+The focused run passed 33 checks, including 22 new size-editor checks. Across
+Dark, Light and System at minimum, default and tall window sizes, the channel
+center differed from the row controls by at most one pixel. The existing
+pointed native thumb differs by at most 2.5 pixels. Enter and Escape are tested
+through native keyboard preprocessing. Installer and JSON bridge checks passed
+95 and 20 checks respectively using disposable shortcuts and active HyGel art.
+These are automated native fixtures; Computer Use inspection was not performed.
+
 ## 1.18.3 straight tab divider - 2026-11-17
 
 The native header checks now require square inner corners at the shared divider

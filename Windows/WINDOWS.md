@@ -1,6 +1,6 @@
 # BetterIcon-Craft Apps for Windows
 
-Windows version **1.18.3** includes a native tray launcher alongside the existing icon installer. It shares the repository's artwork and leaves Craft executables, app settings, file associations, and the registry unchanged.
+Windows version **1.19.0** includes a native tray launcher alongside the existing icon installer. It shares the repository's artwork and leaves Craft executables, app settings, file associations, and the registry unchanged.
 
 ## Start here
 
@@ -21,7 +21,7 @@ Keep the extracted app or source folder in place: BetterIcon still uses its help
 
 Press **Ctrl+Alt+Shift+A** from any app to open the popup centered on your mouse cursor. Near an edge it moves just enough to stay within that monitor's working area, clear of the taskbar. Pressing the hotkey again repositions the existing popup at the current cursor. Tray clicks still open it above the tray and toggle it closed.
 
-The Launcher uses a compact grid with app names centered underneath their icons. In **Manage Icons**, move **Icon size** from 24 pixels up to the largest available artwork in the selected pack and installed-app previews. The bundled PNG artwork supports 1024–1254 pixels, and custom PNGs can use the existing 4096-pixel image limit. Both tabs use the original artwork at larger sizes and remember the size after restarting. **Reset** restores 48 pixels. Names wrap below the artwork, with full names in tooltips; larger icons require scrolling. Choosing a pack with smaller artwork adjusts the slider range and size to fit its available resolution. This changes the app's display; applying shortcut icons remains a separate operation.
+The Launcher uses a compact grid with app names centered underneath their icons. In **Manage Icons**, move **Icon size** from 24 pixels up to the largest available artwork in the selected pack and installed-app previews. Click the number to type an exact size, then press Enter or click away to apply it; Escape cancels the edit. Values outside the available range are limited to its minimum or maximum. The bundled PNG artwork supports 1024–1254 pixels, and custom PNGs can use the existing 4096-pixel image limit. Both tabs use the original artwork at larger sizes and remember the size after restarting. **Reset** restores 48 pixels. Names wrap below the artwork, with full names in tooltips; larger icons require scrolling. Choosing a pack with smaller artwork adjusts the slider range and size to fit its available resolution. This changes the app's display; applying shortcut icons remains a separate operation.
 
 Uncheck **Manage Icons > Show app names** for an icon-only grid in both tabs. Spacing tightens to use the space previously reserved for names. Full names remain in hover tooltips, typing still filters app names, and keyboard navigation and right-click actions continue to work. The choice is remembered across launches and pack changes; existing preferences keep names visible by default.
 
@@ -83,7 +83,7 @@ Open PowerShell in the **Windows** subfolder. `Install-Windows.cmd` and `Restore
 
 # Apply, with a preview and a confirmation prompt.
 .\install.ps1 -Theme Cardboard
-.\install.ps1 -Theme 'Craft-Icons-Zach/Satin' -Scope AllUsers
+.\install.ps1 -Theme 'Craft-Icons-OmegaDarling/HyGel' -Scope AllUsers
 
 # Restore original shortcuts. User edits made since installation are preserved.
 .\uninstall.ps1 -WhatIf

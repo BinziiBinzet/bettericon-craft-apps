@@ -15,6 +15,8 @@ using BetterIcon.Tray;
 static class TrayTests
 {
     [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
+    [StructLayout(LayoutKind.Sequential)] struct NativeRect { public int Left, Top, Right, Bottom; }
+    [DllImport("user32.dll", EntryPoint = "SendMessageW")] static extern IntPtr SendMessageRect(IntPtr window, int message, IntPtr wParam, out NativeRect rectangle);
     [DllImport("user32.dll")] static extern bool GetKeyboardState(byte[] state);
     [DllImport("user32.dll")] static extern bool SetKeyboardState(byte[] state);
     [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr window, int index);
@@ -109,7 +111,7 @@ static class TrayTests
         Func<string, object> field = name => typeof(LauncherForm).GetField(name, instance).GetValue(form);
         ComboBox themes = (ComboBox)field("themes"); Catalog catalog = (Catalog)field("catalog");
         Preferences preferences = (Preferences)field("preferences"); PackLibrary library = (PackLibrary)field("library");
-        ThemeEntry basis = themes.Items.Cast<ThemeEntry>().First(theme => theme.Id == "Craft-Icons-Zach/Satin");
+        ThemeEntry basis = themes.Items.Cast<ThemeEntry>().First(theme => theme.Id == "Craft-Icons-Zach/HyGel");
         string previousTheme = preferences.Theme; string[] previousDefaults = preferences.DefaultShortcuts;
         MethodInfo reload = typeof(LauncherForm).GetMethod("ReloadLibrary", instance), change = typeof(LauncherForm).GetMethod("ChangeAppIcon", instance);
         string png = Path.Combine(root, "context-choice.png"), other = Path.Combine(root, "context-other.png");
@@ -279,6 +281,116 @@ static class TrayTests
         Check(slider.Maximum == 128 && slider.Value == 128 && json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).IconSize == 128 && GridImageSize(launcher) == new Size(128, 128) && GridImageSize(preview) == new Size(128, 128),
             "Switching to smaller artwork adjusts the range and replaces oversized artwork in both native grids");
         typeof(LauncherForm).GetMethod("ReloadLibrary", instance).Invoke(form, new object[] { high.Id }); slider.Value = 512;
+    }
+    static void CheckIconSizeEditing(LauncherForm form, string preferencesPath, JavaScriptSerializer json)
+    {
+        BindingFlags instance = BindingFlags.Instance | BindingFlags.NonPublic;
+        Func<string, object> field = name => typeof(LauncherForm).GetField(name, instance).GetValue(form);
+        TrackBar slider = (TrackBar)field("iconSizeSlider");
+        TextBox editor = (TextBox)field("iconSizeValue");
+        Button reset = (Button)field("resetIconSize");
+        ListView launcher = (ListView)field("apps"), preview = (ListView)field("packPreview");
+        ComboBox themes = (ComboBox)field("themes");
+        TabControl pages = (TabControl)field("pages");
+        Panel scroll = (Panel)field("settingsScroll");
+        TableLayoutPanel content = (TableLayoutPanel)field("settingsContent");
+        Preferences preferences = (Preferences)field("preferences");
+        string previousTheme = ((ThemeEntry)themes.SelectedItem).Id, previousAppearance = preferences.AppearanceMode;
+        Size previousWindowSize = form.Size; int previousIconSize = slider.Value, previousPage = pages.SelectedIndex;
+        MethodInfo appearance = typeof(LauncherForm).GetMethod("ApplyAppearance", instance);
+        Func<Keys, bool> command = key => {
+            byte[] previous = new byte[256];
+            if (!GetKeyboardState(previous)) throw new Exception("Cannot read the test thread's keyboard state.");
+            byte[] plain = (byte[])previous.Clone();
+            foreach (int modifier in new[] { 0x10, 0x11, 0x12, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5 }) plain[modifier] = 0;
+            if (!SetKeyboardState(plain)) throw new Exception("Cannot initialize the test thread's modifiers.");
+            try {
+                Message message = Message.Create(editor.Handle, 0x0100, new IntPtr((int)key), IntPtr.Zero);
+                return editor.PreProcessMessage(ref message);
+            }
+            finally { if (!SetKeyboardState(previous)) throw new Exception("Cannot restore the test thread's keyboard state."); }
+        };
+        Func<int, bool> synchronized = size => slider.Value == size && editor.Text == size.ToString()
+            && GridImageSize(launcher) == new Size(size, size) && GridImageSize(preview) == new Size(size, size)
+            && json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).IconSize == size;
+        try {
+            form.ShowManager(); pages.SelectedIndex = 1;
+            IntPtr launcherImages = GridImages(launcher), previewImages = GridImages(preview);
+            editor.Text = "83";
+            Check(!editor.ReadOnly && editor.TabStop && slider.Value == previousIconSize
+                && GridImages(launcher) == launcherImages && GridImages(preview) == previewImages
+                && json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).IconSize == previousIconSize,
+                "The size number is editable without resizing or saving incomplete typing");
+            Check(command(Keys.Enter) && synchronized(83) && pages.SelectedIndex == 1 && form.Visible,
+                "Enter commits an exact pixel size to the slider, both native grids, and saved preferences");
+            editor.Text = "91";
+            typeof(Control).GetMethod("OnLeave", instance).Invoke(editor, new object[] { EventArgs.Empty });
+            Check(synchronized(91), "Leaving the size editor commits its exact value to both grids and preferences");
+            launcherImages = GridImages(launcher); previewImages = GridImages(preview);
+            editor.Text = " 91 "; command(Keys.Enter);
+            Check(synchronized(91) && GridImages(launcher) == launcherImages && GridImages(preview) == previewImages,
+                "Committing the unchanged size normalizes the number without rebuilding artwork");
+            editor.Text = "121";
+            Check(command(Keys.Escape) && synchronized(91) && form.Visible && pages.SelectedIndex == 1
+                && GridImages(launcher) == launcherImages && GridImages(preview) == previewImages,
+                "Escape cancels size editing without changing artwork, leaving Manage Icons, or closing the popup");
+            bool invalidUnchanged = true;
+            foreach (string invalid in new[] { "", "not a size", "999999999999999999999" }) {
+                editor.Text = invalid;
+                invalidUnchanged &= command(Keys.Enter) && synchronized(91)
+                    && GridImages(launcher) == launcherImages && GridImages(preview) == previewImages;
+            }
+            Check(invalidUnchanged, "Empty, invalid, and overflowing size input revert safely without changing saved size or artwork");
+            editor.Text = "0"; command(Keys.Enter);
+            Check(synchronized(slider.Minimum), "Typed sizes below the available range clamp to the minimum");
+            editor.Text = (slider.Maximum + 100).ToString(); command(Keys.Enter);
+            Check(slider.Maximum == 1024 && synchronized(1024), "Typed sizes use the available artwork limit and remain supported above 128 pixels");
+            slider.Value = 83;
+            Check(synchronized(83), "Moving the slider synchronizes the editable size number");
+            reset.PerformClick();
+            Check(synchronized(Preferences.DefaultIconSize), "Reset synchronizes the editable number and both icon grids");
+            pages.SelectedIndex = 0;
+            SendMessage(launcher.Handle, 0x020A, new IntPtr((120 << 16) | 8), IntPtr.Zero);
+            Check(synchronized(Preferences.DefaultIconSize + slider.SmallChange), "Ctrl+wheel synchronizes the editable size number with both grids");
+            pages.SelectedIndex = 1;
+            typeof(LauncherForm).GetMethod("SetBusy", instance).Invoke(form, new object[] { true, null });
+            bool disabled = !editor.Enabled;
+            typeof(LauncherForm).GetMethod("SetBusy", instance).Invoke(form, new object[] { false, null });
+            Check(disabled && editor.Enabled, "The numeric editor follows the other size controls while an operation is busy");
+            slider.Value = 512; themes.SelectedIndex = 0; LoadingTests.Wait(form);
+            Check(slider.Maximum == 128 && synchronized(128), "Changing to smaller artwork updates the numeric editor and clamps the saved size");
+
+            typeof(LauncherForm).GetMethod("ReloadLibrary", instance).Invoke(form, new object[] { previousTheme });
+            slider.Value = 83;
+            Label label = slider.Parent.Controls.OfType<Label>().Single(control => control.Text == "Icon size");
+            Label unit = Descendants(slider.Parent).OfType<Label>().Single(control => control.Text == "px");
+            Func<Control, double> center = control => control.PointToScreen(Point.Empty).Y + control.Height / 2.0;
+            foreach (string mode in new[] { "Dark", "Light", "System" }) foreach (Size window in new[] { new Size(790, 570), new Size(900, 818), new Size(1100, 900) }) {
+                preferences.AppearanceMode = mode; appearance.Invoke(form, null); form.Size = window;
+                typeof(Form).GetMethod("OnResizeEnd", instance).Invoke(form, new object[] { EventArgs.Empty });
+                scroll.AutoScrollPosition = Point.Empty; form.PerformLayout(); content.PerformLayout(); Application.DoEvents();
+                NativeRect channel, thumb;
+                SendMessageRect(slider.Handle, 0x041A, IntPtr.Zero, out channel);
+                SendMessageRect(slider.Handle, 0x0419, IntPtr.Zero, out thumb);
+                double origin = slider.PointToScreen(Point.Empty).Y;
+                double channelCenter = origin + (channel.Top + channel.Bottom) / 2.0;
+                double thumbCenter = origin + (thumb.Top + thumb.Bottom) / 2.0;
+                Control[] peers = { label, editor, unit, reset };
+                double channelOffset = peers.Max(control => Math.Abs(center(control) - channelCenter));
+                double thumbOffset = peers.Max(control => Math.Abs(center(control) - thumbCenter));
+                string layoutProblem = SettingsLayoutProblem(content);
+                Check(channel.Right > channel.Left && thumb.Bottom > thumb.Top && channelOffset <= 1.5 && thumbOffset <= 2.5
+                    && layoutProblem == null,
+                    "The native slider channel and thumb align with the label, editable number, px unit, and Reset in " + mode + " at " + window.Width + "x" + window.Height
+                    + " (channel " + channelOffset + " px, thumb " + thumbOffset + " px)" + (layoutProblem == null ? "" : ": " + layoutProblem));
+            }
+        }
+        finally {
+            preferences.AppearanceMode = previousAppearance; appearance.Invoke(form, null);
+            typeof(LauncherForm).GetMethod("ReloadLibrary", instance).Invoke(form, new object[] { previousTheme });
+            slider.Value = previousIconSize; form.Size = previousWindowSize; pages.SelectedIndex = previousPage;
+            scroll.AutoScrollPosition = Point.Empty; form.PerformLayout();
+        }
     }
     static void CheckLargeStartup(string root, string source)
     {
@@ -464,7 +576,7 @@ static class TrayTests
         ContextMenuStrip menu = (ContextMenuStrip)field("managePackMenu");
         PackLibrary library = (PackLibrary)field("library");
         ThemeEntry[] bundled = (ThemeEntry[])field("bundledThemes");
-        ThemeEntry themed = themes.Items.Cast<ThemeEntry>().First(t => t.Id == "Craft-Icons-Zach/Satin");
+        ThemeEntry themed = themes.Items.Cast<ThemeEntry>().First(t => t.Id == "Craft-Icons-Zach/HyGel");
         string original = Path.Combine(root, "original-red.png"), current = Path.Combine(root, "current-blue.png");
         using (Bitmap image = new Bitmap(32, 32)) {
             using (Graphics canvas = Graphics.FromImage(image)) canvas.Clear(Color.Red);
@@ -601,12 +713,12 @@ static class TrayTests
         byte[] originalPhoto = File.ReadAllBytes(photo), originalFilm = File.ReadAllBytes(film);
         FixtureConfig fixture = new FixtureConfig { ShortcutDirectory = new[] { links }, StateDirectory = state, KeepOpenForAutomation = true };
         WorkerClient worker = new WorkerClient(source, fixture);
-        WorkerReply plan = worker.Run(new WorkerRequest { Action = "Preview", Scope = "CurrentUser", Theme = "Craft-Icons-Zach/Satin" }, false).GetAwaiter().GetResult();
-        WorkerReply applied = worker.Run(new WorkerRequest { Action = "Apply", Scope = "CurrentUser", Theme = "Craft-Icons-Zach/Satin", ExpectedPlan = plan.Plan }, false).GetAwaiter().GetResult();
+        WorkerReply plan = worker.Run(new WorkerRequest { Action = "Preview", Scope = "CurrentUser", Theme = "Craft-Icons-Zach/HyGel" }, false).GetAwaiter().GetResult();
+        WorkerReply applied = worker.Run(new WorkerRequest { Action = "Apply", Scope = "CurrentUser", Theme = "Craft-Icons-Zach/HyGel", ExpectedPlan = plan.Plan }, false).GetAwaiter().GetResult();
         Check(applied.Results.Length == 2 && applied.Results.All(result => result.Status == "Applied"), "Context-menu integration prepares two isolated themed shortcuts");
         byte[] themedFilm = File.ReadAllBytes(film);
         string preferencesPath = Path.Combine(state, "tray-preferences.json");
-        File.WriteAllText(preferencesPath, json.Serialize(new Preferences { Theme = "Craft-Icons-Zach/Satin", Scope = "AllUsers", Hotkey = new HotkeySettings { Enabled = false } }));
+        File.WriteAllText(preferencesPath, json.Serialize(new Preferences { Theme = "Craft-Icons-Zach/HyGel", Scope = "AllUsers", Hotkey = new HotkeySettings { Enabled = false } }));
         using (EventWaitHandle show = new EventWaitHandle(false, EventResetMode.AutoReset))
         using (EventWaitHandle stop = new EventWaitHandle(false, EventResetMode.AutoReset))
         using (LauncherForm form = new LauncherForm(source, fixture, true, show, stop))
@@ -729,7 +841,7 @@ static class TrayTests
 
             string state = Path.Combine(root, "state"), preferencesPath = Path.Combine(state, "tray-preferences.json");
             Directory.CreateDirectory(state);
-            File.WriteAllText(preferencesPath, json.Serialize(new Preferences { Theme = "Craft-Icons-Zach/Satin", Scope = "CurrentUser", IconSize = 72, Hotkey = new HotkeySettings { Enabled = false } }));
+            File.WriteAllText(preferencesPath, json.Serialize(new Preferences { Theme = "Craft-Icons-Zach/HyGel", Scope = "CurrentUser", IconSize = 72, Hotkey = new HotkeySettings { Enabled = false } }));
             using (EventWaitHandle show = new EventWaitHandle(false, EventResetMode.AutoReset))
             using (EventWaitHandle stop = new EventWaitHandle(false, EventResetMode.AutoReset))
             using (LauncherForm form = new LauncherForm(args[1], new FixtureConfig { ShortcutDirectory = new[] { root }, StateDirectory = Path.Combine(root, "state"), KeepOpenForAutomation = true }, true, show, stop))
@@ -830,7 +942,7 @@ static class TrayTests
                         pages.SelectedIndex = 1; slider.Value = 64;
                         Check(list.Items.Count == 2 && list.AccessibleDescription.Contains("Filter: f.") && list.SelectedItems.Count == 1 && list.SelectedItems[0].Text == "FilmCraft", "Icon resizing preserves the active filter and selected app");
                         Preferences sized = json.Deserialize<Preferences>(File.ReadAllText(preferencesPath));
-                        Check(sized.IconSize == 64 && sized.Theme == "Craft-Icons-Zach/Satin" && sized.Scope == "CurrentUser" && !sized.Hotkey.Enabled, "Icon size persists without changing theme, scope, or hotkey preferences");
+                        Check(sized.IconSize == 64 && sized.Theme == "Craft-Icons-Zach/HyGel" && sized.Scope == "CurrentUser" && !sized.Hotkey.Enabled, "Icon size persists without changing theme, scope, or hotkey preferences");
                         ((Button)typeof(LauncherForm).GetField("resetIconSize", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form)).PerformClick();
                         Check(GridImageSize(list) == new Size(48, 48) && GridImageSize(previewGrid) == GridImageSize(list) && list.Items[1].Bounds.Left - list.Items[0].Bounds.Left < 200 && json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).IconSize == 48, "Reset restores and saves compact 48-pixel icons in both grids");
                         pages.SelectedIndex = 0;
@@ -975,6 +1087,7 @@ static class TrayTests
                         CheckDefaultAndIndividualRestore(form, root, preferencesPath, json);
                         CheckAppIconEditing(form, root, preferencesPath, json);
                         CheckLargeArtwork(form, root, preferencesPath, json);
+                        CheckIconSizeEditing(form, preferencesPath, json);
                         CheckExistingLauncherDefault(form, root, json);
                         AppearanceTests.Run(form, preferencesPath, args[1], Check);
                         LoadingTests.Run(form, preferencesPath, Check);

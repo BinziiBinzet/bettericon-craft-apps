@@ -34,8 +34,8 @@ static class PackTests
         WorkerClient worker = new WorkerClient(source, new FixtureConfig { ShortcutDirectory = new[] { root }, StateDirectory = state });
         byte[] originalShortcut = File.ReadAllBytes(Path.Combine(root, "PhotoCraft.lnk"));
         WorkerReply preview = worker.Run(new WorkerRequest { Action = "Preview", Scope = "CurrentUser", Theme = created.Id }, false).GetAwaiter().GetResult();
-        WorkerReply legacyName = worker.Run(new WorkerRequest { Action = "Preview", Scope = "CurrentUser", Theme = "Craft-Icons-Zach/Satin" }, false).GetAwaiter().GetResult();
-        WorkerReply publicName = worker.Run(new WorkerRequest { Action = "Preview", Scope = "CurrentUser", Theme = "Craft-Icons-OmegaDarling/Satin" }, false).GetAwaiter().GetResult();
+        WorkerReply legacyName = worker.Run(new WorkerRequest { Action = "Preview", Scope = "CurrentUser", Theme = "Craft-Icons-Zach/HyGel" }, false).GetAwaiter().GetResult();
+        WorkerReply publicName = worker.Run(new WorkerRequest { Action = "Preview", Scope = "CurrentUser", Theme = "Craft-Icons-OmegaDarling/HyGel" }, false).GetAwaiter().GetResult();
         check(legacyName.Plan.Length == 1 && publicName.Plan.Length == 1 && legacyName.Plan[0].Icon == publicName.Plan[0].Icon && legacyName.Plan[0].Status == publicName.Plan[0].Status,
             "The public OmegaDarling folder name and saved legacy IDs resolve to the same artwork");
         check(preview.Plan.Length == 1 && preview.Plan[0].Status == "Ready" && preview.Plan[0].Icon == oldIcon, "The native worker previews a personal pack through the existing installer");

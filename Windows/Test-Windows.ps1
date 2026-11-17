@@ -135,7 +135,7 @@ try {
     $backupCount = @(Get-ChildItem -LiteralPath (Join-Path $state 'backups') -File).Count
     $again = @(Install-BetterIconTheme -Theme Cardboard -ShortcutDirectory $links -StateDirectory $state -Confirm:$false)
     Assert (@($again | Where-Object Status -eq 'Unchanged').Count -eq 5) 'Applying the same theme is idempotent'
-    $switch = @(Install-BetterIconTheme -Theme Satin -ShortcutDirectory $links -StateDirectory $state -Confirm:$false)
+    $switch = @(Install-BetterIconTheme -Theme HyGel -ShortcutDirectory $links -StateDirectory $state -Confirm:$false)
     Assert (@($switch | Where-Object Status -eq 'Applied').Count -eq 5) 'Switch themes'
     Assert (@(Get-ChildItem -LiteralPath (Join-Path $state 'backups') -File).Count -eq $backupCount) 'Theme switching never overwrites or duplicates the original backup'
     $appliedHashes = @{}; foreach ($path in $paths) { $appliedHashes[$path] = Digest $path }
@@ -161,7 +161,7 @@ try {
     [Runtime.InteropServices.Marshal]::FinalReleaseComObject($edited) | Out-Null
     [Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell) | Out-Null
     $editedHash = Digest $paths[0]
-    $conflict = @(Install-BetterIconTheme -Theme Satin -ShortcutDirectory $links -StateDirectory $state -Confirm:$false)
+    $conflict = @(Install-BetterIconTheme -Theme HyGel -ShortcutDirectory $links -StateDirectory $state -Confirm:$false)
     Assert (@($conflict | Where-Object Status -eq 'Failed').Count -eq 1 -and (Digest $paths[0]) -ceq $editedHash) 'Theme change preserves later user edits'
     $conflictRestore = @(Restore-BetterIcon -StateDirectory $state -Confirm:$false)
     Assert (@($conflictRestore | Where-Object Status -eq 'Failed').Count -eq 1 -and (Digest $paths[0]) -ceq $editedHash) 'Restoration preserves later user edits and restores other shortcuts'

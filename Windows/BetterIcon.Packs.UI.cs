@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -98,6 +99,18 @@ namespace BetterIcon.Tray
         protected override void OnLostFocus(EventArgs e) { base.OnLostFocus(e); Invalidate(); }
     }
 
+    // Consume editing commands before the popup's Escape/navigation handling.
+    public sealed class IconSizeTextBox : TextBox
+    {
+        public event Action CommitRequested, CancelRequested;
+        protected override bool ProcessCmdKey(ref Message message, Keys keyData)
+        {
+            if (keyData == Keys.Enter) { if (CommitRequested != null) CommitRequested(); return true; }
+            if (keyData == Keys.Escape) { if (CancelRequested != null) CancelRequested(); return true; }
+            return base.ProcessCmdKey(ref message, keyData);
+        }
+    }
+
     public sealed partial class LauncherForm
     {
         readonly TabControl pages = new ThemedTabControl();
@@ -110,7 +123,7 @@ namespace BetterIcon.Tray
         readonly ContextMenuStrip importPackMenu = new ContextMenuStrip(), managePackMenu = new ContextMenuStrip();
         readonly Label packDetails = new Label();
         readonly TrackBar iconSizeSlider = new TrackBar();
-        readonly Label iconSizeValue = new Label();
+        readonly TextBox iconSizeValue = new IconSizeTextBox();
         readonly Button resetIconSize = new Button();
         readonly CheckBox showAppNames = new CheckBox();
         readonly Button removePackButton = new Button();
@@ -158,7 +171,7 @@ namespace BetterIcon.Tray
         {
             int previous = preferences.IconSize;
             preferences.IconSize = iconSizeSlider.Value;
-            iconSizeValue.Text = preferences.IconSize + " px";
+            SyncIconSizeValue();
             try { ResizeAppIcons(); ResizePackIcons(); }
             catch (Exception error) {
                 if (!(error is OutOfMemoryException) && !(error is System.Runtime.InteropServices.ExternalException)) throw;
@@ -170,6 +183,27 @@ namespace BetterIcon.Tray
             catch (IOException) { status.Text = "Icon size changed for this session, but could not be saved."; }
             catch (UnauthorizedAccessException) { status.Text = "Icon size changed for this session, but could not be saved."; }
         }
+        void SyncIconSizeValue()
+        {
+            iconSizeValue.Text = iconSizeSlider.Value.ToString(CultureInfo.InvariantCulture);
+            iconSizeValue.AccessibleDescription = "Enter a whole number from " + iconSizeSlider.Minimum + " to " + iconSizeSlider.Maximum + " pixels. Enter applies; Escape cancels. Updates both tabs.";
+        }
+        void CommitIconSizeValue()
+        {
+            if (busy || !iconSizeValue.Enabled) { SyncIconSizeValue(); return; }
+            int requested;
+            if (!Int32.TryParse(iconSizeValue.Text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out requested)) {
+                SyncIconSizeValue();
+                status.Text = "Enter a whole number from " + iconSizeSlider.Minimum + " to " + iconSizeSlider.Maximum + " px.";
+            }
+            else {
+                int value = Math.Max(iconSizeSlider.Minimum, Math.Min(iconSizeSlider.Maximum, requested));
+                if (iconSizeSlider.Value != value) iconSizeSlider.Value = value;
+                else { SyncIconSizeValue(); status.Text = "Icon size: " + value + " px."; }
+            }
+            if (iconSizeValue.Focused) iconSizeValue.SelectAll();
+        }
+        void CancelIconSizeValue() { SyncIconSizeValue(); iconSizeValue.SelectAll(); }
         void ChangeAppNames()
         {
             preferences.ShowAppNames = showAppNames.Checked;
@@ -272,12 +306,26 @@ namespace BetterIcon.Tray
             sizing.Controls.Add(new Label { Text = "Icon size", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 0, 12, 0) }, 0, 0);
             iconSizeSlider.Minimum = Preferences.MinimumIconSize; iconSizeSlider.Maximum = Preferences.MaximumIconSize;
             iconSizeSlider.Value = preferences.IconSize; iconSizeSlider.SmallChange = 8; iconSizeSlider.LargeChange = 16; iconSizeSlider.TickStyle = TickStyle.None;
-            iconSizeSlider.Dock = DockStyle.Fill; iconSizeSlider.AccessibleName = "Icon size"; iconSizeSlider.AccessibleDescription = "Size in pixels, based on available artwork. Updates both tabs.";
-            iconSizeValue.Text = preferences.IconSize + " px"; iconSizeValue.AutoSize = true; iconSizeValue.MinimumSize = new Size(60, 0); iconSizeValue.Anchor = AnchorStyles.None; iconSizeValue.TextAlign = ContentAlignment.MiddleCenter;
+            // Native trackbars keep their channel near the top when stretched.
+            // Center a compact native control, accounting for its pointed thumb.
+            iconSizeSlider.AutoSize = false; iconSizeSlider.Height = 28; iconSizeSlider.Anchor = AnchorStyles.Left | AnchorStyles.Right;
+            iconSizeSlider.Margin = new Padding(3, 7, 3, 3);
+            iconSizeSlider.AccessibleName = "Icon size"; iconSizeSlider.AccessibleDescription = "Size in pixels, based on available artwork. Updates both tabs.";
+            TableLayoutPanel sizeValue = SettingsTable(2); sizeValue.Dock = DockStyle.None; sizeValue.Anchor = AnchorStyles.None; sizeValue.Margin = new Padding(6, 0, 8, 0);
+            sizeValue.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); sizeValue.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            iconSizeValue.Width = 64; iconSizeValue.BorderStyle = BorderStyle.FixedSingle; iconSizeValue.TextAlign = HorizontalAlignment.Center;
+            iconSizeValue.Anchor = AnchorStyles.None; iconSizeValue.Margin = new Padding(0, 0, 4, 0); iconSizeValue.AccessibleName = "Icon size in pixels";
+            SyncIconSizeValue();
+            iconSizeValue.Enter += delegate { iconSizeValue.SelectAll(); }; iconSizeValue.Click += delegate { iconSizeValue.SelectAll(); };
+            iconSizeValue.Leave += delegate { CommitIconSizeValue(); };
+            ((IconSizeTextBox)iconSizeValue).CommitRequested += CommitIconSizeValue;
+            ((IconSizeTextBox)iconSizeValue).CancelRequested += CancelIconSizeValue;
+            sizeValue.Controls.Add(iconSizeValue, 0, 0);
+            sizeValue.Controls.Add(new Label { Text = "px", AutoSize = true, Anchor = AnchorStyles.Left, Margin = Padding.Empty }, 1, 0);
             resetIconSize.Text = "Reset"; SettingsButton(resetIconSize); resetIconSize.AccessibleName = "Reset icon size";
             resetIconSize.Click += delegate { iconSizeSlider.Value = Preferences.DefaultIconSize; };
             iconSizeSlider.ValueChanged += delegate { ChangeIconSize(); };
-            sizing.Controls.Add(iconSizeSlider, 1, 0); sizing.Controls.Add(iconSizeValue, 2, 0); sizing.Controls.Add(resetIconSize, 3, 0);
+            sizing.Controls.Add(iconSizeSlider, 1, 0); sizing.Controls.Add(sizeValue, 2, 0); sizing.Controls.Add(resetIconSize, 3, 0);
             SettingsRow(launcher, sizing);
             settingsContent.Controls.Add(launcher, 0, 2);
 

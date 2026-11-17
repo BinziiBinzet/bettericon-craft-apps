@@ -420,7 +420,7 @@ namespace BetterIcon.Tray
         {
             busy = value; apply.Enabled = restore.Enabled = themes.Enabled = !value;
             if (value) { iconMenu.Close(); iconMenuTarget = null; chooseAppIcon.Enabled = restoreIconDefault.Enabled = false; }
-            iconSizeSlider.Enabled = resetIconSize.Enabled = !value;
+            iconSizeSlider.Enabled = iconSizeValue.Enabled = resetIconSize.Enabled = !value;
             showAppNames.Enabled = !value;
             SetAppearanceBusy(value);
             UpdatePackButtons();
@@ -633,7 +633,7 @@ namespace BetterIcon.Tray
             int requested = Math.Min(preferences.IconSize, maximum);
             iconSizeSlider.Maximum = maximum; iconSizeSlider.Value = requested;
             // TrackBar.Maximum can clamp Value without raising ValueChanged.
-            preferences.IconSize = iconSizeSlider.Value; iconSizeValue.Text = preferences.IconSize + " px";
+            preferences.IconSize = iconSizeSlider.Value; SyncIconSizeValue();
             if (previous != preferences.IconSize) SavePreferences();
             iconSizeSlider.AccessibleDescription = "Size in pixels, from 24 to " + maximum + ", based on available artwork. Updates both tabs.";
         }
