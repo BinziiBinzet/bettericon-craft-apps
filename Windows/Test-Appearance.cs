@@ -16,6 +16,8 @@ static class AppearanceTests
 {
     [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll")] static extern bool IsWindowEnabled(IntPtr window);
+    [DllImport("user32.dll", SetLastError = true)] static extern bool GetKeyboardState([Out] byte[] state);
+    [DllImport("user32.dll", SetLastError = true)] static extern bool SetKeyboardState(byte[] state);
     [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr window, int attribute, out uint value, int size);
     [DllImport("user32.dll")] static extern int GetWindowRgn(IntPtr window, IntPtr region);
     [DllImport("gdi32.dll")] static extern IntPtr CreateRectRgn(int left, int top, int right, int bottom);
@@ -74,12 +76,13 @@ static class AppearanceTests
             for (int index = 0; index < pages.TabCount; index++) {
                 Rectangle tab = pages.GetTabRect(index);
                 Color expected = index == pages.SelectedIndex ? palette.HighContrast ? SystemColors.Highlight : palette.Surface : palette.HighContrast ? SystemColors.Control : palette.InactiveTab;
-                // Compare actual pixels against the approved 32px, top-only
-                // quarter circles. This rejects square corners and half-height
-                // rounding without duplicating the production GraphicsPath.
+                // Outer upper corners remain 32px quarter circles; the two
+                // inner corners stay square so the tabs meet along a straight
+                // line. Use geometry independent of the production path.
                 int radius = Math.Min(32, Math.Min(tab.Height, tab.Width / 2));
                 Rectangle focus = Rectangle.Inflate(tab, -5, -5);
                 foreach (bool right in new[] { false, true }) {
+                    bool rounded = right ? index == pages.TabCount - 1 : index == 0;
                     int start = right ? tab.Right - radius : tab.Left;
                     double centerX = right ? tab.Right - radius : tab.Left + radius, centerY = tab.Top + radius;
                     for (int y = tab.Top + 1; y < tab.Top + radius; y++) for (int x = start + 1; x < start + radius - 1; x++) {
@@ -89,12 +92,13 @@ static class AppearanceTests
                             (Math.Abs(y - focus.Top) <= 1 || Math.Abs(y - (focus.Bottom - 1)) <= 1) && x >= focus.Left - 1 && x <= focus.Right)) continue;
                         double distance = Math.Sqrt(Math.Pow(x + 0.5 - centerX, 2) + Math.Pow(y + 0.5 - centerY, 2));
                         string problem;
-                        if (Math.Abs(distance - radius) <= 1.5) {
+                        if (!rounded) problem = pixel(x, y, expected);
+                        else if (Math.Abs(distance - radius) <= 1.5) {
                             Color actual = bitmap.GetPixel(x, y);
                             problem = paletteBlend(actual, expected, palette.Surface) ? null : "arc pixel " + x + "," + y + " introduced a color outside the tab/page blend: " + actual;
                         }
                         else problem = pixel(x, y, distance < radius ? expected : palette.Surface);
-                        if (problem != null) return "tab " + index + (right ? " upper-right" : " upper-left") + " 32px corner: " + problem;
+                        if (problem != null) return "tab " + index + (right ? " upper-right" : " upper-left") + (rounded ? " 32px outer corner: " : " straight inner corner: ") + problem;
                     }
                 }
                 for (int x = tab.Left + radius + 1; x < tab.Right - radius - 1; x++) {
@@ -162,7 +166,7 @@ static class AppearanceTests
                     for (int page = 0; page < pages.TabCount; page++) {
                         pages.SelectedIndex = page; form.PerformLayout(); pages.PerformLayout(); Application.DoEvents();
                         string problem = ChromePixels(pages, (AppearancePalette)Field(form, "appearancePalette"));
-                        check(problem == null, mode + " native tabs have 32px upper corners and no system outline at " + size.Width + "x" + size.Height + ", page " + page + (problem == null ? "" : ": " + problem));
+                        check(problem == null, mode + " native tabs have rounded outer corners, a straight center join and no outline at " + size.Width + "x" + size.Height + ", page " + page + (problem == null ? "" : ": " + problem));
                         string surface = WindowSurfacePixels(form, (AppearancePalette)Field(form, "appearancePalette"));
                         check(surface == null, mode + " window margins and all four rounded corners match the page at " + size.Width + "x" + size.Height + ", page " + page + (surface == null ? "" : ": " + surface));
                     }
@@ -170,7 +174,7 @@ static class AppearanceTests
                 typeof(Control).GetMethod("RecreateHandle", instance).Invoke(pages, null);
                 Application.DoEvents();
                 string recreated = ChromePixels(pages, (AppearancePalette)Field(form, "appearancePalette"));
-                check(recreated == null, mode + " rounded tab chrome stays outline-free after native handle recreation" + (recreated == null ? "" : ": " + recreated));
+                check(recreated == null, mode + " rounded outer corners and straight tab center stay outline-free after handle recreation" + (recreated == null ? "" : ": " + recreated));
                 string surfaceRecreated = WindowSurfacePixels(form, (AppearancePalette)Field(form, "appearancePalette"));
                 check(surfaceRecreated == null, mode + " all four window corners stay continuous after tab handle recreation" + (surfaceRecreated == null ? "" : ": " + surfaceRecreated));
             }
@@ -259,11 +263,26 @@ static class AppearanceTests
             AppAppearance.Apply(grid, AppAppearance.Resolve("System", false, false));
             check(grid.InputBlocked && PaintedBackground(grid).ToArgb() == AppAppearance.Resolve("Light", null, false).Surface.ToArgb(),
                 "A paused grid repaints for a simulated System-to-Light change without enabling input");
-            grid.InputBlocked = false; grid.Focus(); grid.Items[0].Selected = grid.Items[0].Focused = true;
-            SendMessage(grid.Handle, 0x0100, new IntPtr(39), IntPtr.Zero);
-            SendMessage(grid.Handle, 0x007B, grid.Handle, new IntPtr(-1)); SendMessage(grid.Handle, 0x020A, new IntPtr((120 << 16) | 8), IntPtr.Zero);
-            check(grid.TabStop && grid.SelectedIndices.Count == 1 && grid.SelectedIndices[0] == 1 && menus == 1 && zooms == 1,
-                "Finishing a save restores native keyboard selection, context actions and zoom");
+            byte[] keyboard = new byte[256];
+            if (!GetKeyboardState(keyboard)) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Could not save the test thread's keyboard state.");
+            try {
+                // Native list navigation reads this thread's modifier state,
+                // even for SendMessage. Isolate the unmodified-Right test from
+                // a user holding Ctrl/Shift/Alt, without sending input or
+                // changing another thread's keyboard state.
+                byte[] unmodified = (byte[])keyboard.Clone();
+                foreach (int key in new[] { 16, 17, 18, 160, 161, 162, 163, 164, 165 }) unmodified[key] &= 0x7F;
+                if (!SetKeyboardState(unmodified)) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Could not isolate the test thread's modifiers.");
+                grid.InputBlocked = false; grid.Focus(); grid.Items[0].Selected = grid.Items[0].Focused = true;
+                SendMessage(grid.Handle, 0x0100, new IntPtr(39), IntPtr.Zero);
+                SendMessage(grid.Handle, 0x007B, grid.Handle, new IntPtr(-1)); SendMessage(grid.Handle, 0x020A, new IntPtr((120 << 16) | 8), IntPtr.Zero);
+                bool restored = grid.TabStop && grid.SelectedIndices.Count == 1 && grid.SelectedIndices[0] == 1 && menus == 1 && zooms == 1;
+                check(restored, "Finishing a save restores native keyboard selection, context actions and zoom" + (restored ? "" :
+                    " (TabStop=" + grid.TabStop + ", selected=" + string.Join(",", grid.SelectedIndices.Cast<int>()) + ", menus=" + menus + ", zooms=" + zooms + ", focused=" + grid.Focused + ", modifiers=" + Control.ModifierKeys + ")"));
+            }
+            finally {
+                if (!SetKeyboardState(keyboard)) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Could not restore the test thread's keyboard state.");
+            }
             holder.Close();
         }
     }

@@ -1,5 +1,9 @@
 # Windows installer changelog
 
+## 1.18.3 - 2026-11-17
+
+- Keep the divider between Launcher and Manage Icons straight, round only their two outer upper corners, and dim the inactive tab label. Retain the continuous window surface, keyboard focus cues, high-contrast colors, and resizing.
+
 ## 1.18.2 - 2026-11-17
 
 - Match the approved mockup with 32-pixel rounded upper tab corners and square lower joins. Keep the tab/page outlines removed, native tab navigation, keyboard focus cues, and window resizing.

@@ -126,17 +126,19 @@ namespace BetterIcon.Tray
         {
             bool selected = pages.SelectedIndex == e.Index;
             AppearancePalette palette = appearancePalette ?? AppAppearance.Resolve(preferences.AppearanceMode);
-            Color background = selected ? palette.Surface : palette.InactiveTab, foreground = palette.Text;
+            Color background = selected ? palette.Surface : palette.InactiveTab, foreground = selected ? palette.Text : palette.Muted;
             if (SystemInformation.HighContrast) { background = selected ? SystemColors.Highlight : SystemColors.Control; foreground = selected ? SystemColors.HighlightText : SystemColors.ControlText; }
-            // Match the mockup's 32px upper corners and square page joins.
+            // Round the two outer corners; keep the shared center divider straight.
             // Top-only rounding can exceed half the tab's height.
             Rectangle bounds = e.Bounds;
             float radius = Math.Min(32f, Math.Min(bounds.Height, bounds.Width / 2f));
+            float leftRadius = e.Index == 0 ? radius : 0, rightRadius = e.Index == pages.TabCount - 1 ? radius : 0;
             using (GraphicsPath shape = new GraphicsPath()) using (Brush brush = new SolidBrush(background)) {
-                shape.AddArc(bounds.Left, bounds.Top, radius * 2, radius * 2, 180, 90);
-                shape.AddArc(bounds.Right - radius * 2, bounds.Top, radius * 2, radius * 2, 270, 90);
-                shape.AddLine(bounds.Right, bounds.Top + radius, bounds.Right, bounds.Bottom);
-                shape.AddLine(bounds.Right, bounds.Bottom, bounds.Left, bounds.Bottom);
+                shape.AddLine(bounds.Left, bounds.Bottom, bounds.Left, bounds.Top + leftRadius);
+                if (leftRadius > 0) shape.AddArc(bounds.Left, bounds.Top, leftRadius * 2, leftRadius * 2, 180, 90);
+                shape.AddLine(bounds.Left + leftRadius, bounds.Top, bounds.Right - rightRadius, bounds.Top);
+                if (rightRadius > 0) shape.AddArc(bounds.Right - rightRadius * 2, bounds.Top, rightRadius * 2, rightRadius * 2, 270, 90);
+                shape.AddLine(bounds.Right, bounds.Top + rightRadius, bounds.Right, bounds.Bottom);
                 shape.CloseFigure();
                 GraphicsState state = e.Graphics.Save();
                 try { e.Graphics.SmoothingMode = SmoothingMode.AntiAlias; e.Graphics.FillPath(brush, shape); }

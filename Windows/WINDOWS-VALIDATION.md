@@ -1,5 +1,17 @@
 # Windows validation
 
+## 1.18.3 straight tab divider - 2026-11-17
+
+The native header checks now require square inner corners at the shared divider
+and 32-pixel outer upper corners, while retaining all window-surface, keyboard,
+high-contrast, theme and resize coverage. Inactive labels use the muted palette
+color; high contrast keeps system text colors.
+
+The synthetic grid-navigation test saves and restores its own thread's keyboard
+state around its unmodified Right-arrow check. Controlled Ctrl and Shift cases
+reproduce the previous fixture failure and pass with that isolation; no global
+keyboard state or production input handling changes.
+
 ## 1.18.2 rounded tab corners - 2026-11-17
 
 Native rendered-pixel checks verify the 32-pixel upper tab curves, square lower
