@@ -95,9 +95,9 @@ Use reasonably short folder paths. This version requires shortcut and installed 
 
 ## Themes and matching
 
-All **13 current themes** are available: seven by **OmegaDarling**, five in **Craft-Icons-Komplett**, and the root theme in **Craft-Icons-circleb**. The current collection supplies **218 app icons**. Oil Slick is retired and is excluded from the repository's current artwork, app catalog, and new Windows packages.
+All **18 current themes** are available: twelve by **OmegaDarling**, five in **Craft-Icons-Komplett**, and the root theme in **Craft-Icons-circleb**. The current collection supplies **313 app icons**, including the five [Graphic Evolution themes](../Craft-Icons-OmegaDarling/README.md). Oil Slick is retired and is excluded from the repository's current artwork, app catalog, and new Windows packages.
 
-OmegaDarling's themes retain the legacy `Craft-Icons-Zach` folder and IDs so saved selections, applied icons, and restore records remain compatible. Their public author credit is **OmegaDarling** in the app and command-line theme listing.
+The shared artwork is stored in `Craft-Icons-OmegaDarling`. The public author credit is **OmegaDarling** in the app and command-line theme listing.
 
 PNG artwork is converted locally to transparent Windows ICOs containing 16, 24, 32, 48, 64, 128, and 256-pixel frames for Windows shortcuts. The Windows ZIP also retains each original PNG for high-resolution Launcher and Settings previews. Aspect ratio is preserved and source images are never rewritten. An existing ICO is preferred for shortcut application; its matching PNG supplies the larger preview when available. Duplicate ICOs or duplicate PNGs remain ambiguous. ICNS/SVG-only artwork is not selectable.
 

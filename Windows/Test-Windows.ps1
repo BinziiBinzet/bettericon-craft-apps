@@ -50,8 +50,8 @@ function New-TestLink([string]$Directory, [string]$Name) {
 
 try {
     $themes = @(Get-BetterIconTheme)
-    Assert (@($themes | Where-Object Status -eq 'Available').Count -eq 13) 'All thirteen current ICO or PNG themes discovered from the repository parent'
-    Assert (@($themes | Where-Object { $_.Pack -eq 'Craft-Icons-Zach' -and $_.Author -eq 'OmegaDarling' }).Count -eq 7) 'Seven OmegaDarling themes remain after retiring Oil Slick'
+    Assert (@($themes | Where-Object Status -eq 'Available').Count -eq 18) 'All eighteen current ICO or PNG themes discovered from the repository parent'
+    Assert (@($themes | Where-Object { $_.Author -eq 'OmegaDarling' }).Count -eq 12) 'Twelve OmegaDarling themes include the five Graphic Evolution packs'
     Assert (@($themes | Where-Object { $_.Name -eq 'Root' -and $_.Pack -ne 'Craft-Icons-circleb' }).Count -eq 0) 'Pack preview sheets are not mistaken for themes'
     $links = Join-Path $testRoot ('links [sample] ' + [char]0x00FC)
     $state = Join-Path $testRoot 'state'

@@ -17,8 +17,8 @@ static class PackTests
         string state = Path.Combine(root, "pack-tests-state"); Directory.CreateDirectory(state);
         PackLibrary library = new PackLibrary(Path.Combine(state, "packs"));
         ThemeEntry[] omega = catalog.Themes.Where(t => t.Pack == "Craft-Icons-Zach").ToArray();
-        check(omega.Length == 7 && omega.All(t => t.Author == "OmegaDarling" && t.ToString().Contains("OmegaDarling") && t.Id.StartsWith("Craft-Icons-Zach/")), "OmegaDarling credits are public while existing pack IDs stay stable");
-        check(catalog.Themes.Length == 13 && catalog.Themes.Sum(t => t.IconCount) == 218 && !catalog.Themes.Any(t => t.Name == "OilSlick"), "Oil Slick is retired from the 13-theme, 218-icon catalog");
+        check(omega.Length == 12 && omega.All(t => t.Author == "OmegaDarling" && t.ToString().Contains("OmegaDarling") && t.Id.StartsWith("Craft-Icons-Zach/")), "OmegaDarling credits are public while existing pack IDs stay stable");
+        check(catalog.Themes.Length == 18 && catalog.Themes.Sum(t => t.IconCount) == 313 && !catalog.Themes.Any(t => t.Name == "OilSlick"), "Oil Slick is retired from the 18-theme, 313-icon catalog");
         check(catalog.Themes.SelectMany(t => t.Icons).All(icon => !String.IsNullOrEmpty(icon.PreviewPath) && Path.GetExtension(icon.PreviewPath).Equals(".png", StringComparison.OrdinalIgnoreCase) && File.Exists(icon.PreviewPath))
             && catalog.Themes.All(theme => { using (Image image = Image.FromFile(theme.Icons[0].PreviewPath)) return Math.Max(image.Width, image.Height) > 256; }),
             "The catalog retains original high-resolution PNG previews alongside native shortcut artwork");
