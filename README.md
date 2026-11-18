@@ -13,6 +13,27 @@ Icon installers for [Artcraft](https://getartcraft.com/) applications. The Linux
 
 The nine themes in [Craft-Icons-OmegaDarling](Craft-Icons-OmegaDarling/) are by **OmegaDarling**. Each contains 20 icons, including ArtCraft Launcher. Existing `Craft-Icons-Zach` theme IDs remain compatible.
 
+## Community icon packs
+
+The selected ArtCraft Discord artwork is organized by the posting creator. Each style folder contains app-named PNGs and a BetterIcon pack description. The folders can be imported individually in Manage Icons. Existing installed releases do not automatically download new repository artwork.
+
+| Creator | Collection |
+| --- | --- |
+| 𝕸𝖆𝖎𝖓𝖘 | [Five styles](Craft-Icons-Mains/) |
+| kristofp | [Engraved Animals](Craft-Icons-kristofp/) |
+| circleb | [Existing icons and Origami Animals](Craft-Icons-circleb/) |
+| 4NovemberKilo | [Mascots](Craft-Icons-4NovemberKilo/) |
+| kOdeNeRA | [Minimal Symbols](Craft-Icons-kOdeNeRA/) |
+| หมาแดนซ์ | [Mascots](Craft-Icons-%E0%B8%AB%E0%B8%A1%E0%B8%B2%E0%B9%81%E0%B8%94%E0%B8%99%E0%B8%8B%E0%B9%8C/) |
+| Devil Blanky | [Mascots and Cat Variant](Craft-Icons-Devil%20Blanky/) |
+| VimiummuimiV | [Modern Flat](Craft-Icons-VimiummuimiV/) |
+| Cryogenn | [ArtCraft iconPackage](Craft-Icons-Cryogenn/) |
+| Mike22 | [CraftApps AIO November](Craft-Icons-Mike22/) |
+
+The circleb Origami Animals set is a separate import ZIP in the existing circleb folder. VimiummuimiV and Mike22 also supplied file-type artwork, which is preserved in their source archives. The current BetterIcon app does not install file-type associations.
+
+The new style folders are discovered by a Windows source checkout and the Linux installer. The current Linux installer does not list MailCraft or ArtCraft Launcher. The current macOS build has a fixed bundled artwork inventory; import a downloaded style folder or ZIP to use these additions there. Credits, source links, inferred app assignments, and artwork notes appear in each creator folder.
+
 ## Supported Applications
 
 Supports all official Artcraft Crafting Apps.
