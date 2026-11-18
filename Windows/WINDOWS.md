@@ -1,13 +1,13 @@
 # BetterIcon-Craft Apps for Windows
 
-BetterIcon **1.24.0** for Windows lets you choose separate icon packs for app shortcuts and native ArtCraft project files.
+BetterIcon **1.25.0** for Windows lets you choose separate icon packs for app shortcuts and native ArtCraft project files.
 
 ## Start here
 
 Choose an installer for Windows 10/11 with .NET Framework 4.8 or later.
 
-- **BetterIcon-Setup-1.24.0.exe** includes all 15 packs. Every pack works offline immediately after installation.
-- **BetterIcon-Setup-1.24.0-OnDemand.exe** includes the catalog. Click a pack in the list, or highlight it and press Enter, to download its artwork and verify its SHA-256 hashes. You can browse the entire list offline. Both pickers share each download and keep it for future launches.
+- **BetterIcon-Setup-1.25.0.exe** includes all 15 packs. Every pack works offline immediately after installation.
+- **BetterIcon-Setup-1.25.0-OnDemand.exe** includes the catalog. Click a pack in the list, or highlight it and press Enter, to download its artwork and verify its SHA-256 hashes. You can browse the entire list offline. Both pickers share each download and keep it for future launches.
 
 Open **BetterIcon** from Start. Both editions install for your Windows account and offer an optional desktop shortcut. The setup is unsigned, so Windows may show an unknown-publisher or SmartScreen notice.
 
@@ -63,6 +63,8 @@ The launcher uses Windows PowerShell 5.1 and .NET Framework 4.8 on Windows 10/11
 Under **Manage Icons**, use **App icon pack** for the launcher and shortcuts. Open **File icons...** to choose a different pack for Explorer. The bottom progress bar shows **Downloading** while fetching a new pack and **Loading** while preparing its previews. Bundled and previously downloaded packs go straight to **Loading**.
 
 In either picker or the tray's **Change icon theme** menu, **Download** means the pack is available to fetch, **Downloaded** means it is cached on this computer, and **Included** means it came with the full installer.
+
+Rest the pointer on a pack to see a small preview beside its row. The strip shows up to three app icons, starting with ArtCraft Launcher when available and then continuing alphabetically. The on-demand edition fetches one small WebP on hover and keeps it for offline browsing. The full edition includes the strips. Personal packs use their local artwork, including document icons in file-only packs. Clicking the row or pressing Enter still selects the full pack.
 
 The file picker previews native project types including PhotoCraft `.pcraft`, SoundCraft `.scraft`, and FilmCraft `.fcproj`. Choose **Apply file icons...** to review which extensions will change. **Restore file icons...** restores their previous icons. Both actions keep the program that opens each file. General formats such as PDF and PNG keep their existing icons.
 
@@ -184,7 +186,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Test-Windows.ps1 -Test
 
 # Build a Setup EXE from a locally built Windows ZIP (Inno Setup on this machine).
 .\Build-AppInstaller.ps1 -OutputDirectory 'C:\path\to\setup-output' `
-  -PackagePath 'C:\path\to\BetterIcon-Craft-Apps-Windows-1.24.0.zip' `
+  -PackagePath 'C:\path\to\BetterIcon-Craft-Apps-Windows-1.25.0.zip' `
   -CompilerPath 'C:\path\to\Inno Setup\ISCC.exe'
 
 # Actual install, upgrade, and uninstall using a unique disposable installer identity.

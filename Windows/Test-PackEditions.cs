@@ -10,7 +10,7 @@ using System.Web.Script.Serialization;
 using System.Windows.Forms;
 using BetterIcon.Tray;
 
-static class PackEditionTests
+static partial class PackEditionTests
 {
     const BindingFlags Fields = BindingFlags.Instance | BindingFlags.NonPublic;
     static T Field<T>(object obj, string name) { return (T)obj.GetType().GetField(name, Fields).GetValue(obj); }
@@ -149,6 +149,7 @@ static class PackEditionTests
                 Field<TabControl>(form, "pages").SelectedIndex = 1;
                 var combo = Field<ComboBox>(form, "themes");
                 if (pass == 1) {
+                    HoverPack(combo, Find(combo, third), state, args[0], lean);
                     Check(((ThemeEntry)combo.SelectedItem).Id == first && !Find(combo, second).NeedsDownload, "Restart offline remembers the app pack and the downloaded file pack");
                     SelectPack(form, second, false, false, false);
                     Check(json.Deserialize<Preferences>(File.ReadAllText(prefs)).FileTheme == first, "App pack switches preserve the file pack preference");
@@ -161,12 +162,19 @@ static class PackEditionTests
                 Check(!Directory.Exists(cache), "Listing the catalog creates no download cache");
                 Check(packs.All(t => t.ToString().EndsWith(lean ? " (Download)" : " (Included)") && MenuLabel(form, t) == t.ToString()), "Picker and tray labels identify each pack's availability at installation");
                 if (lean) Browse(combo, Find(combo, third), cache);
+                Check(!Directory.Exists(Path.Combine(state, "pack-previews")), "Opening and quickly browsing the catalog fetched no previews");
+                HoverPack(combo, Find(combo, third), state, args[0], lean, true);
+                HoverRaces(form, Find(combo, third), Find(combo, second), state, args[0], lean);
+                PersonalHover(form, state);
+                TrayHover(form, Find(combo, third));
+                Check(!Directory.Exists(cache), "Hover previews keep the full-pack cache empty");
                 SelectPack(form, first, false, lean, false);
                 Check(MenuLabel(form, Find(combo, first)).EndsWith(lean ? " (Downloaded)" : " (Included)"), "The clicked pack has the correct local status in the tray");
                 var dialogType = typeof(LauncherForm).GetNestedType("ProjectFileDialog", BindingFlags.NonPublic);
                 using (var files = (Form)Activator.CreateInstance(dialogType, new object[] { form, null })) {
                     files.Show(form);
                     Wait(() => files.Visible && !Field<bool>(files, "working"));
+                    HoverPack(Field<ComboBox>(files, "packs"), Find(combo, third), state, args[0], lean);
                     SelectPack(files, second, true, lean, false);
                     Check(MenuLabel(form, Find(combo, second)).EndsWith(lean ? " (Downloaded)" : " (Included)"), "Choosing a file pack updates its availability in the other menus");
                     Offline();

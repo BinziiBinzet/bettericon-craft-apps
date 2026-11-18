@@ -42,6 +42,7 @@ namespace BetterIcon.Tray
             public ProjectFileDialog(LauncherForm parent, string id)
             {
                 owner = parent; Text = "ArtCraft project file icons"; Font = parent.Font;
+                packs.EnablePreviews(parent.previewStore);
                 StartPosition = FormStartPosition.CenterParent; MinimizeBox = MaximizeBox = false;
                 ClientSize = new Size(620, 540); MinimumSize = new Size(570, 435);
                 var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(16), ColumnCount = 1, RowCount = 6 };

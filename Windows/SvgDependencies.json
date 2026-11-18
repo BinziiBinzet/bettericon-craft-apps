@@ -4,5 +4,7 @@
   { "Id": "System.Memory", "Version": "4.5.5", "Library": "lib/net461/System.Memory.dll", "SHA512": "6MjlNsl7lKw0Q8lAsw2tQ89ul9x6jD2Yk3EEj+dOFoYGOE9eAUO9wNhvd4O/n97oQXlkyzqKXXUnE+kLElFy3A==" },
   { "Id": "System.Buffers", "Version": "4.5.1", "Library": "lib/net461/System.Buffers.dll", "SHA512": "gNphWOVbm89+C15jebnPRaYykU8De1PFv1YJV24814IfeGGVa3PXRHDS0MLlbdI1pe9Mpv/n4ZK4INwtAjqv8g==" },
   { "Id": "System.Numerics.Vectors", "Version": "4.5.0", "Library": "lib/net46/System.Numerics.Vectors.dll", "SHA512": "nATsBTD2CKr4AYN6eRszhX4sptImWmBJwB/U6XKCWWfnCcrTBw8XSCm3QA9gjppkHTr8OkXUY21MR91D3QZXsw==" },
-  { "Id": "System.Runtime.CompilerServices.Unsafe", "Version": "4.5.3", "Library": "lib/net461/System.Runtime.CompilerServices.Unsafe.dll", "SHA512": "dl2H02p7dBXe5bbL06COrZdikV+/rPrYogWnjUoYfOxmd9okB/f3wtG1X+n4wCV5JcmwvBk9QClywyOXlni6qw==" }
+  { "Id": "System.Runtime.CompilerServices.Unsafe", "Version": "5.0.0", "Library": "lib/net45/System.Runtime.CompilerServices.Unsafe.dll", "SHA512": "IyJsUDsGq+zuWpYEpuTdPavN+SH1XWqm2tK6scoSoAHHhmr1pt4BzJtKzlTlyO4dXC/Sndnf1+2j7Yb5s1+lnw==" },
+  { "Id": "System.Text.Encoding.CodePages", "Version": "5.0.0", "Library": "lib/net461/System.Text.Encoding.CodePages.dll", "SHA512": "TzLIAbPciz0ofBcxDo6uy7fT0OMR454cQoQ5/qcnaGD+vDhCKmGryT08u82Xv1EYNbMWVT6THgT2MzqAYp3HRg==" },
+  { "Id": "SixLabors.ImageSharp", "Version": "2.1.13", "Library": "lib/net472/SixLabors.ImageSharp.dll", "SHA512": "Al2nn/R0uK/wVa9X5dscEw+AYfLP7HDj70QZXGViZtUvXUekF9/S6sOb3g5ZVtHPU4sXEpHGyRhWXY8maUtlEA==" }
 ]

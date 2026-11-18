@@ -17,32 +17,71 @@ namespace BetterIcon.Tray
         struct Rect { public int Left, Top, Right, Bottom; }
         [StructLayout(LayoutKind.Sequential)]
         struct ComboInfo { public int Size; public Rect Item, Button; public int ButtonState; public IntPtr Combo, Edit, List; }
+        [StructLayout(LayoutKind.Sequential)]
+        struct MouseTracking { public int Size, Flags; public IntPtr Window; public int HoverTime; }
         [DllImport("user32.dll")] static extern bool GetComboBoxInfo(IntPtr combo, ref ComboInfo info);
+        [DllImport("user32.dll")] static extern bool TrackMouseEvent(ref MouseTracking tracking);
+        [DllImport("user32.dll")] static extern bool ClientToScreen(IntPtr window, ref Point point);
         [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr hwnd, int msg, IntPtr w, IntPtr l);
         [DllImport("user32.dll", EntryPoint = "SendMessageW")] static extern IntPtr GetItemRect(IntPtr hwnd, int msg, IntPtr index, ref Rect rect);
         readonly Rows rows;
+        PackHoverPreview hover;
         bool browsing, updating;
         object accepted;
         public event EventHandler PackChosen;
         public PackPicker() { rows = new Rows(this); }
+        public void EnablePreviews(PackPreviewStore store) { hover = new PackHoverPreview(store, this); }
         sealed class Rows : NativeWindow
         {
             readonly PackPicker picker;
+            IntPtr? pointer;
             public Rows(PackPicker owner) { picker = owner; }
+            object Hit(IntPtr point, out Rectangle screen)
+            {
+                screen = Rectangle.Empty;
+                int xy = unchecked((int)point.ToInt64()), x = (short)xy, y = (short)(xy >> 16);
+                int hit = SendMessage(Handle, 0x01A9, IntPtr.Zero, point).ToInt32(); // LB_ITEMFROMPOINT
+                int index = hit & 0xffff;
+                var rect = new Rect();
+                if ((hit >> 16) != 0 || index >= picker.Items.Count || GetItemRect(Handle, 0x0198, (IntPtr)index, ref rect).ToInt64() == -1 ||
+                    x < rect.Left || x >= rect.Right || y < rect.Top || y >= rect.Bottom) return null;
+                var top = new Point(rect.Left, rect.Top);
+                if (!ClientToScreen(Handle, ref top)) return null;
+                screen = new Rectangle(top.X, top.Y, rect.Right - rect.Left, rect.Bottom - rect.Top);
+                return picker.Items[index];
+            }
+            public void ResetHover()
+            {
+                pointer = null;
+                if (picker.hover != null) picker.hover.Clear();
+            }
+            public void RefreshHover()
+            {
+                if (!pointer.HasValue || !picker.browsing || picker.hover == null) return;
+                Rectangle bounds;
+                var theme = Hit(pointer.Value, out bounds) as ThemeEntry;
+                picker.hover.Hover(theme, bounds);
+            }
             protected override void WndProc(ref Message m)
             {
                 object clicked = null;
-                if (m.Msg == 0x0202 && picker.browsing) { // WM_LBUTTONUP on a row of the dropdown
-                    int point = m.LParam.ToInt32(), x = (short)point, y = (short)(point >> 16);
-                    int hit = SendMessage(Handle, 0x01A9, IntPtr.Zero, m.LParam).ToInt32(); // LB_ITEMFROMPOINT
-                    int index = hit & 0xffff;
-                    var rect = new Rect();
-                    if ((hit >> 16) == 0 && index < picker.Items.Count &&
-                        GetItemRect(Handle, 0x0198, (IntPtr)index, ref rect).ToInt64() != -1 &&
-                        x >= rect.Left && x < rect.Right && y >= rect.Top && y < rect.Bottom) clicked = picker.Items[index];
-                }
+                Rectangle bounds;
+                if (m.Msg == 0x0202 && picker.browsing) clicked = Hit(m.LParam, out bounds);
                 base.WndProc(ref m);
                 if (clicked != null && !picker.IsDisposed) picker.ChooseItem(clicked);
+                if (!picker.browsing || picker.hover == null) return;
+                switch (m.Msg) {
+                    case 0x0200: // WM_MOUSEMOVE
+                        if (!pointer.HasValue) {
+                            var track = new MouseTracking { Size = Marshal.SizeOf(typeof(MouseTracking)), Flags = 2, Window = Handle };
+                            TrackMouseEvent(ref track);
+                        }
+                        pointer = m.LParam; RefreshHover(); break;
+                    case 0x02A3: case 0x00A0: // WM_MOUSELEAVE, WM_NCMOUSEMOVE (scrollbar)
+                        ResetHover(); break;
+                    case 0x0115: case 0x020A: case 0x0197: // WM_VSCROLL, WM_MOUSEWHEEL, LB_SETTOPINDEX
+                        RefreshHover(); break;
+                }
             }
         }
         protected override void OnDropDown(EventArgs e)
@@ -58,6 +97,7 @@ namespace BetterIcon.Tray
         protected override void OnDropDownClosed(EventArgs e)
         {
             browsing = false;
+            rows.ResetHover();
             if (!updating) SetSilently(accepted);
             base.OnDropDownClosed(e);
         }
@@ -101,6 +141,7 @@ namespace BetterIcon.Tray
         {
             if (browsing && m.Msg == 0x0100 && m.WParam.ToInt32() == (int)Keys.Enter) { ConfirmRow(); return; }
             base.WndProc(ref m);
+            if (browsing && (m.Msg == 0x020A || m.Msg == 0x0100 || m.Msg == 0x0115)) rows.RefreshHover();
         }
         public void RefreshLabels()
         {
@@ -111,8 +152,14 @@ namespace BetterIcon.Tray
         }
         protected override void OnHandleDestroyed(EventArgs e)
         {
+            if (rows != null) rows.ResetHover();
             if (rows != null && rows.Handle != IntPtr.Zero) rows.ReleaseHandle();
             base.OnHandleDestroyed(e);
+        }
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && hover != null) { hover.Dispose(); hover = null; }
+            base.Dispose(disposing);
         }
     }
 

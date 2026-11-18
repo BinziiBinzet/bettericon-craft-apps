@@ -1,6 +1,6 @@
 # BetterIcon-Craft Apps Windows support.
 Set-StrictMode -Version Latest
-$script:Version = '1.24.0'
+$script:Version = '1.25.0'
 $script:SvgArtworkType = $null
 $script:DownloadCatalog = $null
 . (Join-Path $PSScriptRoot 'BetterIcon.OnDemand.ps1')

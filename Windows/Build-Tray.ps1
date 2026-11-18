@@ -21,6 +21,8 @@ $resources = @("/resource:$(Join-Path $PSScriptRoot 'ProjectFileTypes.json'),Bet
 $projectSources = @((Join-Path $PSScriptRoot 'BetterIcon.ProjectFiles.cs'),(Join-Path $PSScriptRoot 'BetterIcon.ProjectFiles.UI.cs'))
 foreach ($dependency in $svgDependencies) { $resources += "/resource:$($dependency.Path),BetterIcon.Dependencies.$($dependency.Name).dll" }
 $svgReference = ($svgDependencies | Where-Object Name -EQ 'Svg').Path
+$projectSources += (Join-Path $PSScriptRoot 'BetterIcon.PackPreviews.cs')
+$resources += '/reference:' + ($svgDependencies | Where-Object Name -EQ 'SixLabors.ImageSharp').Path
 foreach ($style in @('clay','copper','mauve','ochre','sage','slate','stone','teal')) {
     foreach ($mode in @('dark','light')) {
         $png = Join-Path $PSScriptRoot ('Assets\AppIcons\betterIcon_icon_' + $style + '_' + $mode + '.png')

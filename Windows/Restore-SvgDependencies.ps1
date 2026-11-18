@@ -17,7 +17,11 @@ foreach ($package in $packages) {
             [Net.ServicePointManager]::SecurityProtocol = $protocol -bor [Net.SecurityProtocolType]::Tls12
             $id = $package.Id.ToLowerInvariant()
             $uri = 'https://api.nuget.org/v3-flatcontainer/' + $id + '/' + $package.Version + '/' + $id + '.' + $package.Version + '.nupkg'
-            Invoke-WebRequest -UseBasicParsing -Uri $uri -OutFile $temporary
+            $curl = Join-Path $env:WINDIR 'System32\curl.exe'
+            if (Test-Path -LiteralPath $curl -PathType Leaf) {
+                & $curl --disable --fail --silent --show-error --proto '=https' --location --proto-redir '=https' --max-time 90 --output $temporary $uri
+                if ($LASTEXITCODE) { throw "Could not restore the locked package $id $($package.Version)." }
+            } else { Invoke-WebRequest -UseBasicParsing -Uri $uri -OutFile $temporary }
             # Verify before publishing, and again below when reading the cache.
             $sha = [Security.Cryptography.SHA512]::Create()
             try { $hash = [Convert]::ToBase64String($sha.ComputeHash([IO.File]::ReadAllBytes($temporary))) } finally { $sha.Dispose() }

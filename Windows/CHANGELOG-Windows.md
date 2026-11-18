@@ -1,5 +1,10 @@
 # Windows installer changelog
 
+## 1.25.0 - 2026-11-18
+
+- Hover over a pack in either dropdown or the tray pack menu to preview up to three icons. ArtCraft Launcher appears first when the pack includes it.
+- The on-demand edition fetches the hovered pack's small WebP and caches it for offline use. The preview appears after decoding and disappears when the pointer leaves. Selecting a pack remains a separate click or Enter action.
+
 ## 1.24.0 - 2026-11-18
 
 - Choose between a full installer with all 15 packs and a smaller on-demand installer. Download a pack once to reuse it offline in either picker.

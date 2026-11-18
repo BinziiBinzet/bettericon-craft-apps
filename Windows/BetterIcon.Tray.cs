@@ -315,6 +315,8 @@ namespace BetterIcon.Tray
         readonly ToolStripMenuItem restoreIconDefault = new ToolStripMenuItem("Restore ArtCraft default...");
         AppEntry iconMenuTarget;
         readonly PackPicker themes = new PackPicker();
+        readonly PackPreviewStore previewStore;
+        readonly PackHoverPreview trayHover;
         readonly IconGridView apps = new IconGridView();
         readonly List<ListViewItem> appTiles = new List<ListViewItem>();
         readonly List<Bitmap> appArtwork = new List<Bitmap>();
@@ -353,6 +355,10 @@ namespace BetterIcon.Tray
             worker = new WorkerClient(source, fixture); startInTray = hidden; showEvent = show; stopEvent = stop; installStopEvent = installStop;
             string state = fixture == null ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BetterIcon-Craft Apps") : fixture.StateDirectory;
             preferencesPath = Path.Combine(state, "tray-preferences.json");
+            previewStore = new PackPreviewStore(source, state);
+            themes.EnablePreviews(previewStore);
+            trayHover = new PackHoverPreview(previewStore, this);
+            trayMenu.Closed += delegate { trayHover.Clear(); };
             library = new PackLibrary(Path.Combine(state, "packs"));
             if (fixture != null) fixtureLog = Path.Combine(state, "tray-events.jsonl");
             try { if (File.Exists(preferencesPath)) preferences = new JavaScriptSerializer().Deserialize<Preferences>(File.ReadAllText(preferencesPath)) ?? preferences; } catch (Exception) { }
@@ -416,6 +422,7 @@ namespace BetterIcon.Tray
 
         protected override void Dispose(bool disposing)
         {
+            if (disposing && trayHover != null) trayHover.Dispose();
             if (disposing && runningTaskbarIcons != null) runningTaskbarIcons.Dispose();
             if (disposing) { DisposeRoundedWindow(); if (hotkey != null) hotkey.Dispose(); DisposeAppearance(); ClearAppArtwork(); ClearPackArtwork(); }
             base.Dispose(disposing);
@@ -679,7 +686,7 @@ namespace BetterIcon.Tray
         static extern int SHDefExtractIconW(string file, int index, uint flags, out IntPtr large, IntPtr small, uint size);
         [DllImport("user32.dll")]
         static extern bool DestroyIcon(IntPtr icon);
-        static Bitmap Thumbnail(string path, Icon fallback, int size = 48, int iconIndex = 0)
+        internal static Bitmap Thumbnail(string path, Icon fallback, int size = 48, int iconIndex = 0)
         {
             Bitmap image = new Bitmap(size, size);
             try {
@@ -903,6 +910,7 @@ namespace BetterIcon.Tray
         }
         void BuildTrayMenu()
         {
+            trayHover.Clear();
             foreach (ToolStripItem item in trayMenu.Items.Cast<ToolStripItem>().ToArray()) item.Dispose();
             trayMenu.Items.Clear();
             ToolStripMenuItem manager = new ToolStripMenuItem("Open BetterIcon"); manager.Click += delegate { ShowManager(); }; trayMenu.Items.Add(manager);
@@ -915,9 +923,16 @@ namespace BetterIcon.Tray
             if (launchMenu.DropDownItems.Count == 0) launchMenu.DropDownItems.Add(new ToolStripMenuItem("No app shortcuts found") { Enabled = false });
             trayMenu.Items.Add(launchMenu);
             ToolStripMenuItem themeMenu = new ToolStripMenuItem("Change icon theme") { Enabled = !busy };
+            themeMenu.DropDownClosed += delegate { trayHover.Clear(); };
             if (catalog != null) foreach (ThemeEntry theme in catalog.Themes) {
                 ThemeEntry captured = theme;
                 ToolStripMenuItem item = new ToolStripMenuItem(theme.ToString());
+                MouseEventHandler hoverRow = delegate {
+                    if (item.Owner != null && item.Owner.Visible) trayHover.Hover(captured, item.Owner.RectangleToScreen(item.Bounds));
+                };
+                item.MouseEnter += delegate { hoverRow(item, null); };
+                item.MouseMove += hoverRow;
+                item.MouseLeave += delegate { trayHover.Clear(); };
                 item.Click += delegate { ShowSettings(); themes.ChooseItem(captured); }; themeMenu.DropDownItems.Add(item);
             }
             trayMenu.Items.Add(themeMenu); trayMenu.Items.Add(new ToolStripSeparator());

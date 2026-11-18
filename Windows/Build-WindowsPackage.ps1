@@ -23,7 +23,8 @@ $files = @('install.ps1','uninstall.ps1','BetterIcon.Windows.psm1','BetterIcon.S
     'BetterIcon.Appearance.cs','Test-Appearance.cs','BetterIcon.Loading.cs','BetterIcon.Window.cs','BetterIcon.Svg.cs','BetterIcon.NativeArtwork.cs','Test-Svg.cs','Test-IconRendering.cs','Restore-SvgDependencies.ps1','SvgDependencies.json','THIRD-PARTY-NOTICES.md','Licenses/SVG.NET.txt','Licenses/ExCSS.txt','Licenses/NET-Foundation.txt','Test-Loading.cs','Build-AppIcon.ps1','Assets/AppIcons/README.md')
 $repository = Get-BetterIconRepository
 $files += @('BetterIcon.ProjectFiles.cs','BetterIcon.ProjectFiles.UI.cs','ProjectFileTypes.json','BetterIcon.OnDemand.ps1','ArtworkRevision.txt',
-    'Test-ProjectFileIcons.ps1','Test-PackEditions.ps1','Test-PackEditions.cs')
+    'Test-ProjectFileIcons.ps1','Test-PackEditions.ps1','Test-PackEditions.cs','BetterIcon.PackPreviews.cs',
+    'PreviewArtworkRevision.txt','Licenses/ImageSharp.txt','Licenses/ImageSharp-NOTICES.txt','Test-HoverPreviews.cs')
 $buildDirectory = Join-Path $output ('build-' + [guid]::NewGuid().ToString('N'))
 $build = & (Join-Path $PSScriptRoot 'Build-Tray.ps1') -OutputDirectory $buildDirectory
 $fileCount = 0; $iconCount = 0; $previewCount = 0; $appIconCount = 0
@@ -34,6 +35,19 @@ try {
         foreach ($relative in @($files | Sort-Object -Unique)) {
             $path = Join-Path $PSScriptRoot $relative
             $null = [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $path, 'Windows/' + $relative, [IO.Compression.CompressionLevel]::Optimal)
+            $fileCount++
+        }
+        $previewDir = Join-Path $repository 'PackPreviews'
+        $previewCatalog = Join-Path $previewDir 'catalog.tsv'
+        $previewFiles = @('catalog.tsv')
+        foreach ($row in [IO.File]::ReadAllLines($previewCatalog)) {
+            $parts = $row.Split([char]9)
+            if ($parts.Count -ne 5 -or $parts[1] -cnotmatch '^[A-Za-z0-9-]+\.webp$' -or
+                (Get-FileHash -LiteralPath (Join-Path $previewDir $parts[1])).Hash -ine $parts[2]) { throw 'Invalid hover preview artwork.' }
+            if (!$OnDemand) { $previewFiles += $parts[1] }
+        }
+        foreach ($file in $previewFiles) {
+            [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive,(Join-Path $previewDir $file),('PackPreviews/'+$file))
             $fileCount++
         }
         foreach ($relative in @('README.md','LICENSE')) {
