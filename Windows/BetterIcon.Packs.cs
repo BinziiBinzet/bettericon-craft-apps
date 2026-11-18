@@ -18,6 +18,7 @@ namespace BetterIcon.Tray
         public string Author { get; set; }
         public bool Removed { get; set; }
         public Dictionary<string, string> Icons { get; set; }
+        public Dictionary<string, string> FileIcons { get; set; }
     }
     public sealed class SharedPackMetadata
     {
@@ -30,8 +31,11 @@ namespace BetterIcon.Tray
     {
         public int Schema { get; set; }
         public List<StoredPack> Packs { get; set; }
+        // Older versions can still read the app packs when this library also contains file-only packs.
+        public List<StoredPack> FileOnlyPacks { get; set; }
         public List<string> HiddenBundled { get; set; }
-        public PackLibraryState() { Schema = 1; Packs = new List<StoredPack>(); HiddenBundled = new List<string>(); }
+        public PackLibraryState() { Schema = 1; Packs = new List<StoredPack>(); FileOnlyPacks = new List<StoredPack>(); HiddenBundled = new List<string>(); }
+        public IEnumerable<StoredPack> AllPacks() { return Packs.Concat(FileOnlyPacks); }
     }
     // Personal artwork never enters the repository or a distributable build.
     // Revisions are immutable: a preview can still apply the exact files it showed.
@@ -61,12 +65,15 @@ namespace BetterIcon.Tray
             if (!File.Exists(Manifest)) return new PackLibraryState();
             if (new FileInfo(Manifest).Length > 2 * 1024 * 1024) throw new IOException("The icon library is too large to read.");
             PackLibraryState state = new JavaScriptSerializer().Deserialize<PackLibraryState>(File.ReadAllText(Manifest, Encoding.UTF8));
-            if (state == null || state.Schema != 1 || state.Packs == null || state.HiddenBundled == null) throw new IOException("Unrecognized icon library. Its contents have been preserved.");
+            if (state == null || state.Schema != 1 || state.Packs == null || state.FileOnlyPacks == null || state.HiddenBundled == null) throw new IOException("Unrecognized icon library. Its contents have been preserved.");
             HashSet<string> ids = new HashSet<string>();
-            foreach (StoredPack pack in state.Packs) {
-                if (!GuidName(pack.Id) || !GuidName(pack.Revision) || !ids.Add(pack.Id) || String.IsNullOrWhiteSpace(pack.Name) || pack.Icons == null || pack.Icons.Count == 0)
+            foreach (StoredPack pack in state.AllPacks()) {
+                if (!GuidName(pack.Id) || !GuidName(pack.Revision) || !ids.Add(pack.Id) || String.IsNullOrWhiteSpace(pack.Name) || pack.Icons == null || (pack.Icons.Count == 0 && (pack.FileIcons == null || pack.FileIcons.Count == 0)))
                     throw new IOException("Invalid icon pack record. Its contents have been preserved.");
                 foreach (var icon in pack.Icons) if (!Applications.Contains(icon.Key) || (icon.Value != icon.Key + ".png" && icon.Value != icon.Key + ".ico" && icon.Value != icon.Key + ".svg")) throw new IOException("Invalid icon filename in the library.");
+                if (pack.FileIcons != null) foreach (var icon in pack.FileIcons)
+                    if (!ProjectFormat.IsKey(icon.Key) || !new[] { ".png", ".ico", ".svg" }.Any(ext => icon.Value == icon.Key.Substring(1) + ext))
+                        throw new IOException("Invalid project file icon in the library.");
             }
             return state;
         }
@@ -90,19 +97,21 @@ namespace BetterIcon.Tray
             string directory = Path.Combine(Root, pack.Id, pack.Revision);
             ThemeIcon[] icons = pack.Icons.Select(p => new ThemeIcon { Application = p.Key, Path = Path.Combine(directory, p.Value) }).ToArray();
             foreach (ThemeIcon icon in icons) { RegularPath(icon.Path); if (!File.Exists(icon.Path)) throw new IOException("Artwork is missing from " + pack.Name + "."); }
-            return new ThemeEntry { Id = "User/" + pack.Id + "/" + pack.Revision, LibraryId = pack.Id, Managed = true, Name = pack.Name, Author = pack.Author, Pack = "Personal", IconCount = icons.Length, Icons = icons };
+            var documents = (pack.FileIcons ?? new Dictionary<string, string>()).ToDictionary(p => p.Key, p => Path.Combine(directory, "FileTypes", p.Value));
+            foreach (string path in documents.Values) { RegularPath(path); if (!File.Exists(path)) throw new IOException("File artwork is missing from " + pack.Name + "."); }
+            return new ThemeEntry { Id = "User/" + pack.Id + "/" + pack.Revision, LibraryId = pack.Id, Managed = true, Name = pack.Name, Author = pack.Author, Pack = "Personal", IconCount = icons.Length, Icons = icons, FileIcons = documents };
         }
         public ThemeEntry[] VisibleThemes(IEnumerable<ThemeEntry> bundled)
         {
             PackLibraryState state = Read();
-            return bundled.Where(t => !state.HiddenBundled.Contains(t.Id)).Concat(state.Packs.Where(p => !p.Removed).Select(Theme)).ToArray();
+            return bundled.Where(t => !state.HiddenBundled.Contains(t.Id)).Concat(state.AllPacks().Where(p => !p.Removed).Select(Theme)).ToArray();
         }
         public ThemeEntry Save(string name, IDictionary<string, string> files, string editId, string author = null)
         {
             Dictionary<string, byte[]> images = new Dictionary<string, byte[]>();
             Dictionary<string, string> extensions = new Dictionary<string, string>();
             foreach (var entry in files) {
-                if (!Applications.Contains(entry.Key)) throw new ArgumentException("Unsupported app: " + entry.Key);
+                if (!Applications.Contains(entry.Key) && !ProjectFormat.IsKey(entry.Key)) throw new ArgumentException("Unsupported icon target: " + entry.Key);
                 RegularPath(entry.Value);
                 if (new FileInfo(entry.Value).Length > MaxImageBytes) throw new IOException("Each icon must be smaller than 16 MB.");
                 images.Add(entry.Key, File.ReadAllBytes(entry.Value)); extensions.Add(entry.Key, Path.GetExtension(entry.Value).ToLowerInvariant());
@@ -119,11 +128,12 @@ namespace BetterIcon.Tray
         {
             if (!Applications.Contains(application)) throw new ArgumentException("Unsupported app: " + application);
             Dictionary<string, string> files = basis == null || basis.IsDefault ? new Dictionary<string, string>() : basis.Icons.ToDictionary(icon => icon.Application, icon => String.IsNullOrEmpty(icon.PreviewPath) ? icon.Path : icon.PreviewPath);
+            if (basis != null && basis.FileIcons != null) foreach (var file in basis.FileIcons) files.Add(file.Key, file.Value);
             files[application] = path;
             if (basis != null && basis.Managed) return Save(basis.Name, files, basis.LibraryId, basis.Author);
             string stem = basis == null || basis.IsDefault ? "My icon pack" : basis.Name + " custom";
             string name = stem.Substring(0, Math.Min(64, stem.Length));
-            HashSet<string> names = new HashSet<string>(Read().Packs.Where(pack => !pack.Removed).Select(pack => pack.Name), StringComparer.OrdinalIgnoreCase);
+            HashSet<string> names = new HashSet<string>(Read().AllPacks().Where(pack => !pack.Removed).Select(pack => pack.Name), StringComparer.OrdinalIgnoreCase);
             for (int number = 2; names.Contains(name); number++) {
                 string suffix = " (" + number + ")";
                 name = stem.Substring(0, Math.Min(64 - suffix.Length, stem.Length)) + suffix;
@@ -134,19 +144,28 @@ namespace BetterIcon.Tray
         {
             name = Label(name, "Pack name", true);
             author = Label(author, "Author", false);
-            if (images.Count == 0) throw new ArgumentException("Choose artwork for at least one app.");
+            if (images.Count == 0) throw new ArgumentException("Choose artwork for at least one app or project file type.");
             if (images.Values.Sum(b => (long)b.Length) > MaxPackBytes - MaxMetadataBytes) throw new IOException("A pack must be smaller than 128 MB to share as a ZIP.");
             foreach (var image in images) ValidateImage(image.Value, extensions[image.Key]);
             using (Lock()) {
                 PackLibraryState state = Read();
-                StoredPack old = editId == null ? null : state.Packs.SingleOrDefault(p => p.Id == editId && !p.Removed);
+                StoredPack old = editId == null ? null : state.AllPacks().SingleOrDefault(p => p.Id == editId && !p.Removed);
                 if (editId != null && old == null) throw new IOException("This pack was removed. Create a new pack instead.");
-                if (state.Packs.Any(p => !p.Removed && p.Id != editId && p.Name.Equals(name, StringComparison.OrdinalIgnoreCase))) throw new ArgumentException("A personal pack already has that name.");
+                if (state.AllPacks().Any(p => !p.Removed && p.Id != editId && p.Name.Equals(name, StringComparison.OrdinalIgnoreCase))) throw new ArgumentException("A personal pack already has that name.");
                 StoredPack pack = new StoredPack { Id = old == null ? Guid.NewGuid().ToString("N") : old.Id, Revision = Guid.NewGuid().ToString("N"), Name = name, Author = author, Icons = new Dictionary<string, string>() };
                 string folder = Path.Combine(Root, pack.Id, pack.Revision); RegularPath(folder); Directory.CreateDirectory(folder);
-                foreach (var image in images) { string file = image.Key + extensions[image.Key]; File.WriteAllBytes(Path.Combine(folder, file), image.Value); pack.Icons.Add(image.Key, file); }
-                if (old != null) state.Packs.Remove(old);
-                state.Packs.Add(pack); Write(state); return Theme(pack);
+                pack.FileIcons = new Dictionary<string, string>();
+                foreach (var image in images) {
+                    bool project = ProjectFormat.IsKey(image.Key);
+                    string directory = project ? Path.Combine(folder, "FileTypes") : folder;
+                    string file = (project ? image.Key.Substring(1) : image.Key) + extensions[image.Key];
+                    Directory.CreateDirectory(directory);
+                    File.WriteAllBytes(Path.Combine(directory, file), image.Value);
+                    (project ? pack.FileIcons : pack.Icons).Add(image.Key, file);
+                }
+                if (old != null) { state.Packs.Remove(old); state.FileOnlyPacks.Remove(old); }
+                (pack.Icons.Count == 0 ? state.FileOnlyPacks : state.Packs).Add(pack);
+                Write(state); return Theme(pack);
             }
         }
         static void ValidateImage(byte[] bytes, string extension)
@@ -169,6 +188,11 @@ namespace BetterIcon.Tray
         static string AppForFile(string file)
         {
             string name = Path.GetFileNameWithoutExtension(file);
+            string parent = Path.GetDirectoryName(file) ?? "";
+            if (parent.Split('\\', '/').Contains("FileTypes", StringComparer.OrdinalIgnoreCase)) {
+                string key = "." + name.TrimStart('.').ToLowerInvariant();
+                return ProjectFormat.IsKey(key) ? key : null;
+            }
             return Applications.FirstOrDefault(app => Regex.IsMatch(name, "^" + (app == "CraftAnything" ? "Craft[ _-]*Anything" : app == "ArtCraftLauncher" ? "ArtCraft[ _-]*Launcher" : Regex.Escape(app)) + "(?:[ _.-].*)?$", RegexOptions.IgnoreCase));
         }
         static int FormatPriority(string extension) { return extension == ".svg" ? 3 : extension == ".ico" ? 2 : extension == ".png" ? 1 : 0; }
@@ -190,6 +214,7 @@ namespace BetterIcon.Tray
             HashSet<string> ambiguous = new HashSet<string>();
             string name; SharedPackMetadata metadata = null;
             if (Directory.Exists(source)) {
+                source = Path.GetFullPath(source);
                 name = new DirectoryInfo(source).Name;
                 Stack<string> pending = new Stack<string>(); pending.Push(source); int count = 0;
                 while (pending.Count > 0) foreach (string path in Directory.EnumerateFileSystemEntries(pending.Pop())) {
@@ -200,7 +225,7 @@ namespace BetterIcon.Tray
                         if (metadata != null) throw new IOException("Several pack descriptions found. Import one theme at a time.");
                         using (Stream input = File.OpenRead(path)) metadata = ReadMetadata(ReadLimited(input, MaxMetadataBytes));
                     }
-                    else AddImage(images, extensions, ambiguous, path, delegate { if (new FileInfo(path).Length > MaxImageBytes) throw new IOException("An icon exceeds 16 MB."); return File.ReadAllBytes(path); });
+                    else AddImage(images, extensions, ambiguous, path.Substring(Path.GetFullPath(source).TrimEnd('\\', '/').Length + 1), delegate { if (new FileInfo(path).Length > MaxImageBytes) throw new IOException("An icon exceeds 16 MB."); return File.ReadAllBytes(path); });
                 }
             }
             else {
@@ -224,7 +249,7 @@ namespace BetterIcon.Tray
                 }
             }
             if (ambiguous.Count != 0) throw new IOException("Several icons match " + ambiguous.OrderBy(app => app).First() + ". Import one theme at a time.");
-            if (images.Count == 0) throw new IOException("No matching icons found. Name SVG, PNG or ICO files after apps, such as PhotoCraft.svg, or use New pack to assign files yourself.");
+            if (images.Count == 0) throw new IOException("No matching icons found. Use app names or put project artwork in FileTypes, such as FileTypes/pcraft.png.");
             return SaveBytes(metadata == null ? name : metadata.Name, images, extensions, null, metadata == null ? "" : metadata.Author);
         }
         static byte[] ReadLimited(Stream input, int limit)
@@ -250,7 +275,7 @@ namespace BetterIcon.Tray
             if (File.Exists(destination) && !overwrite) throw new IOException("The ZIP already exists. Choose a new filename.");
             ThemeEntry theme;
             using (Lock()) {
-                StoredPack pack = Read().Packs.SingleOrDefault(p => p.Id == selected.LibraryId && !p.Removed);
+                StoredPack pack = Read().AllPacks().SingleOrDefault(p => p.Id == selected.LibraryId && !p.Removed);
                 if (pack == null || selected.Id != "User/" + pack.Id + "/" + pack.Revision) throw new IOException("This pack changed. Select it again before exporting.");
                 theme = Theme(pack);
             }
@@ -258,6 +283,10 @@ namespace BetterIcon.Tray
             foreach (ThemeIcon icon in theme.Icons) {
                 byte[] bytes; using (Stream input = File.OpenRead(icon.Path)) bytes = ReadLimited(input, MaxImageBytes);
                 ValidateImage(bytes, Path.GetExtension(icon.Path)); files.Add(Path.GetFileName(icon.Path), bytes);
+            }
+            foreach (var icon in theme.FileIcons) {
+                byte[] bytes; using (Stream input = File.OpenRead(icon.Value)) bytes = ReadLimited(input, MaxImageBytes);
+                ValidateImage(bytes, Path.GetExtension(icon.Value)); files.Add("FileTypes/" + Path.GetFileName(icon.Value), bytes);
             }
             // Share only portable display metadata and app artwork, never local paths, IDs or preferences.
             SharedPackMetadata metadata = new SharedPackMetadata { Format = "BetterIcon.IconPack", Version = 1, Name = Label(theme.Name, "Pack name", true), Author = Label(theme.Author, "Author", false) };
@@ -277,7 +306,7 @@ namespace BetterIcon.Tray
         {
             using (Lock()) {
                 PackLibraryState state = Read();
-                if (theme.Managed) { StoredPack pack = state.Packs.SingleOrDefault(p => p.Id == theme.LibraryId); if (pack == null) throw new IOException("Pack not found."); pack.Removed = true; }
+                if (theme.Managed) { StoredPack pack = state.AllPacks().SingleOrDefault(p => p.Id == theme.LibraryId); if (pack == null) throw new IOException("Pack not found."); pack.Removed = true; }
                 else if (!state.HiddenBundled.Contains(theme.Id)) state.HiddenBundled.Add(theme.Id);
                 // Retain immutable artwork so existing previews and applied icons remain valid.
                 Write(state);

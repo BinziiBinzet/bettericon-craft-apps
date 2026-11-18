@@ -1,0 +1,189 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Reflection;
+using System.Runtime.InteropServices;
+using System.Threading;
+using System.Web.Script.Serialization;
+using System.Windows.Forms;
+using BetterIcon.Tray;
+
+static class PackEditionTests
+{
+    const BindingFlags Fields = BindingFlags.Instance | BindingFlags.NonPublic;
+    static T Field<T>(object obj, string name) { return (T)obj.GetType().GetField(name, Fields).GetValue(obj); }
+    static void Check(bool ok, string label) { if (!ok) throw new Exception(label); Console.WriteLine("PASS " + label); }
+    static void Wait(Func<bool> ready)
+    {
+        var elapsed = Stopwatch.StartNew();
+        do {
+            Application.DoEvents();
+            if (ready()) return;
+            if (elapsed.Elapsed.TotalMinutes > 3) throw new TimeoutException("Window did not finish loading the pack.");
+            Thread.Sleep(8);
+        } while (true);
+    }
+    static void Offline()
+    {
+        // Only this test process and its own workers inherit these settings.
+        Environment.SetEnvironmentVariable("HTTPS_PROXY", "http://127.0.0.1:9");
+        Environment.SetEnvironmentVariable("ALL_PROXY", "http://127.0.0.1:9");
+        Environment.SetEnvironmentVariable("NO_PROXY", null);
+    }
+    static ThemeEntry Find(ComboBox combo, string id) { return combo.Items.OfType<ThemeEntry>().Single(t => t.Id == id); }
+    [StructLayout(LayoutKind.Sequential)] struct Rect { public int Left, Top, Right, Bottom; }
+    [StructLayout(LayoutKind.Sequential)] struct Info { public int Size; public Rect Item, Button; public int State; public IntPtr Combo, Edit, List; }
+    [DllImport("user32.dll")] static extern bool GetComboBoxInfo(IntPtr hwnd, ref Info info);
+    [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr hwnd, int msg, IntPtr w, IntPtr l);
+    [DllImport("user32.dll", EntryPoint = "SendMessageW")] static extern IntPtr GetRect(IntPtr hwnd, int msg, IntPtr w, ref Rect r);
+    static IntPtr OpenRows(ComboBox combo)
+    {
+        combo.Focus(); combo.DroppedDown = true;
+        var info = new Info { Size = Marshal.SizeOf(typeof(Info)) };
+        if (!GetComboBoxInfo(combo.Handle, ref info) || info.List == IntPtr.Zero) throw new Exception("No native list");
+        return info.List;
+    }
+    static IntPtr RowPoint(IntPtr list, int index)
+    {
+        SendMessage(list, 0x0197, (IntPtr)index, IntPtr.Zero); // LB_SETTOPINDEX
+        var rect = new Rect();
+        if (GetRect(list, 0x0198, (IntPtr)index, ref rect).ToInt64() == -1) throw new Exception("No native row");
+        return (IntPtr)(((rect.Top + rect.Bottom) / 2 << 16) | (rect.Left + 8));
+    }
+    static void Browse(ComboBox combo, ThemeEntry target, string cache)
+    {
+        var active = combo.SelectedItem;
+        var list = OpenRows(combo);
+        foreach (var pack in combo.Items.OfType<ThemeEntry>().Where(t => t.NeedsDownload)) {
+            var point = RowPoint(list, combo.Items.IndexOf(pack));
+            SendMessage(list, 0x0200, IntPtr.Zero, point); // hover
+            SendMessage(combo.Handle, 0x0100, (IntPtr)Keys.Down, IntPtr.Zero);
+        }
+        combo.DroppedDown = false; combo.SelectedItem = target; Application.DoEvents();
+        Check(Object.Equals(active, combo.SelectedItem) && target.NeedsDownload && !Directory.Exists(cache),
+            "Opening, hovering, arrowing across the list, canceling and programmatic selection never download a pack");
+    }
+    static string MenuLabel(LauncherForm form, ThemeEntry pack)
+    {
+        var menu = Field<ContextMenuStrip>(form, "trayMenu").Items.OfType<ToolStripMenuItem>().Single(i => i.Text == "Change icon theme");
+        return menu.DropDownItems.Cast<ToolStripMenuItem>().Single(i => i.Text.StartsWith(pack.DisplayName + " (")).Text;
+    }
+    static void SelectPack(Form form, string id, bool file, bool download, bool fails)
+    {
+        var combo = Field<ComboBox>(form, file ? "packs" : "themes");
+        var label = Field<Label>(form, file ? "phase" : "loadingMessage");
+        var bar = Field<ProgressBar>(form, file ? "progress" : "loadingProgress");
+        var target = Find(combo, id);
+        var changes = new List<string>();
+        EventHandler changed = delegate { changes.Add(label.Text); };
+        label.TextChanged += changed;
+        try {
+            IntPtr listWindow = OpenRows(combo);
+            int index = combo.Items.IndexOf(target);
+            IntPtr point = RowPoint(listWindow, index);
+            if (file && target.Name == "Standard") {
+                SendMessage(listWindow, 0x0186, (IntPtr)index, IntPtr.Zero); // LB_SETCURSEL
+                SendMessage(combo.Handle, 0x0100, (IntPtr)Keys.Enter, IntPtr.Zero);
+            } else {
+                SendMessage(listWindow, 0x0201, (IntPtr)1, point);
+                SendMessage(listWindow, 0x0202, IntPtr.Zero, point);
+            }
+            string name = target.DisplayName + "...";
+            string first = (download ? "Downloading " : "Loading ") + name;
+            Check(changes.FirstOrDefault() == first && bar.Visible && bar.MarqueeAnimationSpeed > 0 && bar.AccessibleName == first,
+                (file ? "File" : "App") + " picker immediately shows " + first);
+            if (file) Wait(() => !Field<bool>(form, "working"));
+            else {
+                var work = Field<System.Threading.Tasks.Task>(form, "packLoadTask");
+                Wait(() => work.IsCompleted);
+                work.GetAwaiter().GetResult();
+            }
+            var expected = download && !fails ? new[] { first, "Loading " + name } : new[] { first };
+            Check(changes.SequenceEqual(expected) && !bar.Visible && bar.MarqueeAnimationSpeed == 0,
+                "Bottom bar shows the actual phases in order and stops: " + String.Join(" then ", changes) +
+                " (visible=" + bar.Visible + ", speed=" + bar.MarqueeAnimationSpeed + ")");
+            if (fails) {
+                Check(combo.SelectedItem != target && Field<Label>(form, "message").Text.Length > 0 && target.ToString().EndsWith(" (Download)"), "Failed fetch returns to the previous pack and keeps the Download label");
+            } else {
+                var list = Field<ListView>(form, file ? "files" : "packPreview");
+                Check(list.Items.Count > 0 && !target.NeedsDownload, "The selected artwork is ready");
+            }
+        } finally { label.TextChanged -= changed; }
+    }
+    [STAThread]
+    static int Main(string[] args)
+    {
+        Application.EnableVisualStyles();
+        Control.CheckForIllegalCrossThreadCalls = true;
+        int result = 0;
+        using (var context = new ApplicationContext()) {
+            EventHandler run = null;
+            run = delegate {
+                Application.Idle -= run;
+                try { Run(args); } catch (Exception error) { Console.Error.WriteLine(error); result = 1; }
+                finally { context.ExitThread(); }
+            };
+            Application.Idle += run; Application.Run(context);
+        }
+        return result;
+    }
+    static void Run(string[] args)
+    {
+        var state = Path.Combine(args[1], "state");
+        Directory.CreateDirectory(state);
+        var prefs = Path.Combine(state, "tray-preferences.json");
+        var json = new JavaScriptSerializer();
+        File.WriteAllText(prefs, json.Serialize(new Preferences { Theme = ThemeEntry.DefaultThemeId, Hotkey = new HotkeySettings { Enabled = false } }));
+        var fixture = new FixtureConfig { StateDirectory = state, ShortcutDirectory = new[] { args[1] }, KeepOpenForAutomation = true };
+        bool lean = File.Exists(Path.Combine(args[0], "OnDemand.tsv"));
+        if (!lean) Offline();
+        const string first = "Craft-Icons-circleb/Root", second = "Craft-Icons-Komplett/Standard", third = "Craft-Icons-Zach/Ink";
+        using (var show = new EventWaitHandle(false, EventResetMode.AutoReset))
+        using (var stop = new EventWaitHandle(false, EventResetMode.AutoReset)) {
+            for (int pass = 0; pass < 2; pass++) using (var form = new LauncherForm(args[0], fixture, true, show, stop)) {
+                form.Start();
+                form.ShowManager();
+                Wait(() => !Field<bool>(form, "busy") && Field<Catalog>(form, "catalog") != null);
+                Field<TabControl>(form, "pages").SelectedIndex = 1;
+                var combo = Field<ComboBox>(form, "themes");
+                if (pass == 1) {
+                    Check(((ThemeEntry)combo.SelectedItem).Id == first && !Find(combo, second).NeedsDownload, "Restart offline remembers the app pack and the downloaded file pack");
+                    SelectPack(form, second, false, false, false);
+                    Check(json.Deserialize<Preferences>(File.ReadAllText(prefs)).FileTheme == first, "App pack switches preserve the file pack preference");
+                    typeof(LauncherForm).GetMethod("ExitLauncher", Fields).Invoke(form, null);
+                    continue;
+                }
+                var packs = combo.Items.OfType<ThemeEntry>().Where(t => !t.IsDefault).ToArray();
+                Check(packs.Length == 15 && packs.Sum(t => t.IconCount) == 265 && packs.All(t => t.NeedsDownload == lean), "First launch lists all 15 packs and 265 icons with the correct availability");
+                var cache = Path.Combine(state, "downloads");
+                Check(!Directory.Exists(cache), "Listing the catalog creates no download cache");
+                Check(packs.All(t => t.ToString().EndsWith(lean ? " (Download)" : " (Included)") && MenuLabel(form, t) == t.ToString()), "Picker and tray labels identify each pack's availability at installation");
+                if (lean) Browse(combo, Find(combo, third), cache);
+                SelectPack(form, first, false, lean, false);
+                Check(MenuLabel(form, Find(combo, first)).EndsWith(lean ? " (Downloaded)" : " (Included)"), "The clicked pack has the correct local status in the tray");
+                var dialogType = typeof(LauncherForm).GetNestedType("ProjectFileDialog", BindingFlags.NonPublic);
+                using (var files = (Form)Activator.CreateInstance(dialogType, new object[] { form, null })) {
+                    files.Show(form);
+                    Wait(() => files.Visible && !Field<bool>(files, "working"));
+                    SelectPack(files, second, true, lean, false);
+                    Check(MenuLabel(form, Find(combo, second)).EndsWith(lean ? " (Downloaded)" : " (Included)"), "Choosing a file pack updates its availability in the other menus");
+                    Offline();
+                    SelectPack(files, first, true, false, false);
+                    if (lean) SelectPack(files, third, true, true, true);
+                    Check(Field<ListView>(files, "files").Items.Cast<ListViewItem>().Any(row => row.Text == ".pcraft"), "File picker previews native PhotoCraft documents");
+                    files.Close();
+                }
+                var saved = json.Deserialize<Preferences>(File.ReadAllText(prefs));
+                Check(saved.Theme == first && saved.FileTheme == first, "Successful app and file choices are persisted independently");
+                if (lean) {
+                    Check(Directory.GetFiles(cache, ".complete", SearchOption.AllDirectories).Length == 2 &&
+                          Directory.GetDirectories(cache, ".loading-*", SearchOption.AllDirectories).Length == 0,
+                          "Only selected packs were cached and a failed download published no partial files");
+                } else Check(!Directory.Exists(cache), "The bundled edition loads both pack types entirely offline");
+                typeof(LauncherForm).GetMethod("ExitLauncher", Fields).Invoke(form, null);
+            }
+        }
+    }
+}

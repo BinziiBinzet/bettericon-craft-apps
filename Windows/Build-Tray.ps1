@@ -17,7 +17,8 @@ $source = '[assembly: System.Reflection.AssemblyTitle("BetterIcon for ArtCraft")
     '[assembly: System.Reflection.AssemblyFileVersion("' + $version + '.0")]'
 [IO.File]::WriteAllText($metadata, $source)
 $icon = Join-Path $output 'BetterIcon-Tray.ico'
-$resources = @()
+$resources = @("/resource:$(Join-Path $PSScriptRoot 'ProjectFileTypes.json'),BetterIcon.ProjectFileTypes.json")
+$projectSources = @((Join-Path $PSScriptRoot 'BetterIcon.ProjectFiles.cs'),(Join-Path $PSScriptRoot 'BetterIcon.ProjectFiles.UI.cs'))
 foreach ($dependency in $svgDependencies) { $resources += "/resource:$($dependency.Path),BetterIcon.Dependencies.$($dependency.Name).dll" }
 $svgReference = ($svgDependencies | Where-Object Name -EQ 'Svg').Path
 foreach ($style in @('clay','copper','mauve','ochre','sage','slate','stone','teal')) {
@@ -32,6 +33,6 @@ foreach ($style in @('clay','copper','mauve','ochre','sage','slate','stone','tea
     }
 }
 $exe = Join-Path $output 'BetterIcon-Tray.exe'
-& $compiler /nologo /target:winexe /platform:anycpu /optimize+ /warnaserror+ "/out:$exe" "/win32icon:$icon" "/win32manifest:$(Join-Path $PSScriptRoot 'BetterIcon.Tray.manifest')" /reference:System.dll /reference:System.Core.dll /reference:System.Drawing.dll /reference:System.Windows.Forms.dll /reference:System.Web.Extensions.dll /reference:System.IO.Compression.dll /reference:System.IO.Compression.FileSystem.dll "/reference:$svgReference" @resources (Join-Path $PSScriptRoot 'BetterIcon.Tray.cs') (Join-Path $PSScriptRoot 'BetterIcon.Taskbar.cs') (Join-Path $PSScriptRoot 'BetterIcon.Window.cs') (Join-Path $PSScriptRoot 'BetterIcon.Svg.cs') (Join-Path $PSScriptRoot 'BetterIcon.NativeArtwork.cs') (Join-Path $PSScriptRoot 'BetterIcon.Appearance.cs') (Join-Path $PSScriptRoot 'BetterIcon.Loading.cs') (Join-Path $PSScriptRoot 'BetterIcon.Hotkey.cs') (Join-Path $PSScriptRoot 'BetterIcon.Packs.cs') (Join-Path $PSScriptRoot 'BetterIcon.Packs.UI.cs') (Join-Path $PSScriptRoot 'BetterIcon.Shortcuts.UI.cs') (Join-Path $PSScriptRoot 'BetterIcon.ShellLink.cs') $metadata
+& $compiler /nologo /target:winexe /platform:anycpu /optimize+ /warnaserror+ "/out:$exe" "/win32icon:$icon" "/win32manifest:$(Join-Path $PSScriptRoot 'BetterIcon.Tray.manifest')" /reference:System.dll /reference:System.Core.dll /reference:System.Drawing.dll /reference:System.Windows.Forms.dll /reference:System.Web.Extensions.dll /reference:System.IO.Compression.dll /reference:System.IO.Compression.FileSystem.dll "/reference:$svgReference" @resources @projectSources (Join-Path $PSScriptRoot 'BetterIcon.Tray.cs') (Join-Path $PSScriptRoot 'BetterIcon.Taskbar.cs') (Join-Path $PSScriptRoot 'BetterIcon.Window.cs') (Join-Path $PSScriptRoot 'BetterIcon.Svg.cs') (Join-Path $PSScriptRoot 'BetterIcon.NativeArtwork.cs') (Join-Path $PSScriptRoot 'BetterIcon.Appearance.cs') (Join-Path $PSScriptRoot 'BetterIcon.Loading.cs') (Join-Path $PSScriptRoot 'BetterIcon.Hotkey.cs') (Join-Path $PSScriptRoot 'BetterIcon.Packs.cs') (Join-Path $PSScriptRoot 'BetterIcon.Packs.UI.cs') (Join-Path $PSScriptRoot 'BetterIcon.Shortcuts.UI.cs') (Join-Path $PSScriptRoot 'BetterIcon.ShellLink.cs') $metadata
 if ($LASTEXITCODE -ne 0) { throw 'Tray compilation failed.' }
 [pscustomobject]@{ Executable = $exe; Version = $version; SHA256 = (Get-FileHash -LiteralPath $exe).Hash }

@@ -1,10 +1,15 @@
 # BetterIcon-Craft Apps for Windows
 
-Windows version **1.23.1** includes a native tray launcher and a Windows app installer alongside the existing shortcut-icon tools. It shares the repository's artwork and leaves Craft executables, app settings, and file associations unchanged.
+BetterIcon **1.24.0** for Windows lets you choose separate icon packs for app shortcuts and native ArtCraft project files.
 
 ## Start here
 
-Run **BetterIcon-Setup-1.23.1.exe**, then open **BetterIcon** from Start. Setup installs for your Windows account without administrator access, adds a Start-menu shortcut, and offers an optional desktop shortcut. It includes the app, helper scripts, and bundled icon packs; Git, a compiler, and an internet connection are not needed to use it. Windows 10/11 with .NET Framework 4.8 or later is required. Setup reports a missing framework before making changes. This build is unsigned, so Windows may show an unknown-publisher or SmartScreen warning.
+Choose an installer for Windows 10/11 with .NET Framework 4.8 or later.
+
+- **BetterIcon-Setup-1.24.0.exe** includes all 15 packs. Every pack works offline immediately after installation.
+- **BetterIcon-Setup-1.24.0-OnDemand.exe** includes the catalog. Click a pack in the list, or highlight it and press Enter, to download its artwork and verify its SHA-256 hashes. You can browse the entire list offline. Both pickers share each download and keep it for future launches.
+
+Open **BetterIcon** from Start. Both editions install for your Windows account and offer an optional desktop shortcut. The setup is unsigned, so Windows may show an unknown-publisher or SmartScreen notice.
 
 Run a newer Setup to upgrade. Finish any icon operation and close BetterIcon's dialogs first; Setup waits for a graceful exit and refuses to continue if the app stays busy. It never force-terminates BetterIcon. Preferences, personal packs, shortcut backups, and already-applied icons are preserved. Setup registers BetterIcon in **Settings > Apps > Installed apps** for normal removal. Uninstall preserves those same files so existing shortcuts retain their icons and a reinstall can recover your preferences. It does not restore ArtCraft shortcuts; use BetterIcon's Restore actions before uninstalling if that is what you want.
 
@@ -51,9 +56,17 @@ The tray finds existing shortcuts in both your own and the shared Desktop/Start 
 
 Current user covers your personal Desktop, Start menu, and matching taskbar shortcuts. All users covers the shared Desktop and Start menu, visible to everyone on the computer; it does not edit other users' private profile folders. The two scopes are independent; apply both separately if you have both kinds of shortcut. Each Apply or Restore asks again, with no persistent location dropdown. No shortcuts are created for missing apps. Launchers whose names start with a supported Craft app name, such as `PhotoCraft with custom launcher`, retain their launch configuration. Uninstall/help shortcuts are excluded.
 
-The launcher uses Windows PowerShell 5.1 and .NET Framework 4.8 on Windows 10/11. Source builds use the local .NET Framework compiler. Their execution-policy override applies only to that process; it does not change the machine's policy. Organizational policies may still prevent execution. The command-line installer also supports PowerShell 7. No internet connection or package installation is needed.
+The launcher uses Windows PowerShell 5.1 and .NET Framework 4.8 on Windows 10/11. Source builds use the local .NET Framework compiler. Their execution-policy override applies only to that process. The command-line installer also supports PowerShell 7.
 
 ## Manage icon packs
+
+Under **Manage Icons**, use **App icon pack** for the launcher and shortcuts. Open **File icons...** to choose a different pack for Explorer. The bottom progress bar shows **Downloading** while fetching a new pack and **Loading** while preparing its previews. Bundled and previously downloaded packs go straight to **Loading**.
+
+In either picker or the tray's **Change icon theme** menu, **Download** means the pack is available to fetch, **Downloaded** means it is cached on this computer, and **Included** means it came with the full installer.
+
+The file picker previews native project types including PhotoCraft `.pcraft`, SoundCraft `.scraft`, and FilmCraft `.fcproj`. Choose **Apply file icons...** to review which extensions will change. **Restore file icons...** restores their previous icons. Both actions keep the program that opens each file. General formats such as PDF and PNG keep their existing icons.
+
+Personal packs can contain apps, project files, or both. For example, use `PhotoCraft.png` for the app and `FileTypes/pcraft.png` for its documents in the same folder or ZIP. The editor also accepts SVG and ICO. Existing app-only packs can supply matching art when you explicitly choose them in the file picker.
 
 **Manage Icons** places the pack selector and **Import**, **New pack**, and **Remove pack** buttons above the preview. Remove pack is a direct action with no dropdown. Increasing the window height reveals more icons; the preview retains at least one complete row. If a small window or very large artwork cannot fit the preview and controls together, the page scrolls rather than overlapping them. **Show app names**, **Icon size**, and **Apply/Restore** stay below the preview. The footer holds the version, BetterIcon app-icon button, and appearance button.
 
@@ -171,7 +184,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Test-Windows.ps1 -Test
 
 # Build a Setup EXE from a locally built Windows ZIP (Inno Setup on this machine).
 .\Build-AppInstaller.ps1 -OutputDirectory 'C:\path\to\setup-output' `
-  -PackagePath 'C:\path\to\BetterIcon-Craft-Apps-Windows-1.23.1.zip' `
+  -PackagePath 'C:\path\to\BetterIcon-Craft-Apps-Windows-1.24.0.zip' `
   -CompilerPath 'C:\path\to\Inno Setup\ISCC.exe'
 
 # Actual install, upgrade, and uninstall using a unique disposable installer identity.

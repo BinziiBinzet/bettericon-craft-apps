@@ -45,14 +45,23 @@ namespace BetterIcon.Tray
         public string Author { get; set; }
         public int IconCount { get; set; }
         public bool Managed { get; set; }
+        public bool NeedsDownload { get; set; }
+        public bool Downloaded { get; set; }
         public string LibraryId { get; set; }
         public ThemeIcon[] Icons { get; set; }
+        public Dictionary<string, string> FileIcons { get; set; }
+        public string DisplayName
+        {
+            get {
+                if (IsDefault) return "ArtCraft default";
+                string author = Author ?? (Managed ? "" : (Pack ?? "").Replace("Craft-Icons-", ""));
+                string title = Name == "Root" && !Managed ? author : Name + (String.IsNullOrWhiteSpace(author) ? "" : " / " + author);
+                return title + (Managed ? " (personal)" : "");
+            }
+        }
         public override string ToString()
         {
-            if (IsDefault) return "ArtCraft default";
-            string author = Author ?? (Managed ? "" : (Pack ?? "").Replace("Craft-Icons-", ""));
-            string title = Name == "Root" && !Managed ? author : Name + (String.IsNullOrWhiteSpace(author) ? "" : " / " + author);
-            return title + (Managed ? " (personal)" : "");
+            return IsDefault || Managed ? DisplayName : DisplayName + " (" + (NeedsDownload ? "Download" : Downloaded ? "Downloaded" : "Included") + ")";
         }
     }
     public sealed class Catalog { public string Version { get; set; } public AppEntry[] Apps { get; set; } public ThemeEntry[] Themes { get; set; } }
@@ -69,6 +78,7 @@ namespace BetterIcon.Tray
     public sealed class ResultItem { public string Shortcut { get; set; } public string Status { get; set; } public string Message { get; set; } }
     public sealed class WorkerRequest
     {
+        public Dictionary<string, string> ProjectArtwork { get; set; }
         public string Action { get; set; }
         public string Application { get; set; }
         public string Theme { get; set; }
@@ -81,6 +91,8 @@ namespace BetterIcon.Tray
     }
     public sealed class WorkerReply
     {
+        public Dictionary<string, string> CachedProjectIcons { get; set; }
+        public ThemeIcon[] DownloadedIcons { get; set; }
         public bool Success { get; set; }
         public string Error { get; set; }
         public Catalog Catalog { get; set; }
@@ -98,6 +110,7 @@ namespace BetterIcon.Tray
         public string Theme { get; set; }
         public string Scope { get; set; }
         public HotkeySettings Hotkey { get; set; }
+        public string FileTheme { get; set; }
         public string[] DefaultShortcuts { get; set; }
         public bool ShowAppNames { get; set; }
         public Size LauncherWindowSize { get; set; }
@@ -301,7 +314,7 @@ namespace BetterIcon.Tray
         readonly ToolStripMenuItem chooseAppIcon = new ToolStripMenuItem("Choose icon...");
         readonly ToolStripMenuItem restoreIconDefault = new ToolStripMenuItem("Restore ArtCraft default...");
         AppEntry iconMenuTarget;
-        readonly ComboBox themes = new AppearanceComboBox();
+        readonly PackPicker themes = new PackPicker();
         readonly IconGridView apps = new IconGridView();
         readonly List<ListViewItem> appTiles = new List<ListViewItem>();
         readonly List<Bitmap> appArtwork = new List<Bitmap>();
@@ -905,7 +918,7 @@ namespace BetterIcon.Tray
             if (catalog != null) foreach (ThemeEntry theme in catalog.Themes) {
                 ThemeEntry captured = theme;
                 ToolStripMenuItem item = new ToolStripMenuItem(theme.ToString());
-                item.Click += delegate { ShowSettings(); themes.SelectedItem = captured; status.Text = "Pack preview selected. Choose locations, then Apply icons."; }; themeMenu.DropDownItems.Add(item);
+                item.Click += delegate { ShowSettings(); themes.ChooseItem(captured); }; themeMenu.DropDownItems.Add(item);
             }
             trayMenu.Items.Add(themeMenu); trayMenu.Items.Add(new ToolStripSeparator());
             ToolStripMenuItem packActions = new ToolStripMenuItem("Pack actions") { Enabled = !busy };
