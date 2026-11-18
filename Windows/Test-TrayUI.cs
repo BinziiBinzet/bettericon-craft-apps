@@ -15,11 +15,33 @@ using BetterIcon.Tray;
 static class TrayTests
 {
     [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
+    [StructLayout(LayoutKind.Sequential)] struct NativeRect { public int Left, Top, Right, Bottom; }
+    [DllImport("user32.dll", EntryPoint = "SendMessageW")] static extern IntPtr SendMessageRect(IntPtr window, int message, IntPtr wParam, out NativeRect rectangle);
+    [DllImport("user32.dll")] static extern bool GetKeyboardState(byte[] state);
+    [DllImport("user32.dll")] static extern bool SetKeyboardState(byte[] state);
     [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr window, int index);
     [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(Point point);
+    [DllImport("user32.dll")] static extern int GetWindowRgn(IntPtr window, IntPtr region);
+    [DllImport("gdi32.dll")] static extern IntPtr CreateRectRgn(int left, int top, int right, int bottom);
+    [DllImport("gdi32.dll")] static extern bool PtInRegion(IntPtr region, int x, int y);
+    [DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr value);
     [DllImport("comctl32.dll")] static extern bool ImageList_GetIconSize(IntPtr list, out int width, out int height);
+    [DllImport("comctl32.dll")] static extern int ImageList_GetImageCount(IntPtr list);
     [DllImport("comctl32.dll")] static extern bool ImageList_Draw(IntPtr list, int index, IntPtr dc, int x, int y, uint flags);
     static readonly List<object> checks = new List<object>();
+    static void PlainText(LauncherForm form, string text)
+    {
+        // Reflected character events represent plain typing. Isolate them from
+        // stale modifier state in this test thread when another app takes focus.
+        // This changes no global state and injects no keyboard input.
+        byte[] previous = new byte[256];
+        if (!GetKeyboardState(previous)) throw new Exception("Cannot read the test thread's keyboard state.");
+        byte[] plain = (byte[])previous.Clone();
+        foreach (int key in new[] { 0x11, 0x12, 0xA2, 0xA3, 0xA4, 0xA5 }) plain[key] = 0;
+        if (!SetKeyboardState(plain)) throw new Exception("Cannot initialize the test thread's modifiers.");
+        try { foreach (char character in text) typeof(LauncherForm).GetMethod("OnKeyPress", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(form, new object[] { new KeyPressEventArgs(character) }); }
+        finally { SetKeyboardState(previous); }
+    }
     static void Check(bool ok, string name)
     {
         checks.Add(new { Test = name, Passed = ok });
@@ -34,17 +56,50 @@ static class TrayTests
         Check(form.ClientSize == form.Size, "The resize frame adds no nonclient inset or title bar");
         int lastX = form.ClientSize.Width - 2, lastY = form.ClientSize.Height - 2;
         Point[] points = { new Point(1, lastY / 2), new Point(lastX, lastY / 2), new Point(lastX / 2, 1), new Point(lastX / 2, lastY),
-            new Point(1, 1), new Point(lastX, 1), new Point(1, lastY), new Point(lastX, lastY) };
+            new Point(14, 14), new Point(lastX - 13, 14), new Point(14, lastY - 13), new Point(lastX - 13, lastY - 13) };
         int[] expected = { 10, 11, 12, 15, 13, 14, 16, 17 };
         for (int i = 0; i < points.Length; i++) {
             Point screen = form.PointToScreen(points[i]);
             IntPtr position = new IntPtr(unchecked((screen.X & 0xFFFF) | ((screen.Y & 0xFFFF) << 16)));
-            Check(SendMessage(form.Handle, 0x0084, IntPtr.Zero, position).ToInt32() == expected[i] && WindowFromPoint(screen) == form.Handle,
-                "Native resize direction " + expected[i] + " remains reachable outside child controls");
+            int actual = SendMessage(form.Handle, 0x0084, IntPtr.Zero, position).ToInt32(); IntPtr window = WindowFromPoint(screen);
+            Check(actual == expected[i] && window == form.Handle,
+                "Native resize direction " + expected[i] + " remains reachable along the outline and through child controls (hit=" + actual + ", window=" + window + ", form=" + form.Handle + ", point=" + screen + ", bounds=" + form.Bounds + ", region=" + (form.Region != null && form.Region.IsVisible(points[i])) + ")");
         }
         Point center = form.PointToScreen(new Point(form.ClientSize.Width / 2, form.ClientSize.Height / 2));
         Check(SendMessage(form.Handle, 0x0084, IntPtr.Zero, new IntPtr(unchecked((center.X & 0xFFFF) | ((center.Y & 0xFFFF) << 16)))).ToInt32() == 1,
             "The popup interior stays client content rather than a draggable title bar");
+    }
+    static bool NativeRoundedOutline(LauncherForm form)
+    {
+        IntPtr region = CreateRectRgn(0, 0, 0, 0);
+        try {
+            return GetWindowRgn(form.Handle, region) == 3 && !PtInRegion(region, 0, 0) && !PtInRegion(region, 8, 8) && PtInRegion(region, 16, 6)
+                && PtInRegion(region, 32, 1) && PtInRegion(region, form.Width / 2, form.Height / 2)
+                && !PtInRegion(region, form.Width - 1, 0) && !PtInRegion(region, 0, form.Height - 1) && !PtInRegion(region, form.Width - 1, form.Height - 1)
+                && PtInRegion(region, form.Width - 17, form.Height - 7);
+        }
+        finally { DeleteObject(region); }
+    }
+    static void CheckRoundedWindow(LauncherForm form)
+    {
+        BindingFlags instance = BindingFlags.Instance | BindingFlags.NonPublic;
+        TabControl pages = (TabControl)typeof(LauncherForm).GetField("pages", instance).GetValue(form);
+        Size previous = form.Size;
+        Check(NativeRoundedOutline(form), "The real native outline has the selected 32-pixel radius and transparent outer corners");
+        foreach (Size size in new[] { new Size(790, 570), new Size(1100, 800) }) {
+            form.Size = size; Application.DoEvents();
+            Check(NativeRoundedOutline(form), "Resizing to " + size + " rebuilds all rounded edges without leaving the old outline");
+        }
+        form.Size = previous;
+        for (int page = 0; page < 2; page++) {
+            pages.SelectedIndex = page; Application.DoEvents();
+            Point corner = form.PointToScreen(new Point(14, form.Height - 15));
+            Check(WindowFromPoint(corner) == form.Handle, "The " + (page == 0 ? "Launcher" : "Settings") + " corner passes child-control hits to native resizing");
+        }
+        typeof(Control).GetMethod("RecreateHandle", instance).Invoke(pages, null);
+        Point top = form.PointToScreen(new Point(14, 14));
+        Check(NativeRoundedOutline(form) && WindowFromPoint(top) == form.Handle, "Recreated child handles retain the rounded-corner resize target");
+        pages.SelectedIndex = 0;
     }
     static IEnumerable<Control> Descendants(Control parent)
     {
@@ -56,7 +111,7 @@ static class TrayTests
         Func<string, object> field = name => typeof(LauncherForm).GetField(name, instance).GetValue(form);
         ComboBox themes = (ComboBox)field("themes"); Catalog catalog = (Catalog)field("catalog");
         Preferences preferences = (Preferences)field("preferences"); PackLibrary library = (PackLibrary)field("library");
-        ThemeEntry basis = themes.Items.Cast<ThemeEntry>().First(theme => theme.Id == "Craft-Icons-Zach/Satin");
+        ThemeEntry basis = themes.Items.Cast<ThemeEntry>().First(theme => theme.Id == "Craft-Icons-Zach/HyGel");
         string previousTheme = preferences.Theme; string[] previousDefaults = preferences.DefaultShortcuts;
         MethodInfo reload = typeof(LauncherForm).GetMethod("ReloadLibrary", instance), change = typeof(LauncherForm).GetMethod("ChangeAppIcon", instance);
         string png = Path.Combine(root, "context-choice.png"), other = Path.Combine(root, "context-other.png");
@@ -149,6 +204,13 @@ static class TrayTests
                 if (first.GetPixel(x, y) != second.GetPixel(x, y)) return false;
         return true;
     }
+    static IntPtr GridImages(ListView grid) { return SendMessage(grid.Handle, 0x1002, IntPtr.Zero, IntPtr.Zero); }
+    static Size GridImageSize(ListView grid)
+    {
+        int width, height;
+        if (!ImageList_GetIconSize(GridImages(grid), out width, out height)) throw new Exception("No native icon list attached.");
+        return new Size(width, height);
+    }
     static Bitmap GridImage(ListView grid, int index)
     {
         IntPtr list = SendMessage(grid.Handle, 0x1002, IntPtr.Zero, IntPtr.Zero);
@@ -216,9 +278,119 @@ static class TrayTests
             "Larger previews grow within the scrolling Settings layout without overlapping controls");
         themes.SelectedIndex = 0;
         LoadingTests.Wait(form);
-        Check(slider.Maximum == 128 && slider.Value == 128 && json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).IconSize == 128 && (IntPtr)typeof(IconGridView).GetField("largeArtwork", instance).GetValue(launcher) == IntPtr.Zero,
-            "Switching to smaller artwork adjusts the range and releases the oversized native list");
+        Check(slider.Maximum == 128 && slider.Value == 128 && json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).IconSize == 128 && GridImageSize(launcher) == new Size(128, 128) && GridImageSize(preview) == new Size(128, 128),
+            "Switching to smaller artwork adjusts the range and replaces oversized artwork in both native grids");
         typeof(LauncherForm).GetMethod("ReloadLibrary", instance).Invoke(form, new object[] { high.Id }); slider.Value = 512;
+    }
+    static void CheckIconSizeEditing(LauncherForm form, string preferencesPath, JavaScriptSerializer json)
+    {
+        BindingFlags instance = BindingFlags.Instance | BindingFlags.NonPublic;
+        Func<string, object> field = name => typeof(LauncherForm).GetField(name, instance).GetValue(form);
+        TrackBar slider = (TrackBar)field("iconSizeSlider");
+        TextBox editor = (TextBox)field("iconSizeValue");
+        Button reset = (Button)field("resetIconSize");
+        ListView launcher = (ListView)field("apps"), preview = (ListView)field("packPreview");
+        ComboBox themes = (ComboBox)field("themes");
+        TabControl pages = (TabControl)field("pages");
+        Panel scroll = (Panel)field("settingsScroll");
+        TableLayoutPanel content = (TableLayoutPanel)field("settingsContent");
+        Preferences preferences = (Preferences)field("preferences");
+        string previousTheme = ((ThemeEntry)themes.SelectedItem).Id, previousAppearance = preferences.AppearanceMode;
+        Size previousWindowSize = form.Size; int previousIconSize = slider.Value, previousPage = pages.SelectedIndex;
+        MethodInfo appearance = typeof(LauncherForm).GetMethod("ApplyAppearance", instance);
+        Func<Keys, bool> command = key => {
+            byte[] previous = new byte[256];
+            if (!GetKeyboardState(previous)) throw new Exception("Cannot read the test thread's keyboard state.");
+            byte[] plain = (byte[])previous.Clone();
+            foreach (int modifier in new[] { 0x10, 0x11, 0x12, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5 }) plain[modifier] = 0;
+            if (!SetKeyboardState(plain)) throw new Exception("Cannot initialize the test thread's modifiers.");
+            try {
+                Message message = Message.Create(editor.Handle, 0x0100, new IntPtr((int)key), IntPtr.Zero);
+                return editor.PreProcessMessage(ref message);
+            }
+            finally { if (!SetKeyboardState(previous)) throw new Exception("Cannot restore the test thread's keyboard state."); }
+        };
+        Func<int, bool> synchronized = size => slider.Value == size && editor.Text == size.ToString()
+            && GridImageSize(launcher) == new Size(size, size) && GridImageSize(preview) == new Size(size, size)
+            && json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).IconSize == size;
+        try {
+            form.ShowManager(); pages.SelectedIndex = 1;
+            IntPtr launcherImages = GridImages(launcher), previewImages = GridImages(preview);
+            editor.Text = "83";
+            Check(!editor.ReadOnly && editor.TabStop && slider.Value == previousIconSize
+                && GridImages(launcher) == launcherImages && GridImages(preview) == previewImages
+                && json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).IconSize == previousIconSize,
+                "The size number is editable without resizing or saving incomplete typing");
+            Check(command(Keys.Enter) && synchronized(83) && pages.SelectedIndex == 1 && form.Visible,
+                "Enter commits an exact pixel size to the slider, both native grids, and saved preferences");
+            editor.Text = "91";
+            typeof(Control).GetMethod("OnLeave", instance).Invoke(editor, new object[] { EventArgs.Empty });
+            Check(synchronized(91), "Leaving the size editor commits its exact value to both grids and preferences");
+            launcherImages = GridImages(launcher); previewImages = GridImages(preview);
+            editor.Text = " 91 "; command(Keys.Enter);
+            Check(synchronized(91) && GridImages(launcher) == launcherImages && GridImages(preview) == previewImages,
+                "Committing the unchanged size normalizes the number without rebuilding artwork");
+            editor.Text = "121";
+            Check(command(Keys.Escape) && synchronized(91) && form.Visible && pages.SelectedIndex == 1
+                && GridImages(launcher) == launcherImages && GridImages(preview) == previewImages,
+                "Escape cancels size editing without changing artwork, leaving Manage Icons, or closing the popup");
+            bool invalidUnchanged = true;
+            foreach (string invalid in new[] { "", "not a size", "999999999999999999999" }) {
+                editor.Text = invalid;
+                invalidUnchanged &= command(Keys.Enter) && synchronized(91)
+                    && GridImages(launcher) == launcherImages && GridImages(preview) == previewImages;
+            }
+            Check(invalidUnchanged, "Empty, invalid, and overflowing size input revert safely without changing saved size or artwork");
+            editor.Text = "0"; command(Keys.Enter);
+            Check(synchronized(slider.Minimum), "Typed sizes below the available range clamp to the minimum");
+            editor.Text = (slider.Maximum + 100).ToString(); command(Keys.Enter);
+            Check(slider.Maximum == 1024 && synchronized(1024), "Typed sizes use the available artwork limit and remain supported above 128 pixels");
+            slider.Value = 83;
+            Check(synchronized(83), "Moving the slider synchronizes the editable size number");
+            reset.PerformClick();
+            Check(synchronized(Preferences.DefaultIconSize), "Reset synchronizes the editable number and both icon grids");
+            pages.SelectedIndex = 0;
+            SendMessage(launcher.Handle, 0x020A, new IntPtr((120 << 16) | 8), IntPtr.Zero);
+            Check(synchronized(Preferences.DefaultIconSize + slider.SmallChange), "Ctrl+wheel synchronizes the editable size number with both grids");
+            pages.SelectedIndex = 1;
+            typeof(LauncherForm).GetMethod("SetBusy", instance).Invoke(form, new object[] { true, null });
+            bool disabled = !editor.Enabled;
+            typeof(LauncherForm).GetMethod("SetBusy", instance).Invoke(form, new object[] { false, null });
+            Check(disabled && editor.Enabled, "The numeric editor follows the other size controls while an operation is busy");
+            slider.Value = 512; themes.SelectedIndex = 0; LoadingTests.Wait(form);
+            Check(slider.Maximum == 128 && synchronized(128), "Changing to smaller artwork updates the numeric editor and clamps the saved size");
+
+            typeof(LauncherForm).GetMethod("ReloadLibrary", instance).Invoke(form, new object[] { previousTheme });
+            slider.Value = 83;
+            Label label = slider.Parent.Controls.OfType<Label>().Single(control => control.Text == "Icon size");
+            Label unit = Descendants(slider.Parent).OfType<Label>().Single(control => control.Text == "px");
+            Func<Control, double> center = control => control.PointToScreen(Point.Empty).Y + control.Height / 2.0;
+            foreach (string mode in new[] { "Dark", "Light", "System" }) foreach (Size window in new[] { new Size(790, 570), new Size(900, 818), new Size(1100, 900) }) {
+                preferences.AppearanceMode = mode; appearance.Invoke(form, null); form.Size = window;
+                typeof(Form).GetMethod("OnResizeEnd", instance).Invoke(form, new object[] { EventArgs.Empty });
+                scroll.AutoScrollPosition = Point.Empty; form.PerformLayout(); content.PerformLayout(); Application.DoEvents();
+                NativeRect channel, thumb;
+                SendMessageRect(slider.Handle, 0x041A, IntPtr.Zero, out channel);
+                SendMessageRect(slider.Handle, 0x0419, IntPtr.Zero, out thumb);
+                double origin = slider.PointToScreen(Point.Empty).Y;
+                double channelCenter = origin + (channel.Top + channel.Bottom) / 2.0;
+                double thumbCenter = origin + (thumb.Top + thumb.Bottom) / 2.0;
+                Control[] peers = { label, editor, unit, reset };
+                double channelOffset = peers.Max(control => Math.Abs(center(control) - channelCenter));
+                double thumbOffset = peers.Max(control => Math.Abs(center(control) - thumbCenter));
+                string layoutProblem = SettingsLayoutProblem(content);
+                Check(channel.Right > channel.Left && thumb.Bottom > thumb.Top && channelOffset <= 1.5 && thumbOffset <= 2.5
+                    && layoutProblem == null,
+                    "The native slider channel and thumb align with the label, editable number, px unit, and Reset in " + mode + " at " + window.Width + "x" + window.Height
+                    + " (channel " + channelOffset + " px, thumb " + thumbOffset + " px)" + (layoutProblem == null ? "" : ": " + layoutProblem));
+            }
+        }
+        finally {
+            preferences.AppearanceMode = previousAppearance; appearance.Invoke(form, null);
+            typeof(LauncherForm).GetMethod("ReloadLibrary", instance).Invoke(form, new object[] { previousTheme });
+            slider.Value = previousIconSize; form.Size = previousWindowSize; pages.SelectedIndex = previousPage;
+            scroll.AutoScrollPosition = Point.Empty; form.PerformLayout();
+        }
     }
     static void CheckLargeStartup(string root, string source)
     {
@@ -268,7 +440,7 @@ static class TrayTests
         Check(!json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).ShowAppNames, "The icon-only choice is saved for subsequent launches");
         form.ShowManager(); pages.SelectedIndex = 0;
         string query = titles[0].Substring(0, Math.Min(2, titles[0].Length));
-        foreach (char character in query) typeof(LauncherForm).GetMethod("OnKeyPress", instance).Invoke(form, new object[] { new KeyPressEventArgs(character) });
+        PlainText(form, query);
         Check(launcher.Items.Count > 0 && launcher.Items.Cast<ListViewItem>().All(item => item.Text.StartsWith(query, StringComparison.OrdinalIgnoreCase)), "Typing still filters real app names when their visual labels are hidden");
         typeof(LauncherForm).GetMethod("OnKeyDown", instance).Invoke(form, new object[] { new KeyEventArgs(Keys.Escape) });
         ListViewItem first = launcher.Items[0];
@@ -295,7 +467,6 @@ static class TrayTests
         Action<string, object[]> call = (name, arguments) => typeof(LauncherForm).GetMethod(name, instance).Invoke(form, arguments);
         Catalog catalog = (Catalog)field("catalog"); AppEntry[] previousApps = catalog.Apps;
         Preferences preferences = (Preferences)field("preferences"); string[] defaults = preferences.DefaultShortcuts;
-        ComboBox scopes = (ComboBox)field("scopes"); int previousScope = scopes.SelectedIndex;
         string theme = ((ThemeEntry)((ComboBox)field("themes")).SelectedItem).Id;
         TrackBar slider = (TrackBar)field("iconSizeSlider"); int previousSize = slider.Value;
         string shortcut = Path.Combine(root, "PhotoCraft.lnk"); byte[] bytes = File.ReadAllBytes(shortcut);
@@ -309,18 +480,20 @@ static class TrayTests
             ThemeEntry custom = library.Save("Launcher preview fixture", new Dictionary<string, string> { { "ArtCraftLauncher", Path.Combine(root, "current-blue.png") } }, null);
             call("ReloadLibrary", new object[] { custom.Id });
             Check(artwork[0].GetPixel(64, 64).ToArgb() == Color.Blue.ToArgb(), "A custom launcher pack can preview artwork before any shortcut change");
-            pages.SelectedIndex = 0; scopes.SelectedIndex = 1;
+            pages.SelectedIndex = 0;
             ListView grid = (ListView)field("apps"); RequestIconMenu(grid, grid.Items[0]);
             ToolStripMenuItem restore = (ToolStripMenuItem)field("restoreIconDefault");
             Check(restore.Enabled && ((AppEntry)field("iconMenuTarget")).Scope == "CurrentUser", "The launcher default action is available without a backup and targets its own locations");
-            restore.PerformClick(); ((ContextMenuStrip)field("iconMenu")).Close();
+            ShortcutScopeTests.SelectScope(() => restore.PerformClick(), "CurrentUser"); ((ContextMenuStrip)field("iconMenu")).Close();
+            DateTime restoreDeadline = DateTime.UtcNow.AddSeconds(30);
+            while ((bool)field("busy") && DateTime.UtcNow < restoreDeadline) { Application.DoEvents(); System.Threading.Thread.Sleep(10); }
             Check(artwork[0].GetPixel(64, 64).ToArgb() == Color.Red.ToArgb() && preferences.DefaultShortcuts.Contains(shortcut) && File.ReadAllBytes(shortcut).SequenceEqual(bytes) && ((Label)field("status")).Text.Contains("already at the default"), "Restoring an already-default launcher resets its preview and reports success without rewriting the shortcut");
-            pages.SelectedIndex = 1; scopes.SelectedIndex = 0;
+            pages.SelectedIndex = 1;
             ListView preview = (ListView)field("packPreview"); RequestIconMenu(preview, preview.Items[0]);
             Check(restore.Enabled, "The Settings context menu also allows selecting a launcher's existing default without a backup");
         }
         finally {
-            ((ContextMenuStrip)field("iconMenu")).Close(); catalog.Apps = previousApps; preferences.DefaultShortcuts = defaults; scopes.SelectedIndex = previousScope;
+            ((ContextMenuStrip)field("iconMenu")).Close(); catalog.Apps = previousApps; preferences.DefaultShortcuts = defaults;
             call("ReloadLibrary", new object[] { theme }); slider.Value = Math.Min(previousSize, slider.Maximum);
         }
     }
@@ -336,17 +509,17 @@ static class TrayTests
         BindingFlags instance = BindingFlags.Instance | BindingFlags.NonPublic;
         Func<string, object> field = name => typeof(LauncherForm).GetField(name, instance).GetValue(form);
         ListView launcher = (ListView)field("apps"), preview = (ListView)field("packPreview");
-        ComboBox scopes = (ComboBox)field("scopes"), themes = (ComboBox)field("themes");
+        ComboBox themes = (ComboBox)field("themes");
         ContextMenuStrip menu = (ContextMenuStrip)field("iconMenu");
         ToolStripMenuItem restore = (ToolStripMenuItem)field("restoreIconDefault");
         ToolStripMenuItem choose = (ToolStripMenuItem)field("chooseAppIcon");
         TabControl pages = (TabControl)field("pages");
-        pages.SelectedIndex = 0; scopes.SelectedIndex = 0;
+        pages.SelectedIndex = 0;
         launcher.Items[0].Selected = true;
         RequestIconMenu(launcher, launcher.Items[3]);
         AppEntry target = (AppEntry)field("iconMenuTarget");
         Check(menu.Visible && restore.Enabled && target.Application == "FigCraft" && target.Scope == "AllUsers" && launcher.Items[3].Selected,
-            "Right-click selects the clicked launcher app and its own shortcut scope instead of the previous selection or Settings scope");
+            "Right-click selects the clicked launcher app before asking where to restore it");
         string filter = (string)field("filterText");
         typeof(LauncherForm).GetMethod("OnKeyPress", instance).Invoke(form, new object[] { new KeyPressEventArgs('p') });
         KeyEventArgs escape = new KeyEventArgs(Keys.Escape);
@@ -371,20 +544,17 @@ static class TrayTests
         RequestIconMenu(launcher, launcher.Items[0]);
         Check(!menu.Visible && field("iconMenuTarget") == null, "Busy operations cannot open a new icon restoration menu");
         typeof(LauncherForm).GetMethod("SetBusy", instance).Invoke(form, new object[] { false, null });
-        pages.SelectedIndex = 1; scopes.SelectedIndex = 1;
+        pages.SelectedIndex = 1;
         RequestIconMenu(preview, preview.Items.Cast<ListViewItem>().First(item => item.Text == "FigCraft"));
-        Check(menu.Visible && restore.Enabled && ((AppEntry)field("iconMenuTarget")).Scope == "AllUsers",
-            "Settings icon previews restore the clicked canonical app in the selected locations");
+        Check(menu.Visible && restore.Enabled && ((AppEntry)field("iconMenuTarget")).Application == "FigCraft",
+            "Settings previews find shared restore backups before the operation's location choice");
         escape = new KeyEventArgs(Keys.Escape);
         typeof(LauncherForm).GetMethod("OnKeyDown", instance).Invoke(form, new object[] { escape });
         Check(!escape.Handled && pages.SelectedIndex == 1, "Escape in the icon menu stays in Settings");
         menu.Close();
         RequestIconMenu(preview, preview.Items.Cast<ListViewItem>().First(item => item.Text == "PhotoCraft"));
-        Check(menu.Visible && !restore.Enabled, "A Settings preview cannot offer restoration from another shortcut scope");
-        menu.Close(); scopes.SelectedIndex = 0;
-        RequestIconMenu(preview, preview.Items.Cast<ListViewItem>().First(item => item.Text == "PhotoCraft"));
-        Check(menu.Visible && restore.Enabled && ((AppEntry)field("iconMenuTarget")).Scope == "CurrentUser",
-            "Changing locations makes the matching preview restoration available");
+        Check(menu.Visible && restore.Enabled && ((AppEntry)field("iconMenuTarget")).Application == "PhotoCraft",
+            "Settings previews find current-user restore backups without a persistent location selector");
         menu.Close(); themes.SelectedIndex = 0; LoadingTests.Wait(form);
         RequestIconMenu(preview, preview.Items.Cast<ListViewItem>().First(item => item.Text == "PhotoCraft"));
         Check(menu.Visible && restore.Enabled && ((AppEntry)field("iconMenuTarget")).Application == "PhotoCraft",
@@ -398,7 +568,7 @@ static class TrayTests
         BindingFlags instance = BindingFlags.Instance | BindingFlags.NonPublic;
         Func<string, object> field = name => typeof(LauncherForm).GetField(name, instance).GetValue(form);
         Action<string, object[]> call = (name, arguments) => typeof(LauncherForm).GetMethod(name, instance).Invoke(form, arguments);
-        ComboBox themes = (ComboBox)field("themes"), scopes = (ComboBox)field("scopes");
+        ComboBox themes = (ComboBox)field("themes");
         Button apply = (Button)field("apply");
         TabControl pages = (TabControl)field("pages");
         Catalog catalog = (Catalog)field("catalog");
@@ -408,7 +578,7 @@ static class TrayTests
         ContextMenuStrip menu = (ContextMenuStrip)field("managePackMenu");
         PackLibrary library = (PackLibrary)field("library");
         ThemeEntry[] bundled = (ThemeEntry[])field("bundledThemes");
-        ThemeEntry themed = themes.Items.Cast<ThemeEntry>().First(t => t.Id == "Craft-Icons-Zach/Satin");
+        ThemeEntry themed = themes.Items.Cast<ThemeEntry>().First(t => t.Id == "Craft-Icons-Zach/HyGel");
         string original = Path.Combine(root, "original-red.png"), current = Path.Combine(root, "current-blue.png");
         using (Bitmap image = new Bitmap(32, 32)) {
             using (Graphics canvas = Graphics.FromImage(image)) canvas.Clear(Color.Red);
@@ -425,7 +595,6 @@ static class TrayTests
             new AppEntry { Application = "FigCraft", Name = "Shared drawing workspace", Shortcut = fig, Scope = "AllUsers", IconPath = current, OriginalIconPath = original, RestoreAvailable = true }
         };
         pages.SelectedIndex = 1;
-        scopes.SelectedIndex = 0;
         call("ReloadLibrary", new object[] { ThemeEntry.DefaultThemeId });
         Check(((ThemeEntry)themes.Items[0]).IsDefault && ((ThemeEntry)themes.Items[0]).Id == ThemeEntry.DefaultThemeId && themes.SelectedIndex == 0,
             "ArtCraft default is the first selectable pack and uses a stable identity");
@@ -434,7 +603,8 @@ static class TrayTests
         call("ReloadLibrary", new object[] { null });
         Check(themes.SelectedIndex == 0 && ((ThemeEntry)themes.SelectedItem).IsDefault,
             "Refreshing the pack library preserves the default selection");
-        Check(new[] { "Customize...", "Edit pack...", "Export ZIP...", "Remove pack" }.All(name => !menu.Items.Cast<ToolStripItem>().First(item => item.Text == name).Enabled)
+        Check(new[] { "Customize...", "Edit pack...", "Export ZIP..." }.All(name => !menu.Items.Cast<ToolStripItem>().First(item => item.Text == name).Enabled)
+            && !((Button)field("removePackButton")).Enabled
             && menu.Items.Cast<ToolStripItem>().First(item => item.Text == "Restore built-in packs").Enabled,
             "The virtual default cannot be customized, edited, exported or removed");
         Check(apply.Enabled && apply.Text == "Restore ArtCraft defaults...", "Choosing the default presents the restore-all action");
@@ -545,12 +715,12 @@ static class TrayTests
         byte[] originalPhoto = File.ReadAllBytes(photo), originalFilm = File.ReadAllBytes(film);
         FixtureConfig fixture = new FixtureConfig { ShortcutDirectory = new[] { links }, StateDirectory = state, KeepOpenForAutomation = true };
         WorkerClient worker = new WorkerClient(source, fixture);
-        WorkerReply plan = worker.Run(new WorkerRequest { Action = "Preview", Scope = "CurrentUser", Theme = "Craft-Icons-Zach/Satin" }, false).GetAwaiter().GetResult();
-        WorkerReply applied = worker.Run(new WorkerRequest { Action = "Apply", Scope = "CurrentUser", Theme = "Craft-Icons-Zach/Satin", ExpectedPlan = plan.Plan }, false).GetAwaiter().GetResult();
+        WorkerReply plan = worker.Run(new WorkerRequest { Action = "Preview", Scope = "CurrentUser", Theme = "Craft-Icons-Zach/HyGel" }, false).GetAwaiter().GetResult();
+        WorkerReply applied = worker.Run(new WorkerRequest { Action = "Apply", Scope = "CurrentUser", Theme = "Craft-Icons-Zach/HyGel", ExpectedPlan = plan.Plan }, false).GetAwaiter().GetResult();
         Check(applied.Results.Length == 2 && applied.Results.All(result => result.Status == "Applied"), "Context-menu integration prepares two isolated themed shortcuts");
         byte[] themedFilm = File.ReadAllBytes(film);
         string preferencesPath = Path.Combine(state, "tray-preferences.json");
-        File.WriteAllText(preferencesPath, json.Serialize(new Preferences { Theme = "Craft-Icons-Zach/Satin", Scope = "AllUsers", Hotkey = new HotkeySettings { Enabled = false } }));
+        File.WriteAllText(preferencesPath, json.Serialize(new Preferences { Theme = "Craft-Icons-Zach/HyGel", Scope = "AllUsers", Hotkey = new HotkeySettings { Enabled = false } }));
         using (EventWaitHandle show = new EventWaitHandle(false, EventResetMode.AutoReset))
         using (EventWaitHandle stop = new EventWaitHandle(false, EventResetMode.AutoReset))
         using (LauncherForm form = new LauncherForm(source, fixture, true, show, stop))
@@ -569,6 +739,12 @@ static class TrayTests
                         ((ToolStripMenuItem)field("restoreIconDefault")).PerformClick();
                     }
                     else if (phase == 1) {
+                        ShortcutScopeDialog scope = Application.OpenForms.OfType<ShortcutScopeDialog>().FirstOrDefault();
+                        if (scope != null) {
+                            Check(scope.Text == "Restore icon locations", "Right-click restoration asks for current user or all users before reviewing the clicked app");
+                            scope.Controls.Find("CurrentUserChoice", true).OfType<Button>().Single().PerformClick();
+                            return;
+                        }
                         Form review = Application.OpenForms.Cast<Form>().FirstOrDefault(dialog => dialog.Text == "Review restoration");
                         if (review == null) return;
                         ListView rows = review.Controls[0].Controls.OfType<ListView>().Single();
@@ -590,7 +766,7 @@ static class TrayTests
                             "Right-click restore returns only the selected app to its exact original bytes");
                         Check(!updated.Apps.Single(app => app.Application == "PhotoCraft").RestoreAvailable && updated.Apps.Single(app => app.Application == "FilmCraft").RestoreAvailable
                             && preferences.DefaultShortcuts.SequenceEqual(new[] { photo }) && preferences.Scope == "AllUsers",
-                            "The completed context restore refreshes availability and remembers the default without changing Settings locations or other backups");
+                            "The completed context restore remembers the chosen app's default while preserving legacy preferences and other backups");
                         timer.Stop(); stop.Set();
                     }
                 }
@@ -667,7 +843,7 @@ static class TrayTests
 
             string state = Path.Combine(root, "state"), preferencesPath = Path.Combine(state, "tray-preferences.json");
             Directory.CreateDirectory(state);
-            File.WriteAllText(preferencesPath, json.Serialize(new Preferences { Theme = "Craft-Icons-Zach/Satin", Scope = "CurrentUser", IconSize = 72, Hotkey = new HotkeySettings { Enabled = false } }));
+            File.WriteAllText(preferencesPath, json.Serialize(new Preferences { Theme = "Craft-Icons-Zach/HyGel", Scope = "CurrentUser", IconSize = 72, Hotkey = new HotkeySettings { Enabled = false } }));
             using (EventWaitHandle show = new EventWaitHandle(false, EventResetMode.AutoReset))
             using (EventWaitHandle stop = new EventWaitHandle(false, EventResetMode.AutoReset))
             using (LauncherForm form = new LauncherForm(args[1], new FixtureConfig { ShortcutDirectory = new[] { root }, StateDirectory = Path.Combine(root, "state"), KeepOpenForAutomation = true }, true, show, stop))
@@ -687,22 +863,35 @@ static class TrayTests
                         if ((bool)typeof(LauncherForm).GetField("busy", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form)) return;
                         timer.Stop();
                         form.Text = "[TEST] BetterIcon native checks";
+                        ListView openingGrid = (ListView)typeof(LauncherForm).GetField("apps", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
                         Check(!form.Visible, "Tray-only startup stays hidden after the real message loop initializes");
+                        Check(openingGrid.Items.Count > 0 && openingGrid.SelectedItems.Count == 0, "The initial asynchronous catalog load leaves every launcher icon unselected");
                         click();
-                        Check(form.Visible && Screen.FromPoint(Cursor.Position).WorkingArea.Contains(form.Bounds), "First tray release shows the popup on the clicked screen");
+                        Check(form.Visible && Screen.FromPoint(Cursor.Position).WorkingArea.Contains(form.Bounds) && openingGrid.SelectedItems.Count == 0, "First tray release shows the popup on the clicked screen without selecting an icon");
                         click(); Check(!form.Visible, "Second tray release hides the popup");
                         click(); click(); Check(!form.Visible, "Rapid double release ends hidden without reopening");
                         mouseUp.Invoke(tray, new object[] { new MouseEventArgs(MouseButtons.Right, 1, 0, 0, 0) });
                         Check(!form.Visible, "Right tray release does not toggle the popup");
-                        form.ShowManager(); Check(form.Visible, "Explicit open reopens the existing popup");
-                        CheckWindowResizing(form);
+                        openingGrid.Items[0].Selected = true;
+                        form.ShowManager(); Check(form.Visible && openingGrid.SelectedItems.Count == 0, "Explicit open reopens the existing popup without its previous selection");
+                        // Desktop-wide hit tests need an unobscured test window,
+                        // independent of other apps or the current cursor monitor.
+                        bool wasTopMost = form.TopMost; Point previousLocation = form.Location;
+                        try {
+                            form.Location = Screen.PrimaryScreen.WorkingArea.Location + new Size(60, 60);
+                            form.TopMost = true; form.BringToFront(); Application.DoEvents();
+                            CheckWindowResizing(form); CheckRoundedWindow(form);
+                        }
+                        finally { form.TopMost = wasTopMost; form.Location = previousLocation; }
+                        openingGrid.Items[0].Selected = true;
                         form.Hide(); Check(!form.Visible, "Hide retains the launcher for another tray click");
                         Point center = new Point(Screen.PrimaryScreen.WorkingArea.Left + Screen.PrimaryScreen.WorkingArea.Width / 2, Screen.PrimaryScreen.WorkingArea.Top + Screen.PrimaryScreen.WorkingArea.Height / 2);
                         form.ShowAtCursor(center);
-                        Check(form.Visible && form.Bounds == PopupPlacement.CenteredOnCursor(form.Size, center, Screen.FromPoint(center).WorkingArea), "The real hidden form opens at the cursor position");
+                        Check(form.Visible && form.Bounds == PopupPlacement.CenteredOnCursor(form.Size, center, Screen.FromPoint(center).WorkingArea) && openingGrid.SelectedItems.Count == 0, "The real hidden form opens at the cursor position without its previous selection");
                         Point edge = Screen.PrimaryScreen.WorkingArea.Location;
+                        openingGrid.Items[0].Selected = true;
                         form.ShowAtCursor(edge);
-                        Check(Screen.PrimaryScreen.WorkingArea.Contains(form.Bounds), "Reopening by hotkey moves the existing popup and clamps it on screen");
+                        Check(Screen.PrimaryScreen.WorkingArea.Contains(form.Bounds) && openingGrid.SelectedItems.Count == 1, "Repositioning the visible popup by hotkey clamps it on screen and retains an intentional selection");
                         // Exercise the actual form keyboard handlers and ListView with
                         // distinct app names; the only launch target is our local probe.
                         FieldInfo catalogField = typeof(LauncherForm).GetField("catalog", BindingFlags.Instance | BindingFlags.NonPublic);
@@ -714,24 +903,47 @@ static class TrayTests
                         Label filter = (Label)typeof(LauncherForm).GetField("filterHint", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
                         MethodInfo character = typeof(LauncherForm).GetMethod("OnKeyPress", BindingFlags.Instance | BindingFlags.NonPublic);
                         MethodInfo keyDown = typeof(LauncherForm).GetMethod("OnKeyDown", BindingFlags.Instance | BindingFlags.NonPublic);
-                        Action<string> type = delegate(string value) { foreach (char c in value) character.Invoke(form, new object[] { new KeyPressEventArgs(c) }); };
+                        Action<string> type = value => PlainText(form, value);
                         Action<Keys> key = delegate(Keys value) { keyDown.Invoke(form, new object[] { new KeyEventArgs(value) }); };
+                        Check(list.Items.Count == 3 && list.SelectedItems.Count == 0, "Refreshing blank-filter artwork leaves all launcher icons unselected");
+                        key(Keys.Enter);
+                        Check(Directory.GetFiles(root, "launches.txt.*.launched").Length == 0 && form.Visible, "Enter before choosing or filtering an app launches nothing");
+                        byte[] previousKeyboard = new byte[256];
+                        if (!GetKeyboardState(previousKeyboard)) throw new Exception("Cannot read the navigation test thread's keyboard state.");
+                        byte[] plainKeyboard = (byte[])previousKeyboard.Clone();
+                        foreach (int modifier in new[] { 0x10, 0x11, 0x12, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5 }) plainKeyboard[modifier] = 0;
+                        if (!SetKeyboardState(plainKeyboard)) throw new Exception("Cannot initialize the navigation test thread's modifiers.");
+                        try { list.Focus(); SendMessage(list.Handle, 0x0100, new IntPtr((int)Keys.Right), IntPtr.Zero); }
+                        finally { if (!SetKeyboardState(previousKeyboard)) throw new Exception("Cannot restore the navigation test thread's keyboard state."); }
+                        Check(list.SelectedItems.Count == 1, "Native arrow navigation deliberately selects an icon from an unselected launcher");
+                        form.Hide(); show.Set();
+                        for (int retry = 0; retry < 100 && !form.Visible; retry++) { Thread.Sleep(20); Application.DoEvents(); }
+                        Check(form.Visible && list.SelectedItems.Count == 0, "The existing-instance show signal reopens the launcher without its previous selection");
                         TabControl pages = (TabControl)typeof(LauncherForm).GetField("pages", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
-                        Check(pages.TabPages.Count == 2 && pages.TabPages[0].Text == "Launcher" && pages.TabPages[1].Text == "Settings", "Launcher and Settings occupy the left and right tabs");
+                        Check(pages.TabPages.Count == 2 && pages.TabPages[0].Text == "Launcher" && pages.TabPages[1].Text == "Manage Icons", "Launcher and Manage Icons occupy the left and right tabs");
                         Check(pages.TabPages[0].Controls.Count == 2 && !filter.Visible, "The populated Launcher page contains only the app grid");
                         TrackBar slider = (TrackBar)typeof(LauncherForm).GetField("iconSizeSlider", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
-                        ImageList launcherImages = (ImageList)typeof(LauncherForm).GetField("pictures", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
                         List<Bitmap> cached = (List<Bitmap>)typeof(LauncherForm).GetField("appArtwork", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
                         ListView previewGrid = (ListView)typeof(LauncherForm).GetField("packPreview", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
-                        ImageList previewImages = (ImageList)typeof(LauncherForm).GetField("packPictures", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
                         List<Bitmap> previewCached = (List<Bitmap>)typeof(LauncherForm).GetField("packArtwork", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
-                        Check(slider.Value == 72 && launcherImages.ImageSize == new Size(72, 72) && previewImages.ImageSize == launcherImages.ImageSize, "Hidden startup restores the same saved icon size in both grids and the Settings slider");
+                        Check(slider.Value == 72 && GridImageSize(list) == new Size(72, 72) && GridImageSize(previewGrid) == GridImageSize(list), "Hidden startup restores the same saved icon size in both grids and the Settings slider");
+                        slider.Value = 80; slider.Value = 72;
+                        Check(list.SelectedItems.Count == 0, "Resizing a launcher with no selection does not select its first icon");
+                        ComboBox openingThemes = (ComboBox)typeof(LauncherForm).GetField("themes", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
+                        ThemeEntry openingTheme = (ThemeEntry)openingThemes.SelectedItem;
+                        openingThemes.SelectedItem = openingThemes.Items.Cast<ThemeEntry>().First(theme => !theme.IsDefault && theme.Id != openingTheme.Id);
+                        LoadingTests.Wait(form);
+                        bool unselectedAfterPackChange = list.SelectedItems.Count == 0;
+                        openingThemes.SelectedItem = openingTheme; LoadingTests.Wait(form);
+                        Check(unselectedAfterPackChange && list.SelectedItems.Count == 0, "Asynchronous pack changes keep a blank-filter launcher unselected");
                         Rectangle firstIcon = list.GetItemRect(0, ItemBoundsPortion.Icon), firstLabel = list.GetItemRect(0, ItemBoundsPortion.Label);
                         Check(list.View == View.LargeIcon && firstLabel.Top >= firstIcon.Bottom && list.Items[1].Bounds.Left > list.Items[0].Bounds.Left && list.Items[1].Bounds.Top == list.Items[0].Bounds.Top, "Native launcher lays out a compact row of icons with names underneath");
                         form.ShowManager(); pages.Focus();
                         type("f");
                         Check(list.Items.Count == 2 && list.ContainsFocus && list.SelectedItems.Count == 1, "Typing from the launcher tab filters and focuses the highlighted result (matches=" + list.Items.Count + ", focused=" + list.ContainsFocus + ", visible=" + form.Visible + ")");
-                        int artworkCount = ((ImageList)typeof(LauncherForm).GetField("pictures", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form)).Images.Count;
+                        form.ShowAtCursor(center);
+                        Check(list.Items.Count == 2 && list.AccessibleDescription.Contains("Filter: f.") && list.SelectedItems.Count == 1, "Hotkey repositioning preserves the visible popup's active filter and highlighted result");
+                        IntPtr typingImages = GridImages(list); int artworkCount = ImageList_GetImageCount(typingImages);
                         type("iL");
                         Check(list.Items.Count == 1 && list.Items[0].Text == "FilmCraft" && list.AccessibleDescription.Contains("fiL"), "Successive characters narrow results and expose the query accessibly");
                         key(Keys.Back);
@@ -741,34 +953,34 @@ static class TrayTests
                         key(Keys.Enter);
                         Check(Directory.GetFiles(root, "launches.txt.*.launched").Length == 0, "Enter with no results launches nothing");
                         key(Keys.Escape);
-                        Check(form.Visible && list.Items.Count == 3, "First Escape clears the active filter without closing the popup");
+                        Check(form.Visible && list.Items.Count == 3 && list.SelectedItems.Count == 0, "First Escape clears the active filter and selection without closing the popup");
                         type("PH");
                         Check(list.Items.Count == 1 && list.SelectedItems[0].Text == "PhotoCraft", "Typing a new query highlights its matching app");
                         key(Keys.Enter);
                         string[] launchReceipts = new string[0];
                         for (int retry = 0; retry < 100 && launchReceipts.Length == 0; retry++) { Thread.Sleep(20); launchReceipts = Directory.GetFiles(root, "launches.txt.*.launched"); }
                         Check(launchReceipts.Length == 1 && File.ReadAllText(launchReceipts[0]) == "PhotoCraft", "Enter launches the highlighted original fixture shortcut exactly once");
-                        Check(((ImageList)typeof(LauncherForm).GetField("pictures", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form)).Images.Count == artworkCount, "Typing reuses the loaded artwork instead of rebuilding image lists");
+                        Check(GridImages(list) == typingImages && ImageList_GetImageCount(GridImages(list)) == artworkCount, "Typing reuses the loaded artwork instead of rebuilding image lists");
                         form.Hide(); form.ShowManager();
-                        Check(list.Items.Count == 3 && !filter.Visible, "Reopening starts with all apps and no stale filter");
+                        Check(list.Items.Count == 3 && !filter.Visible && list.SelectedItems.Count == 0, "Reopening starts with all apps, no stale filter, and no selected icon");
                         pages.SelectedIndex = 1; type("fil");
                         Check(list.Items.Count == 3 && pages.SelectedIndex == 1, "Settings keyboard input does not filter the launcher");
                         Bitmap[] sources = cached.ToArray(), previewSources = previewCached.ToArray();
                         previewGrid.Items[1].Selected = true;
                         foreach (int size in new[] { 24, 128, 32, 96 }) slider.Value = size;
-                        Check(launcherImages.ImageSize == new Size(96, 96) && launcherImages.Images.Count == 3 && cached.SequenceEqual(sources) && list.GetItemRect(0, ItemBoundsPortion.Label).Top >= list.GetItemRect(0, ItemBoundsPortion.Icon).Bottom, "Resizing through compact sizes retains cached launcher artwork and labels below icons");
-                        Check(previewImages.ImageSize == launcherImages.ImageSize && previewImages.Images.Count == previewGrid.Items.Count && previewCached.SequenceEqual(previewSources) && previewGrid.SelectedItems.Count == 1 && previewGrid.SelectedItems[0].Index == 1 && previewGrid.GetItemRect(0, ItemBoundsPortion.Label).Top >= previewGrid.GetItemRect(0, ItemBoundsPortion.Icon).Bottom, "The Settings preview resizes immediately from cached artwork while retaining its selection and labels below icons");
+                        Check(GridImageSize(list) == new Size(96, 96) && ImageList_GetImageCount(GridImages(list)) == 3 && cached.SequenceEqual(sources) && list.GetItemRect(0, ItemBoundsPortion.Label).Top >= list.GetItemRect(0, ItemBoundsPortion.Icon).Bottom, "Resizing through compact sizes retains cached launcher artwork and labels below icons");
+                        Check(GridImageSize(previewGrid) == GridImageSize(list) && ImageList_GetImageCount(GridImages(previewGrid)) == previewGrid.Items.Count && previewCached.SequenceEqual(previewSources) && previewGrid.SelectedItems.Count == 1 && previewGrid.SelectedItems[0].Index == 1 && previewGrid.GetItemRect(0, ItemBoundsPortion.Label).Top >= previewGrid.GetItemRect(0, ItemBoundsPortion.Icon).Bottom, "The Settings preview resizes immediately from cached artwork while retaining its selection and labels below icons");
                         pages.SelectedIndex = 0; type("f"); list.Items[0].Selected = false; list.Items[1].Selected = true;
                         pages.SelectedIndex = 1; slider.Value = 64;
                         Check(list.Items.Count == 2 && list.AccessibleDescription.Contains("Filter: f.") && list.SelectedItems.Count == 1 && list.SelectedItems[0].Text == "FilmCraft", "Icon resizing preserves the active filter and selected app");
                         Preferences sized = json.Deserialize<Preferences>(File.ReadAllText(preferencesPath));
-                        Check(sized.IconSize == 64 && sized.Theme == "Craft-Icons-Zach/Satin" && sized.Scope == "CurrentUser" && !sized.Hotkey.Enabled, "Icon size persists without changing theme, scope, or hotkey preferences");
+                        Check(sized.IconSize == 64 && sized.Theme == "Craft-Icons-Zach/HyGel" && sized.Scope == "CurrentUser" && !sized.Hotkey.Enabled, "Icon size persists without changing theme, scope, or hotkey preferences");
                         ((Button)typeof(LauncherForm).GetField("resetIconSize", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form)).PerformClick();
-                        Check(launcherImages.ImageSize == new Size(48, 48) && previewImages.ImageSize == launcherImages.ImageSize && list.Items[1].Bounds.Left - list.Items[0].Bounds.Left < 200 && json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).IconSize == 48, "Reset restores and saves compact 48-pixel icons in both grids");
+                        Check(GridImageSize(list) == new Size(48, 48) && GridImageSize(previewGrid) == GridImageSize(list) && list.Items[1].Bounds.Left - list.Items[0].Bounds.Left < 200 && json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).IconSize == 48, "Reset restores and saves compact 48-pixel icons in both grids");
                         pages.SelectedIndex = 0;
                         Action<int, bool> wheel = delegate(int delta, bool control) { SendMessage(list.Handle, 0x020A, new IntPtr((delta << 16) | (control ? 8 : 0)), IntPtr.Zero); };
                         wheel(120, true);
-                        Check(slider.Value == 56 && launcherImages.ImageSize == new Size(56, 56) && previewImages.ImageSize == launcherImages.ImageSize && json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).IconSize == 56 && list.SelectedItems[0].Text == "FilmCraft" && list.AccessibleDescription.Contains("Filter: f."), "Native Ctrl+wheel enlarges both grids, updates the slider, saves the size, and retains filter/selection");
+                        Check(slider.Value == 56 && GridImageSize(list) == new Size(56, 56) && GridImageSize(previewGrid) == GridImageSize(list) && json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).IconSize == 56 && list.SelectedItems[0].Text == "FilmCraft" && list.AccessibleDescription.Contains("Filter: f."), "Native Ctrl+wheel enlarges both grids, updates the slider, saves the size, and retains filter/selection");
                         wheel(-240, true); wheel(60, true);
                         Check(slider.Value == 40, "Ctrl+wheel zooms out and waits for a complete fine-resolution wheel step");
                         wheel(60, true); wheel(120, false);
@@ -783,31 +995,83 @@ static class TrayTests
                         ComboBox themePicker = (ComboBox)typeof(LauncherForm).GetField("themes", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
                         Panel settingsScroll = (Panel)typeof(LauncherForm).GetField("settingsScroll", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
                         TableLayoutPanel settingsContent = (TableLayoutPanel)typeof(LauncherForm).GetField("settingsContent", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
-                        Check(new[] { "IconPackSection", "AppearanceSection", "LauncherSection", "ShortcutsSection" }.All(name => settingsContent.Controls.Find(name, true).Length == 1), "Settings groups pack management, appearance, launcher preferences, and Windows shortcuts into separate sections");
+                        Button removePack = (Button)typeof(LauncherForm).GetField("removePackButton", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
+                        Check(removePack.Visible && removePack.Text == "Remove pack" && removePack.ContextMenuStrip == null
+                            && !Descendants(pages.TabPages[1]).OfType<Button>().Any(button => button.Text == "Pack actions..." || button.Text == "Change hotkey..." || button.Text == "Exit" || button.Text == "Refresh apps"),
+                            "Manage Icons has a direct Remove pack button and no old pack-actions, hotkey or utility buttons");
+                        Check(previewGrid.Dock == DockStyle.Fill && previewGrid.Parent == settingsContent,
+                            "The pack preview occupies the flexible middle row of Manage Icons");
                         Size previousSize = form.Size; int previousIconSize = slider.Value;
                         try {
-                            foreach (Size windowSize in new[] { new Size(790, 570), new Size(900, 690) }) foreach (int iconSize in new[] { 24, 128 }) {
+                            foreach (Size windowSize in new[] { new Size(790, 570), new Size(900, 690), new Size(900, 900) }) foreach (int iconSize in new[] { 24, 128, 184 }) {
                                 form.Size = windowSize; slider.Value = iconSize; settingsScroll.AutoScrollPosition = Point.Empty;
                                 form.PerformLayout(); settingsContent.PerformLayout(); Application.DoEvents();
                                 string layoutProblem = SettingsLayoutProblem(settingsContent);
-                                Check(layoutProblem == null && settingsContent.Width <= settingsScroll.ClientSize.Width && !settingsScroll.HorizontalScroll.Visible,
-                                    "Settings controls remain separated and fit horizontally at " + windowSize.Width + "x" + windowSize.Height + ", " + iconSize + "-pixel icons" + (layoutProblem == null ? "" : ": " + layoutProblem));
+                                Check(layoutProblem == null && settingsContent.Width <= settingsScroll.ClientSize.Width && !settingsScroll.HorizontalScroll.Visible && previewGrid.Height >= ((IconGridView)previewGrid).GridCellSize.Height,
+                                    "Manage Icons fits its controls and at least one complete icon row at " + windowSize.Width + "x" + windowSize.Height + ", " + iconSize + "-pixel icons" + (layoutProblem == null ? "" : ": " + layoutProblem));
                             }
+                            slider.Value = 64; form.Size = new Size(900, 690); form.PerformLayout(); Application.DoEvents();
+                            int compactPreview = previewGrid.Height;
+                            form.Size = new Size(900, 900); form.PerformLayout(); Application.DoEvents();
+                            Check(previewGrid.Height >= compactPreview + 190,
+                                "Increasing window height gives the pack preview additional visible rows instead of adding empty space");
                         }
                         finally { form.Size = previousSize; slider.Value = previousIconSize; settingsScroll.AutoScrollPosition = Point.Empty; form.PerformLayout(); }
                         ContextMenuStrip importMenu = (ContextMenuStrip)typeof(LauncherForm).GetField("importPackMenu", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
                         ContextMenuStrip manageMenu = (ContextMenuStrip)typeof(LauncherForm).GetField("managePackMenu", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
+                        ContextMenuStrip trayCommands = (ContextMenuStrip)typeof(LauncherForm).GetField("trayMenu", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
+                        ToolStripMenuItem packCommands = trayCommands.Items.OfType<ToolStripMenuItem>().Single(item => item.Text == "Pack actions");
+                        Check(new[] { "Customize...", "Edit pack...", "Export ZIP...", "Restore built-in packs" }.All(text => packCommands.DropDownItems.Cast<ToolStripItem>().Any(item => item.Text == text)) && themePicker.ContextMenuStrip == manageMenu,
+                            "Pack editing, customization, ZIP sharing and built-in recovery remain reachable from the tray and pack selector");
                         ToolStripItem[] manageItems = manageMenu.Items.Cast<ToolStripItem>().ToArray();
                         Check(new[] { "Edit pack...", "Export ZIP..." }.All(text => manageItems.Single(item => item.Text == text).Enabled == false) && manageItems.Single(item => item.Text == "Customize...").Enabled,
                             "Built-in packs offer Customize while personal-only Edit and Export actions stay disabled");
+                        ThemeEntry beforeCustomize = (ThemeEntry)themePicker.SelectedItem;
+                        byte[] beforeCustomizePreferences = File.ReadAllBytes(preferencesPath);
+                        string[] beforeCustomizeThemes = themePicker.Items.Cast<ThemeEntry>().Select(theme => theme.Id).ToArray();
+                        PackLibrary fixtureLibrary = (PackLibrary)typeof(LauncherForm).GetField("library", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
+                        Func<string[]> libraryFiles = () => Directory.Exists(fixtureLibrary.Root) ? Directory.GetFileSystemEntries(fixtureLibrary.Root, "*", SearchOption.AllDirectories).OrderBy(path => path).ToArray() : new string[0];
+                        string[] beforeCustomizeFiles = libraryFiles();
+                        string libraryManifest = Path.Combine(fixtureLibrary.Root, "library.json");
+                        Func<string> manifestBytes = () => File.Exists(libraryManifest) ? Convert.ToBase64String(File.ReadAllBytes(libraryManifest)) : null;
+                        string beforeCustomizeManifest = manifestBytes();
+                        bool customizeSeen = false, customizeTrayDisabled = false, customizeHasBasis = false;
+                        Exception customizeFailure = null;
+                        DateTime customizeDeadline = DateTime.UtcNow.AddSeconds(10);
+                        using (System.Windows.Forms.Timer closeCustomize = new System.Windows.Forms.Timer { Interval = 25 }) {
+                            closeCustomize.Tick += delegate {
+                                if (DateTime.UtcNow > customizeDeadline) {
+                                    customizeFailure = new Exception("The tray Customize command did not open the pack editor within ten seconds.");
+                                    foreach (Form dialog in form.OwnedForms) { dialog.DialogResult = DialogResult.Cancel; dialog.Close(); }
+                                    closeCustomize.Stop(); return;
+                                }
+                                PackEditor editor = form.OwnedForms.OfType<PackEditor>().FirstOrDefault();
+                                if (editor == null) return;
+                                customizeSeen = true;
+                                customizeTrayDisabled = !((ContextMenuStrip)typeof(LauncherForm).GetField("trayMenu", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form)).Enabled;
+                                customizeHasBasis = Descendants(editor).OfType<TextBox>().Single(box => box.AccessibleName == "Pack name").Text == beforeCustomize.Name + " custom";
+                                closeCustomize.Stop(); ((Button)editor.CancelButton).PerformClick();
+                            };
+                            closeCustomize.Start();
+                            packCommands.DropDownItems.OfType<ToolStripMenuItem>().Single(item => item.Text == "Customize...").PerformClick();
+                            closeCustomize.Stop();
+                        }
+                        if (customizeFailure != null) throw customizeFailure;
+                        trayCommands = (ContextMenuStrip)typeof(LauncherForm).GetField("trayMenu", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
+                        Check(customizeSeen && customizeHasBasis, "The tray Customize command opens the existing editor with the selected pack as its basis");
+                        Check(customizeTrayDisabled && trayCommands.Enabled, "The pack editor pauses tray commands and restores them after cancellation");
+                        Check(((ThemeEntry)themePicker.SelectedItem).Id == beforeCustomize.Id && themePicker.Items.Cast<ThemeEntry>().Select(theme => theme.Id).SequenceEqual(beforeCustomizeThemes)
+                            && File.ReadAllBytes(preferencesPath).SequenceEqual(beforeCustomizePreferences) && libraryFiles().SequenceEqual(beforeCustomizeFiles) && manifestBytes() == beforeCustomizeManifest,
+                            "Canceling tray customization preserves pack selection, library files and preferences without creating a pack");
                         pages.SelectedIndex = 0;
                         PropertyInfo canFilter = typeof(LauncherForm).GetProperty("CanFilter", BindingFlags.Instance | BindingFlags.NonPublic);
-                        foreach (ContextMenuStrip menu in new[] { importMenu, manageMenu }) {
+                        ContextMenuStrip brandingMenu = (ContextMenuStrip)typeof(LauncherForm).GetField("appIconMenu", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
+                        foreach (ContextMenuStrip menu in new[] { importMenu, manageMenu, brandingMenu }) {
                             try {
                                 menu.Show(list, new Point(8, 8));
                                 bool filteringBlocked = !(bool)canFilter.GetValue(form, null);
                                 type("zzz");
-                                Check(menu.Visible && filteringBlocked && list.Items.Count == 3, (menu == importMenu ? "Import" : "Pack actions") + " menu keeps keyboard input out of launcher filtering");
+                                Check(menu.Visible && filteringBlocked && list.Items.Count == 3, (menu == importMenu ? "Import" : menu == manageMenu ? "Pack actions" : "App icon") + " menu keeps keyboard input out of launcher filtering");
                             }
                             finally { menu.Close(); }
                         }
@@ -823,9 +1087,23 @@ static class TrayTests
                         form.Enabled = false; type("p"); form.Enabled = true;
                         Check(list.Items.Count == 3, "Modal dialog input cannot alter the app filter");
                         type("pho"); key(Keys.Control | Keys.Back);
-                        Check(list.Items.Count == 3, "Ctrl+Backspace clears the entire filter");
+                        Check(list.Items.Count == 3 && list.SelectedItems.Count == 0, "Ctrl+Backspace clears the entire filter and selection");
                         key(Keys.Escape); Check(!form.Visible, "Escape with no filter closes the popup");
                         form.ShowManager();
+                        bool hotkeyDialogSeen = false, hotkeyTrayDisabled = false;
+                        using (System.Windows.Forms.Timer closeHotkey = new System.Windows.Forms.Timer { Interval = 25 }) {
+                            closeHotkey.Tick += delegate {
+                                HotkeySettingsDialog dialog = form.OwnedForms.OfType<HotkeySettingsDialog>().FirstOrDefault();
+                                if (dialog == null) return;
+                                hotkeyDialogSeen = true; hotkeyTrayDisabled = !trayCommands.Enabled;
+                                dialog.DialogResult = DialogResult.Cancel; dialog.Close();
+                            };
+                            closeHotkey.Start();
+                            trayCommands.Items.OfType<ToolStripMenuItem>().Single(item => item.Text == "Change hotkey...").PerformClick();
+                            closeHotkey.Stop();
+                        }
+                        Check(hotkeyDialogSeen, "The tray Change hotkey command opens the existing configuration and disable dialog");
+                        Check(hotkeyTrayDisabled && trayCommands.Enabled, "The hotkey dialog pauses tray commands and restores them after cancellation");
                         MethodInfo saveHotkey = typeof(LauncherForm).GetMethod("SaveHotkey", BindingFlags.Instance | BindingFlags.NonPublic);
                         string themeBefore = json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).Theme;
                         Check(saveHotkey.Invoke(form, new object[] { second }) == null, "Settings apply a custom combination without restarting");
@@ -841,6 +1119,7 @@ static class TrayTests
                         CheckDefaultAndIndividualRestore(form, root, preferencesPath, json);
                         CheckAppIconEditing(form, root, preferencesPath, json);
                         CheckLargeArtwork(form, root, preferencesPath, json);
+                        CheckIconSizeEditing(form, preferencesPath, json);
                         CheckExistingLauncherDefault(form, root, json);
                         AppearanceTests.Run(form, preferencesPath, args[1], Check);
                         LoadingTests.Run(form, preferencesPath, Check);
@@ -854,6 +1133,7 @@ static class TrayTests
             }
             CheckLargeStartup(root, args[1]);
             CheckContextRestore(root, args[1], json);
+            ShortcutScopeTests.Run(root, args[1], json, Check);
         }
         catch (Exception error) { failure = error.ToString(); Console.Error.WriteLine(failure); }
         finally { File.WriteAllText(Path.Combine(root, "results.json"), new JavaScriptSerializer().Serialize(new { Passed = failure == null, Error = failure, Checks = checks, ArtifactDirectory = root })); }

@@ -53,6 +53,38 @@ try {
     Assert (@($themes | Where-Object Status -eq 'Available').Count -eq 13) 'All thirteen current ICO or PNG themes discovered from the repository parent'
     Assert (@($themes | Where-Object { $_.Pack -eq 'Craft-Icons-Zach' -and $_.Author -eq 'OmegaDarling' }).Count -eq 7) 'Seven OmegaDarling themes remain after retiring Oil Slick'
     Assert (@($themes | Where-Object { $_.Name -eq 'Root' -and $_.Pack -ne 'Craft-Icons-circleb' }).Count -eq 0) 'Pack preview sheets are not mistaken for themes'
+    $svgRepository = Join-Path $testRoot 'svg repository'
+    $svgFolder = Join-Path $svgRepository 'Vectors\Only'
+    $null = [IO.Directory]::CreateDirectory($svgFolder)
+    $svgPath = Join-Path $svgFolder 'PhotoCraft.svg'
+    [IO.File]::WriteAllText($svgPath, '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 50"><rect width="100" height="50" fill="#ff0000"/></svg>')
+    $svgThemes = @(Get-BetterIconTheme -Repository $svgRepository)
+    Assert ($svgThemes.Count -eq 1 -and $svgThemes[0].IconCount -eq 1) 'SVG-only folders are discoverable themes'
+    $svgIcons = @(Get-BetterIconThemeIcon -Repository $svgRepository -Theme 'Vectors/Only')
+    Assert ($svgIcons.Count -eq 1 -and $svgIcons[0].Path -ceq $svgPath -and $svgIcons[0].PreviewPath -ceq $svgPath) 'SVG-only catalog artwork supplies its original vector preview'
+    $svgBytes = Get-BetterIconBytes -Path $svgPath
+    $svgReader = [IO.BinaryReader]::new([IO.MemoryStream]::new($svgBytes, $false))
+    try {
+        $svgFrames = $svgReader.ReadUInt16() -eq 0 -and $svgReader.ReadUInt16() -eq 1 -and $svgReader.ReadUInt16() -eq 7
+        foreach ($frameSize in @(16,24,32,48,64,128,256)) { $dimension = $svgReader.ReadByte(); $null = $svgReader.ReadBytes(15); $svgFrames = $svgFrames -and $(if ($dimension -eq 0) { 256 } else { $dimension }) -eq $frameSize }
+        Assert $svgFrames 'SVG conversion produces all seven native ICO sizes on this PowerShell runtime'
+    }
+    finally { $svgReader.Dispose() }
+    [IO.File]::WriteAllBytes((Join-Path $svgFolder 'PhotoCraft.ico'), $svgBytes)
+    $rasterSource = @(Get-BetterIconThemeIcon -Theme Cardboard)[0].PreviewPath
+    Copy-Item -LiteralPath $rasterSource -Destination (Join-Path $svgFolder 'PhotoCraft.png')
+    Copy-Item -LiteralPath $rasterSource -Destination (Join-Path $svgFolder 'PhotoCraft alternate.png')
+    $mixedIcons = @(Get-BetterIconThemeIcon -Repository $svgRepository -Theme 'Vectors/Only')
+    Assert ($mixedIcons.Count -eq 1 -and $mixedIcons[0].Path -ceq $svgPath -and $mixedIcons[0].PreviewPath -ceq $svgPath) 'SVG takes precedence over ICO and duplicate PNG variants in the Windows catalog'
+    $svgLink = New-TestLink (Join-Path $testRoot 'svg links') 'PhotoCraft'
+    $svgOriginal = Digest $svgLink; $svgState = Join-Path $testRoot 'svg state'
+    $svgApply = @(Install-BetterIconTheme -Repository $svgRepository -Theme 'Vectors/Only' -ShortcutDirectory (Split-Path $svgLink) -StateDirectory $svgState -Confirm:$false)
+    Assert ($svgApply.Count -eq 1 -and $svgApply[0].Status -eq 'Applied' -and [BetterIcon.Windows.ShellLink]::Read($svgLink).IconPath.EndsWith('.ico')) 'An SVG pack applies as a native ICO through the CLI'
+    $svgRestore = @(Restore-BetterIcon -StateDirectory $svgState -Confirm:$false)
+    Assert ($svgRestore.Count -eq 1 -and $svgRestore[0].Status -eq 'Restored' -and (Digest $svgLink) -ceq $svgOriginal) 'An SVG-applied CLI shortcut restores its exact original bytes'
+    Copy-Item -LiteralPath $svgPath -Destination (Join-Path $svgFolder 'PhotoCraft alternate.svg')
+    $svgAmbiguous = @(Get-BetterIconPlan -Repository $svgRepository -Theme 'Vectors/Only' -ShortcutDirectory (Split-Path $svgLink))
+    Assert ($svgAmbiguous.Count -eq 1 -and $svgAmbiguous[0].Status -ne 'Ready') 'Multiple SVG variants stay ambiguous even when ICO and PNG alternatives exist'
     $links = Join-Path $testRoot ('links [sample] ' + [char]0x00FC)
     $state = Join-Path $testRoot 'state'
     $paths = @(
@@ -103,7 +135,7 @@ try {
     $backupCount = @(Get-ChildItem -LiteralPath (Join-Path $state 'backups') -File).Count
     $again = @(Install-BetterIconTheme -Theme Cardboard -ShortcutDirectory $links -StateDirectory $state -Confirm:$false)
     Assert (@($again | Where-Object Status -eq 'Unchanged').Count -eq 5) 'Applying the same theme is idempotent'
-    $switch = @(Install-BetterIconTheme -Theme Satin -ShortcutDirectory $links -StateDirectory $state -Confirm:$false)
+    $switch = @(Install-BetterIconTheme -Theme HyGel -ShortcutDirectory $links -StateDirectory $state -Confirm:$false)
     Assert (@($switch | Where-Object Status -eq 'Applied').Count -eq 5) 'Switch themes'
     Assert (@(Get-ChildItem -LiteralPath (Join-Path $state 'backups') -File).Count -eq $backupCount) 'Theme switching never overwrites or duplicates the original backup'
     $appliedHashes = @{}; foreach ($path in $paths) { $appliedHashes[$path] = Digest $path }
@@ -129,7 +161,7 @@ try {
     [Runtime.InteropServices.Marshal]::FinalReleaseComObject($edited) | Out-Null
     [Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell) | Out-Null
     $editedHash = Digest $paths[0]
-    $conflict = @(Install-BetterIconTheme -Theme Satin -ShortcutDirectory $links -StateDirectory $state -Confirm:$false)
+    $conflict = @(Install-BetterIconTheme -Theme HyGel -ShortcutDirectory $links -StateDirectory $state -Confirm:$false)
     Assert (@($conflict | Where-Object Status -eq 'Failed').Count -eq 1 -and (Digest $paths[0]) -ceq $editedHash) 'Theme change preserves later user edits'
     $conflictRestore = @(Restore-BetterIcon -StateDirectory $state -Confirm:$false)
     Assert (@($conflictRestore | Where-Object Status -eq 'Failed').Count -eq 1 -and (Digest $paths[0]) -ceq $editedHash) 'Restoration preserves later user edits and restores other shortcuts'

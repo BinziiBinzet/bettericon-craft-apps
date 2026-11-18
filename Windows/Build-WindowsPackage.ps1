@@ -15,10 +15,11 @@ $destination = Join-Path $output $name
 if (Test-Path -LiteralPath $destination) { throw "Package already exists: $destination. Choose another output directory." }
 $files = @('install.ps1','uninstall.ps1','BetterIcon.Windows.psm1','BetterIcon.ShellLink.cs',
     'Install-Windows.cmd','Restore-Windows.cmd','Test-Windows.ps1','Build-WindowsPackage.ps1',
-    'WINDOWS.md','CHANGELOG-Windows.md','WINDOWS-VALIDATION.md','BetterIcon.Tray.cs',
+    'Build-AppInstaller.ps1','BetterIcon.Setup.iss','Test-AppInstaller.ps1','Test-InstallerLifecycle.ps1','Test-InstallerLifecycle.cs',
+    'WINDOWS.md','CHANGELOG-Windows.md','WINDOWS-VALIDATION.md','BetterIcon.Tray.cs','BetterIcon.Taskbar.cs','Test-TaskbarPins.ps1','Test-TaskbarWindows.ps1','Test-TaskbarWindows.cs',
     'BetterIcon.TrayWorker.ps1','BetterIcon.Tray.manifest','Build-Tray.ps1','Start-Tray.ps1',
-    'Start-Tray.cmd','Stop-Tray.cmd','Create-StartMenuShortcut.cmd','Test-Tray.ps1','Test-TrayUI.ps1','Test-TrayUI.cs','BetterIcon.Hotkey.cs','BetterIcon.Packs.cs','BetterIcon.Packs.UI.cs','Test-Packs.cs',
-    'BetterIcon.Appearance.cs','Test-Appearance.cs','BetterIcon.Loading.cs','Test-Loading.cs','Build-AppIcon.ps1','Assets/AppIcons/README.md')
+    'Start-Tray.cmd','Stop-Tray.cmd','Create-StartMenuShortcut.cmd','Test-Tray.ps1','Test-TrayUI.ps1','Test-TrayUI.cs','BetterIcon.Hotkey.cs','BetterIcon.Packs.cs','BetterIcon.Packs.UI.cs','BetterIcon.Shortcuts.UI.cs','Test-Shortcuts.cs','Test-Packs.cs',
+    'BetterIcon.Appearance.cs','Test-Appearance.cs','BetterIcon.Loading.cs','BetterIcon.Window.cs','BetterIcon.Svg.cs','BetterIcon.NativeArtwork.cs','Test-Svg.cs','Test-IconRendering.cs','Restore-SvgDependencies.ps1','SvgDependencies.json','THIRD-PARTY-NOTICES.md','Licenses/SVG.NET.txt','Licenses/ExCSS.txt','Licenses/NET-Foundation.txt','Test-Loading.cs','Build-AppIcon.ps1','Assets/AppIcons/README.md')
 $repository = Get-BetterIconRepository
 $buildDirectory = Join-Path $output ('build-' + [guid]::NewGuid().ToString('N'))
 $build = & (Join-Path $PSScriptRoot 'Build-Tray.ps1') -OutputDirectory $buildDirectory
@@ -46,14 +47,17 @@ try {
         }
         foreach ($theme in @(Get-BetterIconTheme)) {
             foreach ($icon in @(Get-BetterIconThemeIcon -Theme $theme.Id)) {
-                $folder = if ($theme.Name -eq 'Root') { $theme.Pack } else { $theme.Id }
+                # Preserve the repository's public directory names independently
+                # of stable Windows preference IDs.
+                $folder = $theme.Path.Substring($repository.TrimEnd('\','/').Length).TrimStart('\','/').Replace('\','/')
                 $entry = $archive.CreateEntry($folder + '/' + $icon.Application + '.ico', [IO.Compression.CompressionLevel]::Optimal)
                 $stream = $entry.Open()
                 try { $bytes = Get-BetterIconBytes $icon.Path; $stream.Write($bytes, 0, $bytes.Length) }
                 finally { $stream.Dispose() }
                 $fileCount++; $iconCount++
-                if ([IO.Path]::GetExtension($icon.PreviewPath) -ieq '.png') {
-                    $null = [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $icon.PreviewPath, $folder + '/' + $icon.Application + '.png', [IO.Compression.CompressionLevel]::Optimal)
+                $previewExtension = [IO.Path]::GetExtension($icon.PreviewPath).ToLowerInvariant()
+                if ($previewExtension -in '.png','.svg') {
+                    $null = [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $icon.PreviewPath, $folder + '/' + $icon.Application + $previewExtension, [IO.Compression.CompressionLevel]::Optimal)
                     $fileCount++; $previewCount++
                 }
             }

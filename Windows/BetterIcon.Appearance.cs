@@ -1,5 +1,6 @@
 using System;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
@@ -18,8 +19,17 @@ namespace BetterIcon.Tray
         public override Size GetPreferredSize(Size proposedSize)
         {
             Size size = base.GetPreferredSize(proposedSize);
-            if (DrawMode != DrawMode.Normal) size.Height = Math.Max(size.Height, ItemHeight + 8);
+            if (DrawMode != DrawMode.Normal) size.Height = Math.Max(size.Height, Math.Max(Height, ItemHeight + 8));
             return size;
+        }
+        protected override void WndProc(ref Message message)
+        {
+            bool paint = message.Msg == 0x000F; // WM_PAINT
+            // WM_PRINTCLIENT, or WM_PRINT requesting PRF_CLIENT, provides its own DC.
+            bool print = (message.Msg == 0x0318 || (message.Msg == 0x0317 && (message.LParam.ToInt64() & 4) != 0)) && message.WParam != IntPtr.Zero;
+            base.WndProc(ref message);
+            // Keep native input and dropdown painting; add only the themed outline.
+            if (paint || print) AppAppearance.DrawComboBorder(this, print ? message.WParam : IntPtr.Zero);
         }
     }
     public static class AppBranding
@@ -107,7 +117,9 @@ namespace BetterIcon.Tray
             hook.Palette = palette;
             string role = control.Tag as string;
             Color parent = control.Parent == null ? palette.Background : control.Parent.BackColor;
-            control.BackColor = control is Form ? palette.Background : control is TabPage || control is ListView || control.Name.EndsWith("Section", StringComparison.Ordinal) ? palette.Surface : parent;
+            // The popup's resize margin and pages share one surface. A contrasting
+            // rectangular inner panel otherwise appears to cut through its curves.
+            control.BackColor = control is LauncherForm && !palette.HighContrast ? palette.Surface : control is Form ? palette.Background : control is TabPage || control is ListView || control.Name.EndsWith("Section", StringComparison.Ordinal) ? palette.Surface : parent;
             control.ForeColor = role == "ErrorText" ? palette.Error : role == "SecondaryText" ? palette.Muted : palette.Text;
             Button button = control as Button;
             if (button != null) {
@@ -142,6 +154,12 @@ namespace BetterIcon.Tray
                     DwmSetWindowAttribute(control.Handle, 20, ref dark, 4);
                     int caption = ColorTranslator.ToWin32(p.Background), text = ColorTranslator.ToWin32(p.Text);
                     DwmSetWindowAttribute(control.Handle, 35, ref caption, 4); DwmSetWindowAttribute(control.Handle, 36, ref text, 4);
+                    if (control is LauncherForm) {
+                        // Keep the resize frame and rounded region, without DWM's
+                        // decorative outline. Restore OS borders in high contrast.
+                        int border = p.HighContrast ? -1 : -2; // COLOR_DEFAULT / COLOR_NONE.
+                        DwmSetWindowAttribute(control.Handle, 34, ref border, 4);
+                    }
                 }
                 catch (DllNotFoundException) { }
                 catch (EntryPointNotFoundException) { }
@@ -150,6 +168,15 @@ namespace BetterIcon.Tray
                 // Older Windows builds may ignore this style; explicit control colors still apply.
                 SetWindowTheme(control.Handle, p.Dark && !p.HighContrast ? "DarkMode_Explorer" : "Explorer", null);
             }
+        }
+        internal static void DrawComboBorder(AppearanceComboBox combo, IntPtr deviceContext)
+        {
+            Hook hook;
+            if (!combo.IsHandleCreated || combo.IsDisposed || combo.ClientSize.Width < 2 || combo.ClientSize.Height < 2
+                || !hooks.TryGetValue(combo, out hook) || hook.Palette == null) return;
+            using (Graphics canvas = deviceContext == IntPtr.Zero ? Graphics.FromHwnd(combo.Handle) : Graphics.FromHdc(deviceContext))
+            using (Pen border = new Pen(hook.Palette.Border))
+                canvas.DrawRectangle(border, 0, 0, combo.ClientSize.Width - 1, combo.ClientSize.Height - 1);
         }
         static void DrawCombo(ComboBox combo, DrawItemEventArgs e)
         {
@@ -212,41 +239,101 @@ namespace BetterIcon.Tray
 
     public sealed partial class LauncherForm
     {
-        readonly ComboBox appearanceModePicker = new AppearanceComboBox(), appIconStylePicker = new AppearanceComboBox(), appIconVariantPicker = new AppearanceComboBox();
-        readonly PictureBox appIconPreview = new PictureBox();
-        readonly Label appIconDescription = new Label();
+        readonly Button appIconButton = new Button(), appearanceModeButton = new Button();
+        readonly ContextMenuStrip appIconMenu = new ContextMenuStrip();
+        readonly ToolTip appearanceTips = new ToolTip();
         AppearancePalette appearancePalette;
         Icon ownedAppIcon, ownedTrayIcon;
         string activeAppIconKey;
-        bool fillingAppearance, appearanceQueued, appearanceSubscribed;
+        bool appearanceQueued, appearanceSubscribed, suppressAppIconClick;
+
+        sealed class AppIconMenuColors : ProfessionalColorTable
+        {
+            readonly AppearancePalette palette;
+            public AppIconMenuColors(AppearancePalette value) { palette = value; UseSystemColors = false; }
+            public override Color ToolStripDropDownBackground { get { return palette.Surface; } }
+            public override Color ImageMarginGradientBegin { get { return palette.Surface; } }
+            public override Color ImageMarginGradientMiddle { get { return palette.Surface; } }
+            public override Color ImageMarginGradientEnd { get { return palette.Surface; } }
+            public override Color MenuItemSelected { get { return palette.Selection; } }
+            public override Color MenuItemBorder { get { return palette.Selection; } }
+            public override Color MenuBorder { get { return palette.Border; } }
+        }
+        sealed class AppIconMenuRenderer : ToolStripProfessionalRenderer
+        {
+            readonly AppearancePalette palette;
+            public AppIconMenuRenderer(AppearancePalette value) : base(new AppIconMenuColors(value)) { palette = value; RoundedEdges = false; }
+            protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e)
+            {
+                ToolStripMenuItem item = e.Item as ToolStripMenuItem;
+                using (Brush brush = new SolidBrush(e.Item.Selected || (item != null && item.Checked) ? palette.Selection : palette.Surface))
+                    e.Graphics.FillRectangle(brush, new Rectangle(Point.Empty, e.Item.Size));
+            }
+            // Highlight the selected row without a checkmark column or overlay.
+            protected override void OnRenderItemCheck(ToolStripItemImageRenderEventArgs e) { }
+            protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e) { e.TextColor = e.Item.Enabled ? palette.Text : palette.Muted; base.OnRenderItemText(e); }
+        }
         void BuildAppearanceSettings()
         {
-            TableLayoutPanel section = SettingsSection("AppearanceSection", "Appearance");
-            TableLayoutPanel options = SettingsTable(2);
-            options.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); options.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            appearanceModePicker.Items.AddRange(new object[] { "System", "Dark", "Light" });
-            appIconStylePicker.Name = "AppIconStyle"; appIconStylePicker.Items.AddRange(AppBranding.Styles.Select(AppBranding.Title).ToArray());
-            appIconVariantPicker.Items.AddRange(new object[] { "Match appearance", "Dark icon", "Light icon" });
-            appearanceModePicker.AccessibleName = "App theme"; appIconStylePicker.AccessibleName = "BetterIcon icon style"; appIconVariantPicker.AccessibleName = "BetterIcon icon variant";
-            foreach (ComboBox picker in new[] { appearanceModePicker, appIconStylePicker, appIconVariantPicker }) { picker.DropDownStyle = ComboBoxStyle.DropDownList; picker.Dock = DockStyle.Fill; picker.Margin = new Padding(0, 0, 0, 8); }
-            options.Controls.Add(new Label { Text = "App theme", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 0, 16, 8) }, 0, 0); options.Controls.Add(appearanceModePicker, 1, 0);
-            options.Controls.Add(new Label { Text = "App icon", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 0, 16, 8) }, 0, 1);
-            TableLayoutPanel iconOptions = SettingsTable(2); iconOptions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50)); iconOptions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-            appIconStylePicker.Margin = new Padding(0, 0, 8, 0); appIconVariantPicker.Margin = Padding.Empty;
-            iconOptions.Controls.Add(appIconStylePicker, 0, 0); iconOptions.Controls.Add(appIconVariantPicker, 1, 0); options.Controls.Add(iconOptions, 1, 1);
-            SettingsRow(section, options);
-            TableLayoutPanel preview = SettingsTable(2); preview.Margin = new Padding(0, 8, 0, 0); preview.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); preview.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            appIconPreview.Size = new Size(56, 56); appIconPreview.SizeMode = PictureBoxSizeMode.CenterImage; appIconPreview.Margin = new Padding(0, 0, 14, 0); appIconPreview.AccessibleName = "Current BetterIcon icon";
-            appIconDescription.AutoSize = true; appIconDescription.Dock = DockStyle.Fill; appIconDescription.TextAlign = ContentAlignment.MiddleLeft;
-            preview.Controls.Add(appIconPreview, 0, 0); preview.Controls.Add(appIconDescription, 1, 0); SettingsRow(section, preview);
-            fillingAppearance = true;
-            appearanceModePicker.SelectedItem = preferences.AppearanceMode;
-            appIconStylePicker.SelectedIndex = Array.IndexOf(AppBranding.Styles, preferences.AppIconStyle);
-            appIconVariantPicker.SelectedIndex = preferences.AppIconVariant == "Dark" ? 1 : preferences.AppIconVariant == "Light" ? 2 : 0;
-            fillingAppearance = false;
-            foreach (ComboBox picker in new[] { appearanceModePicker, appIconStylePicker, appIconVariantPicker }) picker.SelectedIndexChanged += delegate { ChangeAppearance(); };
+            foreach (Button button in new[] { appIconButton, appearanceModeButton }) {
+                button.Size = new Size(44, 44); button.Margin = new Padding(4, 0, 0, 0);
+                button.FlatStyle = FlatStyle.Flat; button.FlatAppearance.BorderSize = 0;
+                button.ImageAlign = ContentAlignment.MiddleCenter;
+            }
+            appIconButton.Name = "AppIconButton"; appIconButton.AccessibleName = "Choose Better Icon app icon";
+            appearanceModeButton.Name = "AppearanceModeButton";
+            appIconMenu.Name = "AppIconMenu"; appIconMenu.Font = Font;
+            appIconMenu.ShowCheckMargin = false; appIconMenu.ShowImageMargin = true;
+            appIconMenu.ImageScalingSize = new Size(32, 32); appIconMenu.Padding = new Padding(4);
+            ToolStripMenuItem automatic = new ToolStripMenuItem("Match app theme") { Tag = "Auto", ImageScaling = ToolStripItemImageScaling.None };
+            automatic.Click += delegate { if (!busy) { preferences.AppIconVariant = "Auto"; ChangeAppearance(); } };
+            appIconMenu.Items.Add(automatic);
+            foreach (string color in AppBranding.Styles) foreach (string shade in new[] { "Dark", "Light" }) {
+                string style = color, variant = shade;
+                ToolStripMenuItem item = new ToolStripMenuItem(AppBranding.Title(style) + " " + variant) {
+                    Tag = style + "/" + variant, Image = AppBranding.Preview(style, variant.ToLowerInvariant(), 32),
+                    ImageScaling = ToolStripItemImageScaling.None
+                };
+                item.Click += delegate { if (!busy) { preferences.AppIconStyle = style; preferences.AppIconVariant = variant; ChangeAppearance(); } };
+                appIconMenu.Items.Add(item);
+            }
+            foreach (ToolStripItem item in appIconMenu.Items) item.Padding = new Padding(4, 3, 8, 3);
+            appIconMenu.Closing += delegate(object sender, ToolStripDropDownClosingEventArgs e) {
+                suppressAppIconClick = e.CloseReason == ToolStripDropDownCloseReason.AppClicked && appIconButton.RectangleToScreen(appIconButton.ClientRectangle).Contains(Cursor.Position);
+            };
+            appIconButton.Click += delegate {
+                if (suppressAppIconClick) { suppressAppIconClick = false; return; }
+                ShowAppIconMenu();
+            };
+            appearanceModeButton.Click += delegate {
+                if (busy) return;
+                preferences.AppearanceMode = preferences.AppearanceMode == "Dark" ? "Light" : preferences.AppearanceMode == "Light" ? "System" : "Dark";
+                ChangeAppearance();
+            };
         }
-        bool AppearanceMenuOpen { get { return appearanceModePicker.DroppedDown || appIconStylePicker.DroppedDown || appIconVariantPicker.DroppedDown; } }
+        bool AppearanceMenuOpen { get { return appIconMenu.Visible; } }
+        void ShowAppIconMenu()
+        {
+            if (busy || !Enabled) return;
+            if (appIconMenu.Visible) { appIconMenu.Close(); return; }
+            Rectangle anchor = appIconButton.RectangleToScreen(appIconButton.ClientRectangle), work = Screen.FromControl(appIconButton).WorkingArea;
+            int above = anchor.Top - work.Top - 8, below = work.Bottom - anchor.Bottom - 8;
+            bool upward = above >= 120 || above >= below;
+            int available = Math.Max(80, Math.Min(work.Height - 16, upward ? above : below));
+            // ToolStripDropDownMenu supplies native scroll arrows when constrained.
+            appIconMenu.MaximumSize = new Size(Math.Max(1, work.Width - 16), available);
+            Size size = appIconMenu.GetPreferredSize(Size.Empty);
+            int x = Math.Max(work.Left + 4, Math.Min(work.Right - size.Width - 4, anchor.Right - size.Width));
+            int y = upward ? anchor.Top - size.Height - 6 : anchor.Bottom + 6;
+            y = Math.Max(work.Top + 4, Math.Min(work.Bottom - size.Height - 4, y));
+            appIconMenu.Show(appIconButton, appIconButton.PointToClient(new Point(x, y)));
+        }
+        void SetAppearanceBusy(bool value)
+        {
+            appIconButton.Enabled = appearanceModeButton.Enabled = !value;
+            if (value) appIconMenu.Close();
+            foreach (ToolStripItem item in appIconMenu.Items) item.Enabled = !value;
+        }
         void InitializeAppearance()
         {
             ApplyAppearance();
@@ -261,10 +348,7 @@ namespace BetterIcon.Tray
         }
         void ChangeAppearance()
         {
-            if (fillingAppearance) return;
-            preferences.AppearanceMode = appearanceModePicker.SelectedItem as string;
-            preferences.AppIconStyle = appIconStylePicker.SelectedIndex < 0 ? "sage" : AppBranding.Styles[appIconStylePicker.SelectedIndex];
-            preferences.AppIconVariant = appIconVariantPicker.SelectedIndex == 1 ? "Dark" : appIconVariantPicker.SelectedIndex == 2 ? "Light" : "Auto";
+            if (busy) return;
             ApplyAppearance();
             try { WritePreferences(); status.Text = "Appearance saved."; }
             catch (IOException) { status.Text = "Appearance changed for this session, but could not be saved."; }
@@ -274,7 +358,6 @@ namespace BetterIcon.Tray
         {
             appearancePalette = AppAppearance.Resolve(preferences.AppearanceMode);
             string variant = AppBranding.Variant(preferences.AppIconVariant, appearancePalette.Dark), key = preferences.AppIconStyle + "." + variant;
-            appIconStylePicker.Tag = variant;
             if (activeAppIconKey != key) {
                 Icon replacement = AppBranding.Load(preferences.AppIconStyle, variant), previous = ownedAppIcon ?? Icon;
                 Icon small = AppBranding.Load(preferences.AppIconStyle, variant, SystemInformation.SmallIconSize.Width), previousSmall = ownedTrayIcon;
@@ -282,13 +365,59 @@ namespace BetterIcon.Tray
                 foreach (Form dialog in OwnedForms) dialog.Icon = replacement;
                 if (previous != null) previous.Dispose();
                 if (previousSmall != null) previousSmall.Dispose();
-                Image old = appIconPreview.Image; appIconPreview.Image = AppBranding.Preview(preferences.AppIconStyle, variant, 48); if (old != null) old.Dispose();
+                Image old = appIconButton.Image; appIconButton.Image = AppBranding.Preview(preferences.AppIconStyle, variant, 32); if (old != null) old.Dispose();
             }
-            appIconDescription.Text = AppBranding.Title(preferences.AppIconStyle) + " / " + (variant == "dark" ? "Dark" : "Light") + Environment.NewLine + (preferences.AppIconVariant == "Auto" ? "Icon matches the app appearance." : "Icon variant is pinned.");
+            string description = AppBranding.Title(preferences.AppIconStyle) + " " + (variant == "dark" ? "Dark" : "Light");
+            appIconButton.AccessibleDescription = description + (preferences.AppIconVariant == "Auto" ? "; matches the app theme." : "; fixed icon variant.");
+            appearanceTips.SetToolTip(appIconButton, "Choose app icon: " + description);
+            foreach (ToolStripMenuItem item in appIconMenu.Items) item.Checked = (string)item.Tag == (preferences.AppIconVariant == "Auto" ? "Auto" : preferences.AppIconStyle + "/" + preferences.AppIconVariant);
+            if (appIconMenu.Items.Count > 0) {
+                ToolStripItem automatic = appIconMenu.Items[0]; Image old = automatic.Image;
+                automatic.Image = AppBranding.Preview(preferences.AppIconStyle, appearancePalette.Dark ? "dark" : "light", 32);
+                if (old != null) old.Dispose();
+            }
             AppAppearance.Apply(this, appearancePalette);
             foreach (ContextMenuStrip menu in new[] { trayMenu, iconMenu, importPackMenu, managePackMenu }) AppAppearance.ApplyMenu(menu, appearancePalette);
+            appIconMenu.BackColor = appearancePalette.Surface; appIconMenu.ForeColor = appearancePalette.Text;
+            appIconMenu.Renderer = new AppIconMenuRenderer(appearancePalette);
+            foreach (ToolStripItem item in appIconMenu.Items) item.ForeColor = appearancePalette.Text;
             foreach (Form dialog in OwnedForms) AppAppearance.Apply(dialog, appearancePalette);
+            string next = preferences.AppearanceMode == "Dark" ? "Light" : preferences.AppearanceMode == "Light" ? "System" : "Dark";
+            appearanceModeButton.AccessibleName = "App theme: " + preferences.AppearanceMode;
+            appearanceModeButton.AccessibleDescription = "Click to switch to " + next + ". Cycles Dark, Light and System.";
+            appearanceTips.SetToolTip(appearanceModeButton, preferences.AppearanceMode + " theme; click for " + next);
+            Image oldGlyph = appearanceModeButton.Image;
+            appearanceModeButton.Image = AppThemeGlyph(preferences.AppearanceMode, appearancePalette.Text);
+            if (oldGlyph != null) oldGlyph.Dispose();
             pages.Invalidate();
+        }
+        static Bitmap AppThemeGlyph(string mode, Color color)
+        {
+            Bitmap image = new Bitmap(32, 32);
+            using (Graphics canvas = Graphics.FromImage(image)) using (Pen pen = new Pen(color, 2F)) using (Brush brush = new SolidBrush(color)) {
+                canvas.Clear(Color.Transparent); canvas.SmoothingMode = SmoothingMode.AntiAlias;
+                if (mode == "Dark") {
+                    // FillRegion ignores antialiasing. Join the same two ellipses
+                    // at their intersections so both edges receive smooth alpha coverage.
+                    using (GraphicsPath crescent = new GraphicsPath()) {
+                        crescent.AddArc(5F, 4F, 23F, 24F, 40.146624F, 220.742574F);
+                        crescent.AddArc(12F, 0F, 22F, 24F, 220.847704F, -142.866538F);
+                        crescent.CloseFigure(); canvas.FillPath(brush, crescent);
+                    }
+                }
+                else if (mode == "Light") {
+                    canvas.DrawEllipse(pen, 10, 10, 12, 12);
+                    for (int i = 0; i < 8; i++) {
+                        double angle = i * Math.PI / 4;
+                        canvas.DrawLine(pen, 16 + (float)Math.Cos(angle) * 10, 16 + (float)Math.Sin(angle) * 10, 16 + (float)Math.Cos(angle) * 14, 16 + (float)Math.Sin(angle) * 14);
+                    }
+                }
+                else {
+                    canvas.DrawRectangle(pen, 3, 6, 26, 18); canvas.DrawLine(pen, 16, 24, 16, 28); canvas.DrawLine(pen, 10, 29, 22, 29);
+                    canvas.FillRectangle(brush, 6, 9, 10, 12);
+                }
+            }
+            return image;
         }
         void ApplyDialogAppearance(Form dialog) { dialog.Icon = Icon; AppAppearance.Apply(dialog, appearancePalette ?? AppAppearance.Resolve(preferences.AppearanceMode)); }
         void DisposeAppearance()
@@ -296,7 +425,13 @@ namespace BetterIcon.Tray
             if (appearanceSubscribed) { SystemEvents.UserPreferenceChanged -= OnSystemAppearanceChanged; appearanceSubscribed = false; }
             if (ownedAppIcon != null) { ownedAppIcon.Dispose(); ownedAppIcon = null; }
             if (ownedTrayIcon != null) { ownedTrayIcon.Dispose(); ownedTrayIcon = null; }
-            if (appIconPreview.Image != null) { appIconPreview.Image.Dispose(); appIconPreview.Image = null; }
+            if (appIconButton.Image != null) { appIconButton.Image.Dispose(); appIconButton.Image = null; }
+            if (appearanceModeButton.Image != null) { appearanceModeButton.Image.Dispose(); appearanceModeButton.Image = null; }
+            if (!appIconMenu.IsDisposed) {
+                foreach (ToolStripItem item in appIconMenu.Items) if (item.Image != null) { item.Image.Dispose(); item.Image = null; }
+                appIconMenu.Dispose();
+            }
+            appearanceTips.Dispose();
         }
     }
 }

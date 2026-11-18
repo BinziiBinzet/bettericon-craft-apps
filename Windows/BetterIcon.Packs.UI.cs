@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Drawing.Drawing2D;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -30,7 +32,7 @@ namespace BetterIcon.Tray
             authorRow.Controls.Add(new Label { Text = "Author", Width = 79, Margin = new Padding(0, 6, 12, 0) });
             packAuthor.Width = 450; packAuthor.MaxLength = 64; packAuthor.AccessibleName = "Pack author"; packAuthor.Text = basis == null ? "" : basis.Author;
             authorRow.Controls.Add(packAuthor); layout.Controls.Add(authorRow, 0, 1);
-            layout.Controls.Add(new Label { Text = "Choose a PNG or ICO for each app. Unassigned apps keep their existing shortcut icons. Saving adds the pack; Apply icons changes shortcuts.", Dock = DockStyle.Fill }, 0, 2);
+            layout.Controls.Add(new Label { Text = "Choose an SVG, PNG or ICO for each app. Unassigned apps keep their existing shortcut icons. Saving adds the pack; Apply icons changes shortcuts.", Dock = DockStyle.Fill }, 0, 2);
             grid.Dock = DockStyle.Fill; grid.AllowUserToAddRows = grid.AllowUserToDeleteRows = grid.AllowUserToResizeRows = false; grid.RowHeadersVisible = false; grid.AutoGenerateColumns = false; grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect; grid.MultiSelect = false;
             grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "App", HeaderText = "App", Width = 145, ReadOnly = true });
             grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Artwork", HeaderText = "Artwork", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, ReadOnly = true });
@@ -41,7 +43,7 @@ namespace BetterIcon.Tray
             grid.CellContentClick += delegate(object sender, DataGridViewCellEventArgs e) {
                 if (e.RowIndex < 0) return;
                 string app = (string)grid.Rows[e.RowIndex].Cells[0].Value;
-                if (e.ColumnIndex == 2) using (OpenFileDialog picker = new OpenFileDialog { Title = "Icon for " + app, Filter = "Icon artwork (*.png;*.ico)|*.png;*.ico", CheckFileExists = true }) {
+                if (e.ColumnIndex == 2) using (OpenFileDialog picker = new OpenFileDialog { Title = "Icon for " + app, Filter = "Icon artwork (*.svg;*.png;*.ico)|*.svg;*.png;*.ico", CheckFileExists = true }) {
                     if (picker.ShowDialog(this) == DialogResult.OK) { files[app] = picker.FileName; grid.Rows[e.RowIndex].Cells[1].Value = Path.GetFileName(picker.FileName); }
                 }
                 if (e.ColumnIndex == 3) { files.Remove(app); grid.Rows[e.RowIndex].Cells[1].Value = "Not assigned"; }
@@ -65,12 +67,55 @@ namespace BetterIcon.Tray
         }
     }
 
+    // OwnerDrawFixed customizes only the headers; the native tab control still
+    // paints a light page frame. Paint its chrome while retaining its native
+    // pages, selection, keyboard navigation, hit testing and accessibility.
+    public sealed class ThemedTabControl : TabControl
+    {
+        public ThemedTabControl()
+        {
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint |
+                ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+        }
+        protected override void OnPaintBackground(PaintEventArgs e)
+        {
+            using (Brush brush = new SolidBrush(SelectedTab == null ? BackColor : SelectedTab.BackColor))
+                e.Graphics.FillRectangle(brush, ClientRectangle);
+        }
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+            for (int index = 0; index < TabCount; index++) {
+                Rectangle bounds = GetTabRect(index);
+                if (!e.ClipRectangle.IntersectsWith(bounds)) continue;
+                DrawItemState state = index == SelectedIndex ? DrawItemState.Selected : DrawItemState.None;
+                if (Focused && ShowFocusCues && index == SelectedIndex) state |= DrawItemState.Focus;
+                if (!Enabled) state |= DrawItemState.Disabled;
+                OnDrawItem(new DrawItemEventArgs(e.Graphics, Font, bounds, index, state));
+            }
+        }
+        protected override void OnSelectedIndexChanged(EventArgs e) { base.OnSelectedIndexChanged(e); Invalidate(); }
+        protected override void OnGotFocus(EventArgs e) { base.OnGotFocus(e); Invalidate(); }
+        protected override void OnLostFocus(EventArgs e) { base.OnLostFocus(e); Invalidate(); }
+    }
+
+    // Consume editing commands before the popup's Escape/navigation handling.
+    public sealed class IconSizeTextBox : TextBox
+    {
+        public event Action CommitRequested, CancelRequested;
+        protected override bool ProcessCmdKey(ref Message message, Keys keyData)
+        {
+            if (keyData == Keys.Enter) { if (CommitRequested != null) CommitRequested(); return true; }
+            if (keyData == Keys.Escape) { if (CancelRequested != null) CancelRequested(); return true; }
+            return base.ProcessCmdKey(ref message, keyData);
+        }
+    }
+
     public sealed partial class LauncherForm
     {
-        readonly TabControl pages = new TabControl();
-        readonly TabPage launcherPage = new TabPage("Launcher"), settingsPage = new TabPage("Settings");
+        readonly TabControl pages = new ThemedTabControl();
+        readonly TabPage launcherPage = new TabPage("Launcher"), settingsPage = new TabPage("Manage Icons");
         readonly IconGridView packPreview = new IconGridView();
-        readonly ImageList packPictures = new ImageList();
         readonly List<Bitmap> packArtwork = new List<Bitmap>();
         readonly List<ArtworkSource> packSources = new List<ArtworkSource>();
         readonly Panel settingsScroll = new Panel();
@@ -78,9 +123,12 @@ namespace BetterIcon.Tray
         readonly ContextMenuStrip importPackMenu = new ContextMenuStrip(), managePackMenu = new ContextMenuStrip();
         readonly Label packDetails = new Label();
         readonly TrackBar iconSizeSlider = new TrackBar();
-        readonly Label iconSizeValue = new Label();
+        readonly TextBox iconSizeValue = new IconSizeTextBox();
         readonly Button resetIconSize = new Button();
         readonly CheckBox showAppNames = new CheckBox();
+        readonly Button removePackButton = new Button();
+        readonly Label appVersion = new Label();
+        bool arrangingManageIcons;
         readonly List<Button> packButtons = new List<Button>();
         int iconWheelDelta;
         PackLibrary library;
@@ -91,12 +139,27 @@ namespace BetterIcon.Tray
         {
             bool selected = pages.SelectedIndex == e.Index;
             AppearancePalette palette = appearancePalette ?? AppAppearance.Resolve(preferences.AppearanceMode);
-            Color background = selected ? palette.Accent : palette.InactiveTab, foreground = selected ? Color.White : palette.Text;
+            Color background = selected ? palette.Surface : palette.InactiveTab, foreground = selected ? palette.Text : palette.Muted;
             if (SystemInformation.HighContrast) { background = selected ? SystemColors.Highlight : SystemColors.Control; foreground = selected ? SystemColors.HighlightText : SystemColors.ControlText; }
-            using (Brush brush = new SolidBrush(background)) e.Graphics.FillRectangle(brush, e.Bounds);
+            // Round the two outer corners; keep the shared center divider straight.
+            // Top-only rounding can exceed half the tab's height.
+            Rectangle bounds = e.Bounds;
+            float radius = Math.Min(32f, Math.Min(bounds.Height, bounds.Width / 2f));
+            float leftRadius = e.Index == 0 ? radius : 0, rightRadius = e.Index == pages.TabCount - 1 ? radius : 0;
+            using (GraphicsPath shape = new GraphicsPath()) using (Brush brush = new SolidBrush(background)) {
+                shape.AddLine(bounds.Left, bounds.Bottom, bounds.Left, bounds.Top + leftRadius);
+                if (leftRadius > 0) shape.AddArc(bounds.Left, bounds.Top, leftRadius * 2, leftRadius * 2, 180, 90);
+                shape.AddLine(bounds.Left + leftRadius, bounds.Top, bounds.Right - rightRadius, bounds.Top);
+                if (rightRadius > 0) shape.AddArc(bounds.Right - rightRadius * 2, bounds.Top, rightRadius * 2, rightRadius * 2, 270, 90);
+                shape.AddLine(bounds.Right, bounds.Top + rightRadius, bounds.Right, bounds.Bottom);
+                shape.CloseFigure();
+                GraphicsState state = e.Graphics.Save();
+                try { e.Graphics.SmoothingMode = SmoothingMode.AntiAlias; e.Graphics.FillPath(brush, shape); }
+                finally { e.Graphics.Restore(state); }
+            }
             using (Font font = new Font(Font, selected ? FontStyle.Bold : FontStyle.Regular))
                 TextRenderer.DrawText(e.Graphics, pages.TabPages[e.Index].Text, font, e.Bounds, foreground, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
-            if (selected && pages.Focused) ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(e.Bounds, -5, -5), foreground, background);
+            if (selected && (e.State & DrawItemState.Focus) != 0) ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(e.Bounds, -5, -5), foreground, background);
         }
         void SizeTabs() { Size size = new Size(Math.Max(80, (pages.ClientSize.Width - 10) / 2), 38); if (pages.ItemSize != size) pages.ItemSize = size; }
 
@@ -108,7 +171,7 @@ namespace BetterIcon.Tray
         {
             int previous = preferences.IconSize;
             preferences.IconSize = iconSizeSlider.Value;
-            iconSizeValue.Text = preferences.IconSize + " px";
+            SyncIconSizeValue();
             try { ResizeAppIcons(); ResizePackIcons(); }
             catch (Exception error) {
                 if (!(error is OutOfMemoryException) && !(error is System.Runtime.InteropServices.ExternalException)) throw;
@@ -120,11 +183,32 @@ namespace BetterIcon.Tray
             catch (IOException) { status.Text = "Icon size changed for this session, but could not be saved."; }
             catch (UnauthorizedAccessException) { status.Text = "Icon size changed for this session, but could not be saved."; }
         }
+        void SyncIconSizeValue()
+        {
+            iconSizeValue.Text = iconSizeSlider.Value.ToString(CultureInfo.InvariantCulture);
+            iconSizeValue.AccessibleDescription = "Enter a whole number from " + iconSizeSlider.Minimum + " to " + iconSizeSlider.Maximum + " pixels. Enter applies; Escape cancels. Updates both tabs.";
+        }
+        void CommitIconSizeValue()
+        {
+            if (busy || !iconSizeValue.Enabled) { SyncIconSizeValue(); return; }
+            int requested;
+            if (!Int32.TryParse(iconSizeValue.Text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out requested)) {
+                SyncIconSizeValue();
+                status.Text = "Enter a whole number from " + iconSizeSlider.Minimum + " to " + iconSizeSlider.Maximum + " px.";
+            }
+            else {
+                int value = Math.Max(iconSizeSlider.Minimum, Math.Min(iconSizeSlider.Maximum, requested));
+                if (iconSizeSlider.Value != value) iconSizeSlider.Value = value;
+                else { SyncIconSizeValue(); status.Text = "Icon size: " + value + " px."; }
+            }
+            if (iconSizeValue.Focused) iconSizeValue.SelectAll();
+        }
+        void CancelIconSizeValue() { SyncIconSizeValue(); iconSizeValue.SelectAll(); }
         void ChangeAppNames()
         {
             preferences.ShowAppNames = showAppNames.Checked;
             apps.ShowAppNames = packPreview.ShowAppNames = preferences.ShowAppNames;
-            packPreview.Height = Math.Max(128, packPreview.GridCellSize.Height + 12);
+            LayoutManageIcons();
             try { WritePreferences(); status.Text = "App name visibility saved."; }
             catch (IOException) { status.Text = "App name visibility changed for this session, but could not be saved."; }
             catch (UnauthorizedAccessException) { status.Text = "App name visibility changed for this session, but could not be saved."; }
@@ -165,12 +249,20 @@ namespace BetterIcon.Tray
             root.RowCount = 2; root.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             settingsPage.Controls.Add(root);
             settingsScroll.Dock = DockStyle.Fill; settingsScroll.AutoScroll = true; settingsScroll.Margin = Padding.Empty;
-            settingsContent.Dock = DockStyle.Top; settingsContent.AutoSize = true; settingsContent.AutoSizeMode = AutoSizeMode.GrowAndShrink;
-            settingsContent.ColumnCount = 1; settingsContent.Padding = new Padding(16, 14, 16, 2); settingsContent.Margin = Padding.Empty;
+            settingsContent.Dock = DockStyle.Top; settingsContent.AutoSize = false;
+            settingsContent.ColumnCount = 1; settingsContent.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            settingsContent.RowCount = 4;
+            settingsContent.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            settingsContent.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            settingsContent.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            settingsContent.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            settingsContent.Padding = new Padding(32, 26, 32, 8); settingsContent.Margin = Padding.Empty;
             settingsScroll.Controls.Add(settingsContent); root.Controls.Add(settingsScroll, 0, 0);
 
-            TableLayoutPanel packs = SettingsSection("IconPackSection", "Icon pack");
+            TableLayoutPanel packs = SettingsTable(1); packs.Name = "IconPackSection";
+            SettingsRow(packs, new Label { Text = "Icon pack", AutoSize = true, Font = new Font(Font, FontStyle.Bold), Margin = new Padding(0, 0, 0, 8) });
             themes.DropDownStyle = ComboBoxStyle.DropDownList; themes.Dock = DockStyle.Top; themes.Margin = new Padding(0, 0, 0, 5); themes.AccessibleName = "Icon pack";
+            themes.AccessibleDescription = "Select an icon pack. Right-click for pack editing and ZIP export, also available in the tray Pack actions menu.";
             themes.SelectedIndexChanged += delegate { SelectPack(); };
             SettingsRow(packs, themes);
             packDetails.AutoSize = true; packDetails.Dock = DockStyle.Top; packDetails.Margin = new Padding(0, 0, 0, 10);
@@ -182,71 +274,99 @@ namespace BetterIcon.Tray
             importPackMenu.Items.Add("From folder...", null, delegate { ImportPack(false); });
             import.Click += delegate { importPackMenu.Show(import, new Point(0, import.Height)); };
             Button create = PackButton("New pack...", 120, delegate { EditPack(false, false); });
-            Button manage = PackButton("Pack actions...", 140, delegate { });
             managePackMenu.Items.Add("Customize...", null, delegate { EditPack(true, false); });
             managePackMenu.Items.Add("Edit pack...", null, delegate { EditPack(true, true); });
             managePackMenu.Items.Add("Export ZIP...", null, delegate { ExportPack(); });
             managePackMenu.Items.Add(new ToolStripSeparator());
-            managePackMenu.Items.Add("Remove pack", null, delegate { RemovePack(); });
             managePackMenu.Items.Add("Restore built-in packs", null, delegate { try { library.RestoreBundled(); ReloadLibrary(null); } catch (Exception error) { Report(error); } });
-            manage.Click += delegate { UpdatePackButtons(); managePackMenu.Show(manage, new Point(0, manage.Height)); };
-            int column = 0; foreach (Button button in new[] { import, create, manage }) { SettingsButton(button); actions.Controls.Add(button, column++, 0); }
+            managePackMenu.Opening += delegate { UpdatePackButtons(); };
+            themes.ContextMenuStrip = managePackMenu;
+            removePackButton.Text = "Remove pack"; removePackButton.AccessibleName = "Remove pack";
+            removePackButton.Click += delegate { RemovePack(); };
+            int column = 0; foreach (Button button in new[] { import, create, removePackButton }) { SettingsButton(button); actions.Controls.Add(button, column++, 0); }
             SettingsRow(packs, actions);
-            packPictures.ImageSize = new Size(Math.Min(256, preferences.IconSize), Math.Min(256, preferences.IconSize)); packPictures.ColorDepth = ColorDepth.Depth32Bit;
-            if (packPictures.Handle == IntPtr.Zero) throw new InvalidOperationException("Could not create pack previews.");
-            packPreview.Dock = DockStyle.Top; packPreview.Height = 128; packPreview.Margin = Padding.Empty;
-            packPreview.ShowAppNames = preferences.ShowAppNames; packPreview.SetIconSize(preferences.IconSize); packPreview.LargeImageList = packPictures;
+            settingsContent.Controls.Add(packs, 0, 0);
+            packPreview.Dock = DockStyle.Fill; packPreview.Margin = new Padding(0, 0, 0, 16);
+            packPreview.ShowAppNames = preferences.ShowAppNames; packPreview.SetIconSize(preferences.IconSize);
             packPreview.MultiSelect = false; packPreview.HideSelection = false; packPreview.ShowItemToolTips = true;
             packPreview.BorderStyle = BorderStyle.None; packPreview.BackColor = Color.White; packPreview.AccessibleName = "Icon pack preview";
-            SettingsRow(packs, packPreview);
+            settingsContent.Controls.Add(packPreview, 0, 1);
 
             BuildAppearanceSettings();
 
-            TableLayoutPanel launcher = SettingsSection("LauncherSection", "Launcher");
+            TableLayoutPanel launcher = SettingsTable(1); launcher.Name = "LauncherSection";
+            showAppNames.Text = "Show app names"; showAppNames.AccessibleName = "Show app names";
+            showAppNames.AutoSize = true; showAppNames.Dock = DockStyle.Top;
+            showAppNames.Margin = new Padding(0, 0, 0, 14); showAppNames.Checked = preferences.ShowAppNames;
+            showAppNames.CheckedChanged += delegate { ChangeAppNames(); };
+            SettingsRow(launcher, showAppNames);
             TableLayoutPanel sizing = SettingsTable(4); sizing.Margin = new Padding(0, 0, 0, 10);
             sizing.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); sizing.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             sizing.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); sizing.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             sizing.Controls.Add(new Label { Text = "Icon size", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 0, 12, 0) }, 0, 0);
             iconSizeSlider.Minimum = Preferences.MinimumIconSize; iconSizeSlider.Maximum = Preferences.MaximumIconSize;
             iconSizeSlider.Value = preferences.IconSize; iconSizeSlider.SmallChange = 8; iconSizeSlider.LargeChange = 16; iconSizeSlider.TickStyle = TickStyle.None;
-            iconSizeSlider.Dock = DockStyle.Fill; iconSizeSlider.AccessibleName = "Icon size"; iconSizeSlider.AccessibleDescription = "Size in pixels, based on available artwork. Updates both tabs.";
-            iconSizeValue.Text = preferences.IconSize + " px"; iconSizeValue.AutoSize = true; iconSizeValue.MinimumSize = new Size(60, 0); iconSizeValue.Anchor = AnchorStyles.None; iconSizeValue.TextAlign = ContentAlignment.MiddleCenter;
+            // Native trackbars keep their channel near the top when stretched.
+            // Center a compact native control, accounting for its pointed thumb.
+            iconSizeSlider.AutoSize = false; iconSizeSlider.Height = 28; iconSizeSlider.Anchor = AnchorStyles.Left | AnchorStyles.Right;
+            iconSizeSlider.Margin = new Padding(3, 7, 3, 3);
+            iconSizeSlider.AccessibleName = "Icon size"; iconSizeSlider.AccessibleDescription = "Size in pixels, based on available artwork. Updates both tabs.";
+            TableLayoutPanel sizeValue = SettingsTable(2); sizeValue.Dock = DockStyle.None; sizeValue.Anchor = AnchorStyles.None; sizeValue.Margin = new Padding(6, 0, 8, 0);
+            sizeValue.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); sizeValue.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            iconSizeValue.Width = 64; iconSizeValue.BorderStyle = BorderStyle.FixedSingle; iconSizeValue.TextAlign = HorizontalAlignment.Center;
+            iconSizeValue.Anchor = AnchorStyles.None; iconSizeValue.Margin = new Padding(0, 0, 4, 0); iconSizeValue.AccessibleName = "Icon size in pixels";
+            SyncIconSizeValue();
+            iconSizeValue.Enter += delegate { iconSizeValue.SelectAll(); }; iconSizeValue.Click += delegate { iconSizeValue.SelectAll(); };
+            iconSizeValue.Leave += delegate { CommitIconSizeValue(); };
+            ((IconSizeTextBox)iconSizeValue).CommitRequested += CommitIconSizeValue;
+            ((IconSizeTextBox)iconSizeValue).CancelRequested += CancelIconSizeValue;
+            sizeValue.Controls.Add(iconSizeValue, 0, 0);
+            sizeValue.Controls.Add(new Label { Text = "px", AutoSize = true, Anchor = AnchorStyles.Left, Margin = Padding.Empty }, 1, 0);
             resetIconSize.Text = "Reset"; SettingsButton(resetIconSize); resetIconSize.AccessibleName = "Reset icon size";
             resetIconSize.Click += delegate { iconSizeSlider.Value = Preferences.DefaultIconSize; };
             iconSizeSlider.ValueChanged += delegate { ChangeIconSize(); };
-            sizing.Controls.Add(iconSizeSlider, 1, 0); sizing.Controls.Add(iconSizeValue, 2, 0); sizing.Controls.Add(resetIconSize, 3, 0);
+            sizing.Controls.Add(iconSizeSlider, 1, 0); sizing.Controls.Add(sizeValue, 2, 0); sizing.Controls.Add(resetIconSize, 3, 0);
             SettingsRow(launcher, sizing);
-            showAppNames.Text = "Show app names"; showAppNames.AccessibleName = "Show app names";
-            showAppNames.AutoSize = true; showAppNames.Dock = DockStyle.Top;
-            showAppNames.Margin = new Padding(0, 0, 0, 10); showAppNames.Checked = preferences.ShowAppNames;
-            showAppNames.CheckedChanged += delegate { ChangeAppNames(); };
-            SettingsRow(launcher, showAppNames);
-            TableLayoutPanel keyboard = SettingsTable(2);
-            keyboard.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); keyboard.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            subtitle.AutoSize = true; subtitle.Dock = DockStyle.Fill; subtitle.TextAlign = ContentAlignment.MiddleLeft; subtitle.Margin = new Padding(0, 0, 12, 0);
-            settings.Text = "Change hotkey..."; SettingsButton(settings);
-            settings.Click += delegate { if (hotkey != null) using (HotkeySettingsDialog dialog = new HotkeySettingsDialog(preferences.Hotkey, hotkey.IsRegistered, SaveHotkey)) { ApplyDialogAppearance(dialog); dialog.ShowDialog(this); } };
-            keyboard.Controls.Add(subtitle, 0, 0); keyboard.Controls.Add(settings, 1, 0); SettingsRow(launcher, keyboard);
+            settingsContent.Controls.Add(launcher, 0, 2);
 
-            TableLayoutPanel shortcuts = SettingsSection("ShortcutsSection", "Windows shortcuts");
-            scopes.DropDownStyle = ComboBoxStyle.DropDownList; scopes.Dock = DockStyle.Top; scopes.Margin = new Padding(0, 0, 0, 10); scopes.AccessibleName = "Shortcut locations";
-            scopes.Items.AddRange(new object[] { "My Desktop and Start menu", "Shared shortcuts (administrator)" }); scopes.SelectedIndex = preferences.Scope == "AllUsers" ? 1 : 0; scopes.SelectedIndexChanged += delegate { SavePreferences(); };
-            SettingsRow(shortcuts, scopes);
+            TableLayoutPanel shortcuts = SettingsTable(1); shortcuts.Name = "ShortcutsSection";
             TableLayoutPanel applyRow = SettingsTable(2);
             applyRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50)); applyRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
             apply.Text = "Apply icons..."; apply.Tag = "PrimaryAction"; SettingsButton(apply); apply.BackColor = accent; apply.ForeColor = Color.White; apply.FlatStyle = FlatStyle.Flat; apply.Click += async delegate { await ApplyTheme(); };
             restore.Text = "Restore all defaults..."; SettingsButton(restore); restore.Click += async delegate { await RestoreIcons(); };
             applyRow.Controls.Add(apply, 0, 0); applyRow.Controls.Add(restore, 1, 0); SettingsRow(shortcuts, applyRow);
-            previewLabel.Text = "Changes are reviewed before they are applied."; previewLabel.AutoSize = true; previewLabel.Dock = DockStyle.Top; previewLabel.Margin = new Padding(0, 8, 0, 0); SettingsRow(shortcuts, previewLabel);
+            status.Text = testing ? "Test library and shortcuts only." : "Changes are reviewed before they are applied.";
+            status.AutoSize = false; status.Height = Font.Height + 10; status.Dock = DockStyle.Top; status.AutoEllipsis = true;
+            status.Margin = new Padding(4, 8, 4, 0); status.AccessibleName = "Status";
+            SettingsRow(shortcuts, status); settingsContent.Controls.Add(shortcuts, 0, 3);
 
-            TableLayoutPanel footer = SettingsTable(3); footer.Padding = new Padding(16, 8, 16, 12);
+            TableLayoutPanel footer = SettingsTable(3); footer.Name = "ManageIconsFooter"; footer.Padding = new Padding(24, 6, 24, 12);
             footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            status.AutoSize = true; status.Dock = DockStyle.Fill; status.Margin = new Padding(0, 0, 0, 8);
-            status.Text = testing ? "Test library and shortcuts only." : "Finding installed apps...";
-            footer.Controls.Add(status, 0, 0); footer.SetColumnSpan(status, 3);
-            Button refresh = PackButton("Refresh apps", 132, async delegate { await RefreshCatalog(); }); SettingsButton(refresh);
-            exit.Text = "Exit"; SettingsButton(exit); exit.Click += delegate { ExitLauncher(); };
-            footer.Controls.Add(refresh, 1, 1); footer.Controls.Add(exit, 2, 1); root.Controls.Add(footer, 0, 1);
+            appVersion.Text = "Better Icon for ArtCraft version " + typeof(LauncherForm).Assembly.GetName().Version.ToString(3);
+            appVersion.AutoSize = true; appVersion.Dock = DockStyle.Fill; appVersion.TextAlign = ContentAlignment.MiddleRight;
+            appVersion.Margin = new Padding(0, 0, 10, 0); appVersion.Tag = "SecondaryText";
+            footer.Controls.Add(appVersion, 0, 0); footer.Controls.Add(appIconButton, 1, 0); footer.Controls.Add(appearanceModeButton, 2, 0);
+            root.Controls.Add(footer, 0, 1);
+            settingsScroll.ClientSizeChanged += delegate { LayoutManageIcons(); };
+            settingsContent.Layout += delegate { LayoutManageIcons(); };
+            settingsPage.VisibleChanged += delegate { if (settingsPage.Visible) LayoutManageIcons(); };
+        }
+        void LayoutManageIcons()
+        {
+            if (arrangingManageIcons || settingsContent.Controls.Count < 4 || settingsScroll.ClientSize.Width <= 0) return;
+            arrangingManageIcons = true;
+            try {
+                int rowHeight = packPreview.GridCellSize.Height + 12;
+                if (packPreview.MinimumSize.Height != rowHeight) packPreview.MinimumSize = new Size(0, rowHeight);
+                int width = Math.Max(1, settingsScroll.ClientSize.Width - settingsContent.Padding.Horizontal - SystemInformation.VerticalScrollBarWidth);
+                int minimum = settingsContent.Padding.Vertical + rowHeight + packPreview.Margin.Vertical;
+                foreach (Control control in settingsContent.Controls) if (control != packPreview)
+                    minimum += control.GetPreferredSize(new Size(width, 0)).Height + control.Margin.Vertical;
+                int height = Math.Max(settingsScroll.ClientSize.Height, minimum);
+                if (settingsContent.Height != height) settingsContent.Height = height;
+                settingsScroll.AutoScrollMinSize = new Size(0, minimum);
+            }
+            finally { arrangingManageIcons = false; }
         }
         void ReloadLibrary(string selectId)
         {
@@ -265,7 +385,7 @@ namespace BetterIcon.Tray
             packDetails.Text = theme == null ? "No packs. Import or create one." : theme.IsDefault ? "Original icons for your installed apps. Restore defaults below to undo BetterIcon changes." : theme.IconCount + " icons / " + (theme.Managed ? "Personal pack" : "Built-in pack");
             packPreview.BeginUpdate();
             try {
-                packPreview.Items.Clear(); packPictures.Images.Clear(); ClearPackArtwork();
+                packPreview.Items.Clear(); ClearPackArtwork();
                 if (theme != null && theme.IsDefault) foreach (AppEntry app in catalog.Apps.GroupBy(a => a.Application).Select(g => g.First()).OrderBy(a => a.Application)) {
                     AddArtwork(packArtwork, packSources, app.OriginalIconPath, app.OriginalIconIndex);
                     packPreview.Items.Add(new ListViewItem(app.Application, packArtwork.Count - 1) { Tag = app.Application, ToolTipText = app.Application + " - ArtCraft default" });
@@ -285,9 +405,9 @@ namespace BetterIcon.Tray
             packPreview.BeginUpdate();
             try {
                 EnsureArtworkSize(packArtwork, packSources, preferences.IconSize);
-                ResizeArtwork(packPictures, packArtwork, preferences.IconSize); packPreview.SetArtwork(packArtwork, preferences.IconSize);
+                packPreview.SetArtwork(packArtwork, preferences.IconSize);
                 // Leave room for at least one complete row, including names, at the largest size.
-                packPreview.Height = Math.Max(128, packPreview.GridCellSize.Height + 12);
+                LayoutManageIcons();
                 if (packPreview.SelectedItems.Count == 1) packPreview.SelectedItems[0].EnsureVisible();
             }
             finally { packPreview.EndUpdate(); }
@@ -301,6 +421,7 @@ namespace BetterIcon.Tray
                 item.Enabled = !busy && (item.Text == "Restore built-in packs" || (SelectedTheme != null && !SelectedTheme.IsDefault && (!needsPersonal || SelectedTheme.Managed)));
             }
             bool defaults = SelectedTheme != null && SelectedTheme.IsDefault;
+            removePackButton.Enabled = !busy && SelectedTheme != null && !defaults;
             apply.Text = defaults ? "Restore ArtCraft defaults..." : "Apply icons...";
             restore.Visible = !defaults;
             TableLayoutPanel applyRow = apply.Parent as TableLayoutPanel;
@@ -310,7 +431,7 @@ namespace BetterIcon.Tray
         async Task ChooseAppIcon(AppEntry target)
         {
             if (busy || !PackLibrary.Applications.Contains(target.Application)) return;
-            using (OpenFileDialog picker = new OpenFileDialog { Title = "Choose icon for " + target.Application, Filter = "Icon artwork (*.png;*.ico)|*.png;*.ico", CheckFileExists = true, Multiselect = false, RestoreDirectory = true }) {
+            using (OpenFileDialog picker = new OpenFileDialog { Title = "Choose icon for " + target.Application, Filter = "Icon artwork (*.svg;*.png;*.ico)|*.svg;*.png;*.ico", CheckFileExists = true, Multiselect = false, RestoreDirectory = true }) {
                 if (picker.ShowDialog(this) != DialogResult.OK) return;
                 try { await ChangeAppIcon(target, picker.FileName); }
                 catch (Exception error) { Report(error); }
@@ -337,7 +458,7 @@ namespace BetterIcon.Tray
             if (busy) return;
             string source = null;
             if (zip) using (OpenFileDialog picker = new OpenFileDialog { Title = "Import one icon theme", Filter = "Icon pack ZIP (*.zip)|*.zip" }) { if (picker.ShowDialog(this) == DialogResult.OK) source = picker.FileName; }
-            else using (FolderBrowserDialog picker = new FolderBrowserDialog { Description = "Choose one theme folder containing app-named PNG or ICO files.", ShowNewFolderButton = false }) { if (picker.ShowDialog(this) == DialogResult.OK) source = picker.SelectedPath; }
+            else using (FolderBrowserDialog picker = new FolderBrowserDialog { Description = "Choose one theme folder containing app-named SVG, PNG or ICO files.", ShowNewFolderButton = false }) { if (picker.ShowDialog(this) == DialogResult.OK) source = picker.SelectedPath; }
             if (source == null) return;
             SetBusy(true, "Importing icon pack...");
             try { ThemeEntry added = await Task.Run(() => library.Import(source)); ReloadLibrary(added.Id); status.Text = "Imported " + added.Name + ". Choose Apply icons to change shortcuts."; }

@@ -1,5 +1,195 @@
 # Windows validation
 
+## 1.21.0 taskbar shortcuts and running apps - 2026-11-17
+
+Disposable Windows shell links exercised two icon packs, renamed pins, exact executable
+and argument matching, changed links, individual restore, and byte-for-byte recovery.
+The fixture uses a private taskbar folder. The existing shortcut suite also passed
+against copies of installed ArtCraft shortcuts, including MSI-advertised targets.
+
+Separate WinForms processes exercised already-open and newly opened windows. The
+tests read the installed small and large icons back from those windows and checked
+the property Windows uses for an explicit taskbar group's icon. They also checked
+that group identity survived switching and restoring artwork. The fixture did not
+create or update real pins. Explorer's rendered taskbar button was unavailable for
+visual inspection on the test host.
+
+## 1.20.0 app installer and outer window frame - 2026-11-17
+
+The native outer-frame fixture passed 76 checks across activation, forced
+nonclient redraw, hide/show, minimize/restore, handle recreation, Dark/Light/System,
+high contrast, and resize/rounded-region geometry. The normal nonclient frame
+paint is suppressed while activation and native resizing remain enabled.
+Computer Use showed clean Dark-mode edges in Launcher and Manage Icons; the user
+stopped the inspection before Light/System and repeated focus checks. DWM border
+attribute readback is unavailable on this host, so automated geometry and message
+checks do not establish the absence of every transient compositor frame.
+
+The new app installer has dedicated local lifecycle checks in
+`Test-AppInstaller.ps1`, using its real Setup definition with an isolated identity.
+The complete native suite passes 455 checks on the packaged 1.20.0 executable.
+`Test-InstallerLifecycle.ps1` passes 17 focused checks covering busy and modal
+refusal, delayed startup, absent instances, errors, and leaving a real older
+release untouched. Compiler-only
+checks pass for public and isolated identities, spaces/apostrophes in fixture
+paths, and rejection of incomplete test isolation defines. Final package and
+installation test receipts are emitted by those scripts alongside their artifacts.
+
+## 1.19.3 visible dropdown outline - 2026-11-17
+
+Native print rendering matches the theme's border color around the entire
+dropdown in 25 combinations of light/dark/system/high-contrast palettes and
+normal/focused/disabled/resized/recreated states. Arrow-key selection and
+opening/closing the native dropdown pass. The normal paint path was exercised;
+offscreen window-DC pixels are unavailable, so these captures establish native
+print rendering rather than desktop visual inspection. No Computer Use was used.
+
+## 1.19.2 smooth dark-mode glyph - 2026-11-17
+
+Offscreen comparisons of the real 32px glyph show 78 partially transparent edge
+pixels instead of a binary edge. The crescent retains transparent margins and
+the existing silhouette. Sun and System glyphs are pixel-identical across four
+palette colors. Native-size and enlarged generated images were inspected;
+Computer Use was not performed.
+
+## 1.19.1 unselected launcher opening - 2026-11-17
+
+Native checks cover opening from the tray, cursor hotkey and show signal with
+no app selected, Enter without a selection, intentional keyboard selection,
+type-to-filter selection and preserving an explicit choice during resizing.
+Empty-filter rebuilds do not manufacture a selection. The focused run passed
+147 checks, including eight new selection checks. Computer Use inspection was
+not performed.
+
+## 1.19.0 aligned slider and exact size entry - 2026-11-17
+
+Local native checks measure the slider's actual channel and thumb against the
+size-row text and Reset button. Typed-size coverage includes Enter, focus loss,
+Escape, invalid values, artwork limits, persistence and synchronization with
+slider, reset and wheel changes. Both icon grids retain native rendering.
+
+The focused run passed 33 checks, including 22 new size-editor checks. Across
+Dark, Light and System at minimum, default and tall window sizes, the channel
+center differed from the row controls by at most one pixel. The existing
+pointed native thumb differs by at most 2.5 pixels. Enter and Escape are tested
+through native keyboard preprocessing. Installer and JSON bridge checks passed
+95 and 20 checks respectively using disposable shortcuts and active HyGel art.
+These are automated native fixtures; Computer Use inspection was not performed.
+
+## 1.18.3 straight tab divider - 2026-11-17
+
+The native header checks now require square inner corners at the shared divider
+and 32-pixel outer upper corners, while retaining all window-surface, keyboard,
+high-contrast, theme and resize coverage. Inactive labels use the muted palette
+color; high contrast keeps system text colors.
+
+The synthetic grid-navigation test saves and restores its own thread's keyboard
+state around its unmodified Right-arrow check. Controlled Ctrl and Shift cases
+reproduce the previous fixture failure and pass with that isolation; no global
+keyboard state or production input handling changes.
+
+## 1.18.2 rounded tab corners - 2026-11-17
+
+Native rendered-pixel checks verify the 32-pixel upper tab curves, square lower
+joins and absence of light outlines in Dark, Light and System, with either tab
+selected at minimum/default/tall sizes and after handle recreation. Native tab
+navigation and the existing window-resize checks remain in the full local suite.
+Full-popup pixel checks also cover the outer resize margin and all four rounded
+corners so a contrasting rectangular content surface cannot interrupt the curves.
+Computer Use remains skipped; these checks use isolated native test controls.
+
+## 1.18.1 flat window and tab edges - 2026-11-17
+
+Native rendered-pixel checks cover the tab headers and page perimeter in Dark,
+Light and System, at minimum/default/tall sizes, with either tab selected and
+after handle recreation. The previous 1.18.0 executable fails the border-pixel
+checks, detecting its white/gray native outlines. DWM border-color readback is
+unavailable on the local host (HRESULT 80070057) and is explicitly skipped;
+the main popup requests no decorative DWM border while high contrast keeps the
+system default. Existing native edge/corner hit-test,
+rounded-region, keyboard, layout and menu checks remain in the full suite.
+
+Computer Use remains skipped. The paint regression uses isolated native test
+controls and does not capture or operate the user's desktop.
+
+## 1.18.0 Manage Icons redesign - 2026-11-17
+
+Local native regression coverage exercises the direct Remove pack button and
+default-pack protection; the renamed Manage Icons tab; footer app-icon selection
+and persistence for all sixteen variants; automatic dark/light pairing; the
+Dark, Light, System cycle; menu placement and input guards; and tray hotkey and
+pack-command dialogs, including cancellation and recovery of tray input.
+
+Layout checks cover 790x570, 900x690 and 900x900 windows at 24, 128 and 184-pixel
+icon sizes, plus larger artwork and label visibility. Vertical growth goes to
+the pack preview, which retains at least one complete icon/name row. Short
+windows and oversized artwork use the surrounding scroll area without overlapping
+the controls or footer. Existing SVG, native alpha rendering, loading, shortcut
+location choice, and exact restoration checks remain in the suite.
+
+The user requested skipping Computer Use. These are automated native fixture
+checks on disposable packs and shortcuts, not physical mouse/keyboard inspection.
+No installed ArtCraft shortcut is modified by this validation. The shortcut
+installer backend is unchanged from the previously tested version.
+
+## 1.17.0 shortcut locations chosen per operation - 2026-11-17
+
+All 21 focused native checks passed for the new location flow. Settings has no
+location dropdown and fits at 790x570 and 900x690. Settings Apply/Restore, tray
+Restore and applying the virtual default each open a fresh Current user / All
+users prompt. Both prompts state that All users requires administrator privileges,
+fit their native controls at the shipping display DPI, and pause parent/tray input.
+
+Canceling a location choice leaves preferences, shortcuts and backup state
+unchanged. A current-user Apply/Restore round trip restores both disposable
+shortcuts byte-for-byte even with an opposite legacy scope preference. All-users
+Apply/Restore reviews show shared locations and administrator requirements;
+canceling either review leaves the prior installation intact and avoids elevation.
+The selected location is local to that operation. Existing scope preferences are
+retained for compatibility. The backend's scope, review and elevation protections
+are unchanged. One-app restoration continues to filter to the clicked application.
+
+The user requested skipping Computer Use for this update. Verification uses local
+native event/worker tests and disposable shortcuts. No real shared shortcut was
+modified and no new UAC interaction was exercised during these checks.
+
+## 1.16.0 SVG packs, rounded resizing and clean icon edges - 2026-11-17
+
+All 308 local native checks passed from source. New coverage includes SVG-only
+packs, format preference independent of ZIP order, original-vector ZIP sharing,
+custom/per-app edits, fresh large-vector rendering, paths/CSS/gradients/clipping,
+embedded PNGs, harmless doctypes without external resolution, and invalid/linked
+artwork rejection before library mutation. The real PowerShell worker applies an
+SVG pack as a seven-frame Windows ICO and restores the disposable shortcut's
+original bytes. All 133 CLI checks passed on both PowerShell 5.1 and 7, including
+SVG discovery, selection, conversion, application and restoration.
+
+Native outline tests verify the selected 32-pixel radius, transparent cutouts,
+all eight edge/corner resize directions through child controls, minimum/large
+window sizes and recreated handles. The test executable now uses the shipping
+DPI-aware manifest. Settings controls fit at 790x570 and 900x690, including the
+native appearance pickers at the machine's scaled display DPI.
+
+Both grids now upload straight BGRA through native DIBs and Common Controls v6
+at every size. Independent mathematical alpha-compositing checks on the actual
+grid pass for RGBA/PArgb artwork at 24/136/512 pixels on black, white, dark and
+selection backgrounds, within one channel value. Repeated replacement, clearing
+and disposal leaves the native GDI object count unchanged. Existing 1024-pixel
+detail, labels, filtering, context actions, busy themes, loading, hotkeys and
+backup/restore checks remain passing. No source artwork is recolored or rewritten.
+
+Builds, dependency restoration and all verification run locally. SVG dependencies
+are version/hash locked and embedded in the executable with license notices.
+Windows 10, ARM64 and per-monitor DPI transitions remain unverified.
+
+## 1.15.1 themed busy grids - 2026-11-16
+
+All 270 local native checks passed from source. New coverage measures painted grid background pixels and native text/background colors while busy in Dark, Light and System, including appearance notifications and input recovery. Native mouse selection, keyboard activation/navigation, context actions and wheel zoom remain paused; handle recreation and a simulated System-to-Light update preserve painting and the input pause. Existing real save, loading, error cleanup, large-image, launcher and restore checks remain passing.
+
+With approval, Computer Use inspected both tabs in Dark, Light and System using an external isolated test host that held the launcher's actual shared busy state visible. Backgrounds, labels and artwork retained the selected palette; System followed the machine's current dark setting. The test used 14 disposable probe shortcuts and its own settings. All 14 fixture shortcuts and 14 installed shortcuts remained byte-identical; production preferences and pack metadata were unchanged. All test processes were closed. No OS appearance setting was changed.
+
+The checkout incorporates upstream's OmegaDarling artwork-directory rename. Windows retains saved preference/plan IDs, accepts the public directory name as an alias, and packages artwork under its physical public directory. Both names resolve to the same artwork. All 126 installer checks passed on PowerShell 5.1 and 7, and all 20 bridge checks passed locally. Windows 10, ARM64 and per-monitor DPI transitions remain unverified.
+
 ## 1.15.0 per-app icon editing - 2026-11-16
 
 All 253 local native checks passed from source. Coverage replaces the removed Settings restore-picker checks with per-app artwork editing: context actions remain available without a restore backup, empty-space and busy states clear both actions, built-ins become complete personal copies, only the chosen assignment changes, both grids update immediately, and personal edits retain names, authors, other assignments and immutable earlier revisions. The selected pack and per-app default choices persist without altering unrelated preferences or Windows shortcuts. Invalid artwork preserves the library and preferences and clears loading. Repeated built-in copies get unique names, and editing from ArtCraft default creates a personal pack without modifying the default.

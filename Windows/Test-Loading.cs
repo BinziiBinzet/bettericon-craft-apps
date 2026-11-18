@@ -50,7 +50,7 @@ static class LoadingTests
                 themes.SelectedItem = target;
                 check((bool)Field(form, "busy") && indicator.Visible && progress.Visible && progress.Style == ProgressBarStyle.Marquee && progress.MarqueeAnimationSpeed > 0 && message.Text.Contains(target.ToString()),
                     "Selecting a pack immediately shows its name and an animated loading indication");
-                check(!themes.Enabled && !apps.Enabled && !preview.Enabled && !((Control)Field(form, "apply")).Enabled && !((Control)Field(form, "iconSizeSlider")).Enabled,
+                check(!themes.Enabled && apps.Enabled && preview.Enabled && ((IconGridView)apps).InputBlocked && ((IconGridView)preview).InputBlocked && !((Control)Field(form, "apply")).Enabled && !((Control)Field(form, "iconSizeSlider")).Enabled,
                     "Loading disables conflicting pack, launch, apply and zoom actions");
                 check(apps.Items.Count == oldAppCount && preview.Items.Count == oldPreviewCount && json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).Theme == before.Theme,
                     "Existing artwork and the saved pack remain intact while new previews load");
@@ -63,7 +63,7 @@ static class LoadingTests
                     "A second selection cannot replace the in-flight pack or start overlapping work");
                 Wait(form); heartbeat.Stop();
                 check(pulses > 0 && observedBusy, "The native window continues processing timer messages while pack images are decoded");
-                check(!(bool)Field(form, "busy") && !indicator.Visible && progress.MarqueeAnimationSpeed == 0 && themes.Enabled && apps.Enabled && preview.Enabled,
+                check(!(bool)Field(form, "busy") && !indicator.Visible && progress.MarqueeAnimationSpeed == 0 && themes.Enabled && apps.Enabled && preview.Enabled && !((IconGridView)apps).InputBlocked && !((IconGridView)preview).InputBlocked,
                     "Loading stops and normal controls return after both preview grids are ready");
                 check(preview.Items.Count == target.IconCount && ((Label)Field(form, "status")).Text.Contains("loaded") && json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).Theme == target.Id,
                     "The completed pack updates its artwork, ready status and saved selection together");
@@ -91,7 +91,7 @@ static class LoadingTests
                     finally { dismiss.Stop(); }
                 }
                 if (dialogFailure != null) throw dialogFailure;
-                check(errorSeen && !(bool)Field(form, "busy") && !indicator.Visible && themes.Enabled && ReferenceEquals(themes.SelectedItem, target) && json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).Theme == target.Id,
+                check(errorSeen && !(bool)Field(form, "busy") && !indicator.Visible && themes.Enabled && !((IconGridView)apps).InputBlocked && !((IconGridView)preview).InputBlocked && ReferenceEquals(themes.SelectedItem, target) && json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).Theme == target.Id,
                     "A failed preview load clears loading and restores the last successful selection without saving the failed pack");
             }
             finally {

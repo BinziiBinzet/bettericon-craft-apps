@@ -22,6 +22,9 @@ namespace BetterIcon.Tray
         public string Application { get; set; }
         public string Name { get; set; }
         public string Shortcut { get; set; }
+        public string Target { get; set; }
+        public string AppliedIconPath { get; set; }
+        public string AppliedIconScope { get; set; }
         public string Scope { get; set; }
         public string IconPath { get; set; }
         public int IconIndex { get; set; }
@@ -182,16 +185,28 @@ namespace BetterIcon.Tray
     public sealed class IconGridView : ListView
     {
         [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
-        [DllImport("comctl32.dll")] static extern IntPtr ImageList_Create(int width, int height, uint flags, int initial, int grow);
-        [DllImport("comctl32.dll")] static extern int ImageList_ReplaceIcon(IntPtr list, int index, IntPtr icon);
         [DllImport("comctl32.dll")] static extern bool ImageList_Destroy(IntPtr list);
-        [DllImport("user32.dll")] static extern bool DestroyIcon(IntPtr icon);
         IntPtr largeArtwork;
         int iconSize = Preferences.DefaultIconSize;
-        bool showAppNames = true;
+        bool showAppNames = true, inputBlocked, savedTabStop;
         public event Action<int> IconSizeWheel;
         public event Action<Point?> IconMenuRequested;
         public bool ShowAppNames { get { return showAppNames; } set { if (showAppNames == value) return; showAppNames = value; UpdateSpacing(); Invalidate(); } }
+        public bool InputBlocked
+        {
+            get { return inputBlocked; }
+            set {
+                if (inputBlocked == value) return;
+                inputBlocked = value;
+                if (value) {
+                    savedTabStop = TabStop; TabStop = false;
+                    // Cancel an in-progress mouse/scroll interaction without
+                    // entering the native disabled state, which loses our colors.
+                    if (IsHandleCreated) SendMessage(Handle, 0x001F, IntPtr.Zero, IntPtr.Zero);
+                }
+                else TabStop = savedTabStop;
+            }
+        }
         public Size GridCellSize { get { return new Size(showAppNames ? Math.Max(112, iconSize + 24) : iconSize + 24, iconSize + (showAppNames ? Font.Height * 2 : 0) + 16); } }
         public IconGridView() { View = View.LargeIcon; AutoArrange = true; Alignment = ListViewAlignment.Top; LabelWrap = true; DoubleBuffered = true; }
         public void SetIconSize(int size) { iconSize = size; UpdateSpacing(); }
@@ -208,25 +223,13 @@ namespace BetterIcon.Tray
         }
         public void SetArtwork(IList<Bitmap> artwork, int size)
         {
-            // WinForms ImageList caps ImageSize at 256. Native lists retain full-sized
-            // artwork while keeping native labels, selection, scrolling and hit testing.
+            // Upload straight BGRA directly at every size. Managed ImageList and
+            // GetHicon conversion alter translucent edge colors in different ways.
             IntPtr replacement = IntPtr.Zero;
             try {
-                if (size > 256 && artwork.Count != 0) {
-                    replacement = ImageList_Create(size, size, 0x0021, artwork.Count, 1);
-                    if (replacement == IntPtr.Zero) throw new OutOfMemoryException("Windows could not allocate the larger icons.");
-                    foreach (Bitmap source in artwork) using (Bitmap scaled = new Bitmap(size, size)) {
-                        using (Graphics canvas = Graphics.FromImage(scaled)) {
-                            canvas.Clear(Color.Transparent); canvas.InterpolationMode = InterpolationMode.HighQualityBicubic;
-                            canvas.DrawImage(source, new Rectangle(0, 0, size, size));
-                        }
-                        IntPtr icon = scaled.GetHicon();
-                        try { if (ImageList_ReplaceIcon(replacement, -1, icon) < 0) throw new OutOfMemoryException("Windows could not load the larger icons."); }
-                        finally { DestroyIcon(icon); }
-                    }
-                }
+                replacement = NativeArtwork.Create(artwork, size);
                 IntPtr previous = largeArtwork; largeArtwork = replacement; replacement = IntPtr.Zero;
-                if (IsHandleCreated) SendMessage(Handle, 0x1003, IntPtr.Zero, largeArtwork != IntPtr.Zero ? largeArtwork : LargeImageList.Handle);
+                if (IsHandleCreated) SendMessage(Handle, 0x1003, IntPtr.Zero, largeArtwork);
                 if (previous != IntPtr.Zero) ImageList_Destroy(previous);
                 SetIconSize(size);
             }
@@ -234,6 +237,12 @@ namespace BetterIcon.Tray
         }
         protected override void WndProc(ref Message message)
         {
+            if (inputBlocked && (message.Msg == 0x007B || message.Msg == 0x0114 || message.Msg == 0x0115 ||
+                (message.Msg >= 0x0100 && message.Msg <= 0x0109) ||
+                (message.Msg >= 0x0200 && message.Msg <= 0x020E) ||
+                (message.Msg >= 0x00A0 && message.Msg <= 0x00AD))) {
+                message.Result = IntPtr.Zero; return;
+            }
             // WM_CONTEXTMENU covers right-click, Shift+F10 and the menu key.
             if (message.Msg == 0x007B && IconMenuRequested != null) {
                 long position = message.LParam.ToInt64();
@@ -263,6 +272,7 @@ namespace BetterIcon.Tray
     public sealed partial class LauncherForm : Form
     {
         [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr window, int command);
+        [DllImport("user32.dll")] static extern bool IsWindowEnabled(IntPtr window);
         readonly WorkerClient worker;
         readonly NotifyIcon tray;
         readonly ContextMenuStrip trayMenu = new ContextMenuStrip();
@@ -271,7 +281,6 @@ namespace BetterIcon.Tray
         readonly ToolStripMenuItem restoreIconDefault = new ToolStripMenuItem("Restore ArtCraft default...");
         AppEntry iconMenuTarget;
         readonly ComboBox themes = new AppearanceComboBox();
-        readonly ComboBox scopes = new AppearanceComboBox();
         readonly IconGridView apps = new IconGridView();
         readonly List<ListViewItem> appTiles = new List<ListViewItem>();
         readonly List<Bitmap> appArtwork = new List<Bitmap>();
@@ -280,15 +289,14 @@ namespace BetterIcon.Tray
         bool renderingArtwork;
         readonly Label filterHint = new Label();
         readonly Label status = new Label();
-        readonly Label previewLabel = new Label();
         readonly Label subtitle = new Label();
-        readonly Button apply = new Button(), restore = new Button(), exit = new Button(), settings = new Button();
-        readonly ImageList pictures = new ImageList();
-        readonly EventWaitHandle showEvent, stopEvent;
+        readonly Button apply = new Button(), restore = new Button();
+        readonly EventWaitHandle showEvent, stopEvent, installStopEvent;
         readonly System.Windows.Forms.Timer signalTimer = new System.Windows.Forms.Timer();
         readonly System.Windows.Forms.Timer dismissTimer = new System.Windows.Forms.Timer();
         readonly string preferencesPath;
         readonly string fixtureLog;
+        RunningTaskbarIcons runningTaskbarIcons;
         readonly bool startInTray;
         Catalog catalog;
         Preferences preferences = new Preferences();
@@ -299,8 +307,11 @@ namespace BetterIcon.Tray
         readonly Color ink = Color.FromArgb(26, 39, 58), accent = Color.FromArgb(41, 100, 208);
 
         public LauncherForm(string source, FixtureConfig fixture, bool hidden, EventWaitHandle show, EventWaitHandle stop)
+            : this(source, fixture, hidden, show, stop, null) { }
+
+        public LauncherForm(string source, FixtureConfig fixture, bool hidden, EventWaitHandle show, EventWaitHandle stop, EventWaitHandle installStop)
         {
-            worker = new WorkerClient(source, fixture); startInTray = hidden; showEvent = show; stopEvent = stop;
+            worker = new WorkerClient(source, fixture); startInTray = hidden; showEvent = show; stopEvent = stop; installStopEvent = installStop;
             string state = fixture == null ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BetterIcon-Craft Apps") : fixture.StateDirectory;
             preferencesPath = Path.Combine(state, "tray-preferences.json");
             library = new PackLibrary(Path.Combine(state, "packs"));
@@ -310,7 +321,7 @@ namespace BetterIcon.Tray
             Text = "BetterIcon for ArtCraft"; Name = "BetterIconLauncher";
             Font = new Font("Segoe UI", 10F); ForeColor = ink; BackColor = Color.FromArgb(244, 247, 251);
             AutoScaleMode = AutoScaleMode.Font; FormBorderStyle = FormBorderStyle.None;
-            ClientSize = new Size(900, 690); MinimumSize = new Size(790, 570);
+            ClientSize = new Size(900, 818); MinimumSize = new Size(790, 570);
             // Keep a small exposed client margin so child controls cannot consume
             // the native edge hit tests. Font autoscaling scales this margin too.
             Padding = new Padding(8);
@@ -329,14 +340,18 @@ namespace BetterIcon.Tray
             dismissTimer.Tick += delegate {
                 if (ContainsFocus) { dismissTimer.Stop(); return; }
                 if (fixture != null && fixture.KeepOpenForAutomation) { dismissTimer.Stop(); return; }
-                if (Control.MouseButtons != MouseButtons.None || trayMenu.Visible || iconMenu.Visible || importPackMenu.Visible || managePackMenu.Visible || busy || !Enabled || themes.DroppedDown || scopes.DroppedDown || AppearanceMenuOpen) return;
+                if (Control.MouseButtons != MouseButtons.None || trayMenu.Visible || iconMenu.Visible || importPackMenu.Visible || managePackMenu.Visible || busy || !Enabled || themes.DroppedDown || AppearanceMenuOpen) return;
                 dismissTimer.Stop(); Hide();
             };
             Deactivate += delegate { TraceFixture("Deactivated"); if (Visible) dismissTimer.Start(); };
             Activated += delegate { dismissTimer.Stop(); TraceFixture("Activated"); };
             VisibleChanged += delegate { if (!Visible) dismissTimer.Stop(); TraceFixture(Visible ? "Shown" : "Hidden"); };
             signalTimer.Interval = 250;
-            signalTimer.Tick += delegate { if (showEvent.WaitOne(0)) { TraceFixture("Show signal"); ShowManager(); } if (stopEvent.WaitOne(0)) ExitLauncher(); };
+            signalTimer.Tick += delegate {
+                if (showEvent.WaitOne(0)) { TraceFixture("Show signal"); ShowManager(); }
+                if (stopEvent.WaitOne(0)) ExitLauncher();
+                if (installStopEvent != null && installStopEvent.WaitOne(0)) RequestExternalStop();
+            };
             signalTimer.Start();
             FormClosing += delegate(object sender, FormClosingEventArgs e) {
                 if (!exiting && e.CloseReason == CloseReason.UserClosing) {
@@ -344,8 +359,8 @@ namespace BetterIcon.Tray
                     if (!notified) { tray.ShowBalloonTip(2500, "BetterIcon is in the tray", "Click its tray icon to return. Choose Exit to stop the launcher.", ToolTipIcon.Info); notified = true; }
                 }
             };
-            FormClosed += delegate { if (hotkey != null) hotkey.Dispose(); signalTimer.Stop(); signalTimer.Dispose(); dismissTimer.Stop(); dismissTimer.Dispose(); tray.Visible = false; tray.Dispose(); trayMenu.Dispose(); iconMenu.Dispose(); importPackMenu.Dispose(); managePackMenu.Dispose(); pictures.Dispose(); packPictures.Dispose(); };
-            BuildTrayMenu(); InitializeAppearance();
+            FormClosed += delegate { if (hotkey != null) hotkey.Dispose(); signalTimer.Stop(); signalTimer.Dispose(); dismissTimer.Stop(); dismissTimer.Dispose(); tray.Visible = false; tray.Dispose(); trayMenu.Dispose(); iconMenu.Dispose(); importPackMenu.Dispose(); managePackMenu.Dispose(); };
+            BuildTrayMenu(); InitializeAppearance(); InitializeRoundedWindow();
         }
 
         public void Start()
@@ -360,40 +375,10 @@ namespace BetterIcon.Tray
             BeginInvoke(new Action(async delegate { if (!startInTray) ShowManager(); await RefreshCatalog(); }));
         }
 
-        protected override CreateParams CreateParams
-        {
-            get {
-                CreateParams value = base.CreateParams;
-                // Native sizing and minimum-size tracking, without a caption.
-                value.Style = (value.Style | 0x00040000) & ~0x00C00000;
-                return value;
-            }
-        }
-
-        protected override void WndProc(ref Message message)
-        {
-            if (message.Msg == 0x0083) { // WM_NCCALCSIZE: all of the window is client area.
-                message.Result = IntPtr.Zero;
-                return;
-            }
-            if (message.Msg == 0x0084 && WindowState == FormWindowState.Normal) { // WM_NCHITTEST
-                long position = message.LParam.ToInt64();
-                Point point = PointToClient(new Point(unchecked((short)(position & 0xFFFF)), unchecked((short)((position >> 16) & 0xFFFF))));
-                int border = Math.Max(6, Padding.Left);
-                if (ClientRectangle.Contains(point)) {
-                    bool left = point.X < border, right = point.X >= ClientSize.Width - border;
-                    bool top = point.Y < border, bottom = point.Y >= ClientSize.Height - border;
-                    int hit = top ? (left ? 13 : right ? 14 : 12) : bottom ? (left ? 16 : right ? 17 : 15) : left ? 10 : right ? 11 : 1;
-                    message.Result = new IntPtr(hit);
-                    return;
-                }
-            }
-            base.WndProc(ref message);
-        }
-
         protected override void Dispose(bool disposing)
         {
-            if (disposing) { if (hotkey != null) hotkey.Dispose(); DisposeAppearance(); ClearAppArtwork(); ClearPackArtwork(); }
+            if (disposing && runningTaskbarIcons != null) runningTaskbarIcons.Dispose();
+            if (disposing) { DisposeRoundedWindow(); if (hotkey != null) hotkey.Dispose(); DisposeAppearance(); ClearAppArtwork(); ClearPackArtwork(); }
             base.Dispose(disposing);
         }
 
@@ -419,10 +404,7 @@ namespace BetterIcon.Tray
             launcherPage.BackColor = Color.White; launcherPage.Padding = new Padding(18);
             settingsPage.BackColor = BackColor;
             pages.TabPages.AddRange(new[] { launcherPage, settingsPage }); Controls.Add(pages);
-            pictures.ImageSize = new Size(Math.Min(256, preferences.IconSize), Math.Min(256, preferences.IconSize)); pictures.ColorDepth = ColorDepth.Depth32Bit;
-            // Force native copies before temporary thumbnails are disposed at hidden startup.
-            if (pictures.Handle == IntPtr.Zero) throw new InvalidOperationException("Could not create the app icon list.");
-            apps.Dock = DockStyle.Fill; apps.ShowAppNames = preferences.ShowAppNames; apps.SetIconSize(preferences.IconSize); apps.LargeImageList = pictures;
+            apps.Dock = DockStyle.Fill; apps.ShowAppNames = preferences.ShowAppNames; apps.SetIconSize(preferences.IconSize);
             apps.MultiSelect = false; apps.HideSelection = false;
             apps.BorderStyle = BorderStyle.None; apps.BackColor = Color.White; apps.ShowItemToolTips = true; apps.AccessibleName = "Installed ArtCraft apps";
             apps.ItemActivate += delegate { LaunchSelected(); };
@@ -436,26 +418,30 @@ namespace BetterIcon.Tray
             chooseAppIcon.Click += async delegate { AppEntry target = iconMenuTarget; if (!busy && target != null) await ChooseAppIcon(target); };
             restoreIconDefault.Click += async delegate {
                 AppEntry target = iconMenuTarget;
-                if (!busy && target != null && target.CanRestoreDefault) await RestoreIcons(target.Application, target.Scope);
+                if (!busy && target != null) await RestoreIcons(target.Application);
             };
             apps.IconMenuRequested += point => ShowIconMenu(apps, point);
             packPreview.IconMenuRequested += point => ShowIconMenu(packPreview, point);
             pages.SelectedIndexChanged += delegate { pages.Invalidate(); if (pages.SelectedTab == launcherPage) apps.Focus(); };
         }
-        string Scope { get { return scopes.SelectedIndex == 1 ? "AllUsers" : "CurrentUser"; } }
+        // Retain old preference values for compatibility; every write operation
+        // gets a fresh scope from its dialog instead of this legacy setting.
+        string Scope { get { return preferences.Scope == "AllUsers" ? "AllUsers" : "CurrentUser"; } }
         ThemeEntry SelectedTheme { get { return themes.SelectedItem as ThemeEntry; } }
         static bool IsAdministrator() { return new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator); }
         void SetBusy(bool value, string message)
         {
-            busy = value; apply.Enabled = restore.Enabled = themes.Enabled = scopes.Enabled = exit.Enabled = settings.Enabled = !value;
+            busy = value; apply.Enabled = restore.Enabled = themes.Enabled = !value;
             if (value) { iconMenu.Close(); iconMenuTarget = null; chooseAppIcon.Enabled = restoreIconDefault.Enabled = false; }
-            iconSizeSlider.Enabled = resetIconSize.Enabled = !value;
+            iconSizeSlider.Enabled = iconSizeValue.Enabled = resetIconSize.Enabled = !value;
             showAppNames.Enabled = !value;
-            appearanceModePicker.Enabled = appIconStylePicker.Enabled = appIconVariantPicker.Enabled = !value;
+            SetAppearanceBusy(value);
             UpdatePackButtons();
             if (!String.IsNullOrEmpty(message)) status.Text = message;
             UseWaitCursor = value; BuildTrayMenu();
-            apps.Enabled = packPreview.Enabled = !value;
+            // WS_DISABLED paints native list views in system colors. Pause input
+            // instead so artwork, labels and theme updates keep their normal paint.
+            apps.InputBlocked = packPreview.InputBlocked = value;
             ShowLoading(value, message);
         }
         public void ToggleAboveTray(Point anchor)
@@ -491,10 +477,19 @@ namespace BetterIcon.Tray
             TraceFixture(centered ? "Hotkey positioned" : "Positioned", anchor);
         }
         void ExitLauncher() { if (busy) { ShowManager(); AppAppearance.Message(this, Text, "Please wait for the current operation to finish.", appearancePalette, false); return; } exiting = true; Close(); }
+        void RequestExternalStop()
+        {
+            // Setup must not interrupt an icon operation or discard an editor.
+            // Common file dialogs disable their owner without joining OwnedForms.
+            // Refuse this request silently; the caller has its own bounded wait.
+            if (busy || !Enabled || (IsHandleCreated && !IsWindowEnabled(Handle)) || OwnedForms.Any(form => form.Visible && form.Modal)) return;
+            ExitLauncher();
+        }
         void UpdateHotkeyHint()
         {
             string hint = !preferences.Hotkey.Enabled ? "Global hotkey disabled." : hotkey != null && hotkey.IsRegistered ? preferences.Hotkey + " opens at your cursor." : "Hotkey unavailable. Choose another combination.";
             subtitle.Text = (fixtureLog == null ? "" : "Test shortcuts only. ") + hint;
+            BuildTrayMenu();
         }
         void ShowSettings()
         {
@@ -502,6 +497,20 @@ namespace BetterIcon.Tray
             if (!Enabled) { ActivateDialog(); return; }
             if (!Visible) ShowManager();
             pages.SelectedTab = settingsPage;
+        }
+        void ChangeHotkey()
+        {
+            if (busy || hotkey == null) return;
+            if (!Enabled || OwnedForms.Any(dialog => dialog.Visible)) { ActivateDialog(); return; }
+            if (!Visible) ShowManager();
+            bool trayEnabled = trayMenu.Enabled;
+            trayMenu.Enabled = false;
+            try {
+                using (HotkeySettingsDialog dialog = new HotkeySettingsDialog(preferences.Hotkey, hotkey.IsRegistered, SaveHotkey)) {
+                    ApplyDialogAppearance(dialog); dialog.ShowDialog(this);
+                }
+            }
+            finally { trayMenu.Enabled = trayEnabled; }
         }
         string SaveHotkey(HotkeySettings requested)
         {
@@ -547,9 +556,13 @@ namespace BetterIcon.Tray
             try {
                 WorkerReply reply = await worker.Run(new WorkerRequest { Action = "Catalog", Scope = Scope }, false);
                 catalog = reply.Catalog;
+                if (fixtureLog == null && !IsDisposed) {
+                    if (runningTaskbarIcons == null) runningTaskbarIcons = new RunningTaskbarIcons();
+                    runningTaskbarIcons.Update(catalog.Apps);
+                }
                 bundledThemes = catalog.Themes;
                 ReloadLibrary(null);
-                status.Text = catalog.Apps.Select(a => a.Application).Distinct().Count() + " installed apps / " + catalog.Apps.Length + " launch shortcuts. Enter or double-click to open.";
+                status.Text = "Changes are reviewed before they are applied.";
                 if (catalog.Apps.Length == 0) status.Text = "No ArtCraft shortcuts found. Install an app, then refresh from the tray menu.";
                 Text = "BetterIcon for ArtCraft  " + catalog.Version;
             }
@@ -575,6 +588,7 @@ namespace BetterIcon.Tray
                     }
                     finally { if (handle != IntPtr.Zero) DestroyIcon(handle); }
                 }
+                else if (Path.GetExtension(path).Equals(".svg", StringComparison.OrdinalIgnoreCase)) loaded = SvgArtwork.Render(File.ReadAllBytes(path), size);
                 else loaded = Image.FromFile(path);
                 using (Image source = loaded)
                 using (Graphics canvas = Graphics.FromImage(image)) {
@@ -594,7 +608,8 @@ namespace BetterIcon.Tray
             int maximum = 128;
             try {
                 string extension = Path.GetExtension(path).ToLowerInvariant();
-                if (extension == ".png") using (Image source = Image.FromFile(path)) maximum = Math.Max(source.Width, source.Height);
+                if (extension == ".svg") maximum = Preferences.MaximumIconSize;
+                else if (extension == ".png") using (Image source = Image.FromFile(path)) maximum = Math.Max(source.Width, source.Height);
                 else if (extension == ".ico") using (BinaryReader reader = new BinaryReader(File.OpenRead(path))) {
                     if (reader.ReadUInt16() == 0 && reader.ReadUInt16() == 1) {
                         int count = reader.ReadUInt16();
@@ -643,31 +658,17 @@ namespace BetterIcon.Tray
             int requested = Math.Min(preferences.IconSize, maximum);
             iconSizeSlider.Maximum = maximum; iconSizeSlider.Value = requested;
             // TrackBar.Maximum can clamp Value without raising ValueChanged.
-            preferences.IconSize = iconSizeSlider.Value; iconSizeValue.Text = preferences.IconSize + " px";
+            preferences.IconSize = iconSizeSlider.Value; SyncIconSizeValue();
             if (previous != preferences.IconSize) SavePreferences();
             iconSizeSlider.AccessibleDescription = "Size in pixels, from 24 to " + maximum + ", based on available artwork. Updates both tabs.";
         }
         void ClearAppArtwork() { foreach (Bitmap image in appArtwork) image.Dispose(); appArtwork.Clear(); appSources.Clear(); }
-        static void ResizeArtwork(ImageList images, IEnumerable<Bitmap> artwork, int size)
-        {
-            size = Math.Min(256, size);
-            images.Images.Clear(); images.ImageSize = new Size(size, size);
-            // ImageSize recreates the native list; materialize it before temporary bitmaps are disposed.
-            if (images.Handle == IntPtr.Zero) throw new InvalidOperationException("Could not resize icons.");
-            foreach (Bitmap source in artwork) using (Bitmap scaled = new Bitmap(size, size)) {
-                using (Graphics canvas = Graphics.FromImage(scaled)) {
-                    canvas.Clear(Color.Transparent); canvas.InterpolationMode = InterpolationMode.HighQualityBicubic;
-                    canvas.DrawImage(source, new Rectangle(0, 0, size, size));
-                }
-                images.Images.Add(scaled);
-            }
-        }
         void RenderApps()
         {
             if (catalog == null) return;
             apps.BeginUpdate();
             try {
-                apps.Items.Clear(); appTiles.Clear(); pictures.Images.Clear();
+                apps.Items.Clear(); appTiles.Clear();
                 ClearAppArtwork();
                 ThemeEntry theme = SelectedTheme;
                 foreach (AppEntry entry in catalog.Apps) {
@@ -689,7 +690,7 @@ namespace BetterIcon.Tray
             apps.BeginUpdate();
             try {
                 EnsureArtworkSize(appArtwork, appSources, size);
-                ResizeArtwork(pictures, appArtwork, size); apps.SetArtwork(appArtwork, size);
+                apps.SetArtwork(appArtwork, size);
                 FilterApps();
                 if (selected != null && apps.Items.Contains(selected)) {
                     foreach (ListViewItem item in appTiles) item.Selected = item.Focused = false;
@@ -708,21 +709,22 @@ namespace BetterIcon.Tray
                     item.Selected = item.Focused = false;
                     if (item.Text.StartsWith(filterText, StringComparison.OrdinalIgnoreCase)) apps.Items.Add(item);
                 }
-                if (apps.Items.Count > 0) {
+                // A fresh popup stays unselected; typing still readies its first match for Enter.
+                if (filterText.Length > 0 && apps.Items.Count > 0) {
                     apps.Items[0].Selected = apps.Items[0].Focused = true;
                     if (apps.IsHandleCreated) apps.Items[0].EnsureVisible();
                 }
-                filterHint.Text = catalog == null ? "Finding installed apps..." : filterText.Length == 0 ? "No ArtCraft apps found. Open Settings to refresh." : "No apps match '" + filterText + "'. Backspace edits; Esc clears.";
+                filterHint.Text = catalog == null ? "Finding installed apps..." : filterText.Length == 0 ? "No ArtCraft apps found. Right-click the tray icon to refresh." : "No apps match '" + filterText + "'. Backspace edits; Esc clears.";
                 filterHint.Visible = apps.Items.Count == 0;
                 apps.AccessibleDescription = (filterText.Length == 0 ? "Type an app name to filter. Enter opens. Escape closes." : "Filter: " + filterText + ". " + apps.Items.Count + " matches. Escape clears.") + " Ctrl+mouse wheel changes icon size.";
             }
             finally { apps.EndUpdate(); }
         }
         void SetFilter(string value) { filterText = value; FilterApps(); }
-        bool CanFilter { get { return Enabled && !busy && pages.SelectedTab == launcherPage && !themes.DroppedDown && !scopes.DroppedDown && !AppearanceMenuOpen && !trayMenu.Visible && !iconMenu.Visible && !importPackMenu.Visible && !managePackMenu.Visible; } }
+        bool CanFilter { get { return Enabled && !busy && pages.SelectedTab == launcherPage && !themes.DroppedDown && !AppearanceMenuOpen && !trayMenu.Visible && !iconMenu.Visible && !importPackMenu.Visible && !managePackMenu.Visible; } }
         bool HandlePopupKey(Keys key)
         {
-            if (key == Keys.Escape && Enabled && pages.SelectedTab == settingsPage && !themes.DroppedDown && !scopes.DroppedDown && !AppearanceMenuOpen && !iconMenu.Visible && !busy) { pages.SelectedTab = launcherPage; apps.Focus(); return true; }
+            if (key == Keys.Escape && Enabled && pages.SelectedTab == settingsPage && !themes.DroppedDown && !AppearanceMenuOpen && !iconMenu.Visible && !busy) { pages.SelectedTab = launcherPage; apps.Focus(); return true; }
             if (!CanFilter) return false;
             if (key == Keys.Escape) {
                 if (filterText.Length > 0) { SetFilter(""); apps.Focus(); }
@@ -768,18 +770,18 @@ namespace BetterIcon.Tray
             if (target == null) {
                 string application = item.Tag as string;
                 if (String.IsNullOrEmpty(application)) return;
-                target = new AppEntry { Application = application, Scope = Scope,
-                    RestoreAvailable = catalog.Apps.Any(app => app.Application == application && app.Scope == Scope && app.RestoreAvailable),
-                    UsingDefaultIcon = catalog.Apps.Any(app => app.Application == application && app.Scope == Scope && app.UsingDefaultIcon) };
+                AppEntry[] matches = catalog.Apps.Where(app => app.Application == application).ToArray();
+                target = new AppEntry { Application = application,
+                    RestoreAvailable = matches.Any(app => app.RestoreAvailable), UsingDefaultIcon = matches.Any(app => app.UsingDefaultIcon) };
             }
             foreach (ListViewItem selected in grid.SelectedItems.Cast<ListViewItem>().ToArray()) selected.Selected = false;
             item.Selected = item.Focused = true; grid.Focus();
             if (!point.HasValue) item.EnsureVisible();
             iconMenuTarget = target;
             chooseAppIcon.Enabled = PackLibrary.Applications.Contains(target.Application);
-            chooseAppIcon.ToolTipText = "Choose a PNG or ICO for " + target.Application + ". Built-in packs are saved as a personal copy.";
-            restoreIconDefault.Enabled = target.CanRestoreDefault;
-            restoreIconDefault.ToolTipText = target.RestoreAvailable ? "Restore only " + target.Application + " in " + (target.Scope == "AllUsers" ? "shared shortcut locations (administrator)" : "your shortcut locations") + "." : target.UsingDefaultIcon ? "The shortcut already uses its default. Show that icon in Launcher." : "No BetterIcon backup to restore for this app in these locations.";
+            chooseAppIcon.ToolTipText = "Choose an SVG, PNG or ICO for " + target.Application + ". Built-in packs are saved as a personal copy.";
+            restoreIconDefault.Enabled = catalog.Apps.Any(app => app.Application == target.Application && app.CanRestoreDefault);
+            restoreIconDefault.ToolTipText = restoreIconDefault.Enabled ? "Restore only " + target.Application + ". Choose current user or all users before reviewing the shortcuts." : "No BetterIcon backup or existing default to restore for this app.";
             Point anchor = point ?? new Point(item.Bounds.Left + item.Bounds.Width / 2, item.Bounds.Bottom);
             iconMenu.Show(grid, anchor);
         }
@@ -813,9 +815,26 @@ namespace BetterIcon.Tray
                 item.Click += delegate { ShowSettings(); themes.SelectedItem = captured; status.Text = "Pack preview selected. Choose locations, then Apply icons."; }; themeMenu.DropDownItems.Add(item);
             }
             trayMenu.Items.Add(themeMenu); trayMenu.Items.Add(new ToolStripSeparator());
+            ToolStripMenuItem packActions = new ToolStripMenuItem("Pack actions") { Enabled = !busy };
+            foreach (ToolStripItem command in managePackMenu.Items) {
+                ToolStripMenuItem source = command as ToolStripMenuItem;
+                if (source == null) { packActions.DropDownItems.Add(new ToolStripSeparator()); continue; }
+                ToolStripMenuItem copy = new ToolStripMenuItem(source.Text) { Enabled = source.Enabled };
+                copy.Click += delegate {
+                    if (OwnedForms.Any(dialog => dialog.Visible)) { ActivateDialog(); return; }
+                    ShowSettings();
+                    bool trayEnabled = trayMenu.Enabled; trayMenu.Enabled = false;
+                    try { source.PerformClick(); }
+                    finally { trayMenu.Enabled = trayEnabled; }
+                };
+                packActions.DropDownItems.Add(copy);
+            }
+            trayMenu.Items.Add(packActions);
             ToolStripMenuItem reload = new ToolStripMenuItem("Refresh installed apps") { Enabled = !busy }; reload.Click += async delegate { await RefreshCatalog(); }; trayMenu.Items.Add(reload);
             ToolStripMenuItem restoreItem = new ToolStripMenuItem("Restore original icons...") { Enabled = !busy }; restoreItem.Click += async delegate { ShowSettings(); await RestoreIcons(); }; trayMenu.Items.Add(restoreItem);
-            ToolStripMenuItem settingsItem = new ToolStripMenuItem("Settings...") { Enabled = !busy }; settingsItem.Click += delegate { ShowSettings(); }; trayMenu.Items.Add(settingsItem);
+            ToolStripMenuItem settingsItem = new ToolStripMenuItem("Manage Icons...") { Enabled = !busy }; settingsItem.Click += delegate { ShowSettings(); }; trayMenu.Items.Add(settingsItem);
+            ToolStripMenuItem hotkeyItem = new ToolStripMenuItem("Change hotkey...") { Enabled = !busy && hotkey != null, ToolTipText = subtitle.Text };
+            hotkeyItem.Click += delegate { ChangeHotkey(); }; trayMenu.Items.Add(hotkeyItem);
             trayMenu.Items.Add(new ToolStripSeparator());
             ToolStripMenuItem quit = new ToolStripMenuItem("Exit BetterIcon") { Enabled = !busy }; quit.Click += delegate { ExitLauncher(); }; trayMenu.Items.Add(quit);
             if (appearancePalette != null) AppAppearance.ApplyMenu(trayMenu, appearancePalette);
@@ -842,14 +861,15 @@ namespace BetterIcon.Tray
         {
             if (busy || SelectedTheme == null) return;
             if (SelectedTheme.IsDefault) { await RestoreIcons(); return; }
-            string theme = SelectedTheme.Id, scope = Scope;
+            string theme = SelectedTheme.Id, scope = ChooseShortcutScope(false);
+            if (scope == null) { status.Text = "Cancelled. No icons changed."; return; }
             bool refresh = false;
             SetBusy(true, "Preparing a preview. No icons changed yet...");
             try {
                 WorkerReply preview = await worker.Run(new WorkerRequest { Action = "Preview", Theme = theme, Scope = scope }, false);
                 int count = preview.Plan.Count(p => p.Status == "Ready");
-                string note = "Apply " + SelectedTheme + " to " + count + " shortcut(s) in " + (fixtureLog != null ? "the test shortcut folders" : scope == "AllUsers" ? "the shared Desktop and Start menu" : "your Desktop and Start menu") + ". Original shortcuts are backed up.\r\n" +
-                    (scope == "AllUsers" ? "Windows will request administrator access. " : "") + "Missing or ambiguous artwork is skipped. Existing taskbar pins may need re-pinning.";
+                string note = "Apply " + SelectedTheme + " to " + count + " shortcut(s) in " + (scope == "AllUsers" ? "the shared Desktop and Start menu" : "your Desktop and Start menu, including matching taskbar pins") + (fixtureLog != null ? " (test shortcuts only)" : "") + ". Original shortcuts are backed up.\r\n" +
+                    (scope == "AllUsers" ? "Windows will request administrator access. " : "") + "Missing or ambiguous artwork is skipped.";
                 if (!Review("Review icon changes", note, preview.Plan.Select(p => new[] { p.Status, p.Shortcut, p.Reason }), count > 0, "Apply theme")) { status.Text = "Cancelled. No icons changed."; return; }
                 status.Text = "Applying theme...";
                 WorkerReply result = await worker.Run(new WorkerRequest { Action = "Apply", Theme = theme, Scope = scope, ExpectedPlan = preview.Plan }, scope == "AllUsers" && !IsAdministrator());
@@ -878,26 +898,30 @@ namespace BetterIcon.Tray
             await RefreshCatalog();
             status.Text = message;
         }
-        async Task RestoreIcons(string application = null, string scopeOverride = null)
+        async Task RestoreIcons(string application = null)
         {
             if (busy) return;
             bool refresh = false;
-            string scope = scopeOverride ?? Scope;
-            if (application != null && catalog != null) {
-                AppEntry[] matches = catalog.Apps.Where(app => app.Application == application && app.Scope == scope).ToArray();
-                if (!matches.Any(app => app.RestoreAvailable) && matches.Any(app => app.UsingDefaultIcon)) {
-                    // Nothing changed on disk: restore the default launcher preview too.
-                    RememberRestoredShortcuts(matches.Where(app => app.UsingDefaultIcon).Select(app => new ResultItem { Shortcut = app.Shortcut, Status = "Restored" }).ToArray(), true);
-                    RenderSelection();
-                    status.Text = (application == "ArtCraftLauncher" ? "ArtCraft Launcher" : application) + " is using its ArtCraft default icon. Its Windows shortcut was already at the default.";
-                    return;
-                }
-            }
+            string scope = ChooseShortcutScope(true, application);
+            if (scope == null) { status.Text = "Cancelled. No icons changed."; return; }
             SetBusy(true, "Checking original shortcut backups...");
             try {
                 WorkerReply preview = await worker.Run(new WorkerRequest { Action = "RestorePreview", Scope = scope, Application = application }, false);
-                if (preview.Results.Length == 0) { status.Text = "No BetterIcon changes to restore" + (application == null ? "" : " for " + application) + " in these locations."; return; }
-                string note = "Restore " + (application == null ? "all original ArtCraft shortcuts" : "only " + application + " shortcuts") + " in " + (fixtureLog != null ? "the test shortcut folders." : scope == "AllUsers" ? "shared locations (administrator access required)." : "your locations.") + "\r\nLater user edits and app updates are preserved. Backups and icon files remain available for recovery.";
+                if (preview.Results.Length == 0) {
+                    // A pin can have its own backup even if the Start shortcut is already at the default.
+                    if (application != null && catalog != null) {
+                        AppEntry[] matches = catalog.Apps.Where(app => app.Application == application && app.Scope == scope).ToArray();
+                        if (!matches.Any(app => app.RestoreAvailable) && matches.Any(app => app.UsingDefaultIcon)) {
+                            RememberRestoredShortcuts(matches.Where(app => app.UsingDefaultIcon).Select(app => new ResultItem { Shortcut = app.Shortcut, Status = "Restored" }).ToArray(), true);
+                            RenderSelection();
+                            status.Text = (application == "ArtCraftLauncher" ? "ArtCraft Launcher" : application) + " is using its ArtCraft default icon. Its Windows shortcut was already at the default.";
+                            return;
+                        }
+                    }
+                    status.Text = "No BetterIcon changes to restore" + (application == null ? "" : " for " + application) + " in these locations.";
+                    return;
+                }
+                string note = "Restore " + (application == null ? "all original ArtCraft shortcuts" : "only " + application + " shortcuts") + " in " + (scope == "AllUsers" ? "shared locations (administrator access required)." : "your locations.") + (fixtureLog != null ? " Test shortcuts only." : "") + "\r\nLater user edits and app updates are preserved. Backups and icon files remain available for recovery.";
                 if (!Review("Review restoration", note, preview.Results.Select(r => new[] { r.Status, r.Shortcut, r.Message }), true, "Restore original icons")) { status.Text = "Cancelled. No icons changed."; return; }
                 status.Text = "Restoring original icons...";
                 WorkerReply result = await worker.Run(new WorkerRequest { Action = "Restore", Scope = scope, Application = application, ExpectedStateHash = preview.StateHash }, scope == "AllUsers" && !IsAdministrator());
@@ -912,7 +936,7 @@ namespace BetterIcon.Tray
         {
             int failed = results.Count(r => r.Status != "Applied" && r.Status != "Unchanged" && r.Status != "Restored");
             status.Text = failed == 0 ? success + ". " + results.Length + " shortcut(s)." : "Finished with " + failed + " skipped or failed shortcut(s).";
-            Review("Operation results", status.Text + "\r\nRunning app icons and existing taskbar pins can keep their own artwork.", results.Select(r => new[] { r.Status, r.Shortcut, r.Message }), true, "Done");
+            Review("Operation results", status.Text, results.Select(r => new[] { r.Status, r.Shortcut, r.Message }), true, "Done");
         }
         void Report(Exception error)
         {
@@ -935,29 +959,63 @@ namespace BetterIcon.Tray
 
     static class Program
     {
+        static int StopAndWait(string name)
+        {
+            Mutex running;
+            try { running = Mutex.OpenExisting(name); }
+            catch (WaitHandleCannotBeOpenedException) { return 0; }
+            using (running) {
+                Stopwatch timeout = Stopwatch.StartNew();
+                bool signaled = false;
+                while (true) {
+                    bool acquired = false;
+                    try {
+                        try { acquired = running.WaitOne(0); }
+                        catch (AbandonedMutexException) { acquired = true; }
+                        if (acquired) return 0;
+                    }
+                    finally { if (acquired) running.ReleaseMutex(); }
+                    if (timeout.ElapsedMilliseconds >= 10000) return 2;
+                    if (!signaled) {
+                        try { using (EventWaitHandle signal = EventWaitHandle.OpenExisting(name + ".InstallStop")) signaled = signal.Set(); }
+                        catch (WaitHandleCannotBeOpenedException) { }
+                    }
+                    // Retry the startup race before the installer event exists.
+                    // Older releases expose only .Stop, whose handler can close
+                    // unsaved dialogs. Never fall back to that unsafe protocol.
+                    Thread.Sleep(50);
+                }
+            }
+        }
+
         [STAThread]
         static int Main(string[] args)
         {
             Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false);
+            bool stopAndWait = false, quietErrors = args.Contains("--stop-and-wait");
             try {
                 string source = AppDomain.CurrentDomain.BaseDirectory, configPath = null;
                 bool hidden = false, stop = false;
                 for (int i=0; i<args.Length; i++) {
                     if (args[i] == "--tray") hidden = true;
                     else if (args[i] == "--stop") stop = true;
+                    else if (args[i] == "--stop-and-wait") stopAndWait = true;
                     else if (args[i] == "--source-folder" && i+1<args.Length) source = Path.GetFullPath(args[++i]);
                     else if (args[i] == "--config" && i+1<args.Length) configPath = Path.GetFullPath(args[++i]);
                     else throw new ArgumentException("Unknown launcher option.");
                 }
+                string identity = WindowsIdentity.GetCurrent().User.Value + "|" + (configPath ?? "main");
+                string hash; using (SHA256 sha = SHA256.Create()) hash = BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(identity))).Replace("-", "");
+                string name = "Local\\BetterIcon.Tray." + hash;
+                // Setup extracts this EXE alone. Stopping does not need helper
+                // scripts, artwork, or even an extant fixture configuration file.
+                if (stopAndWait) return StopAndWait(name);
                 FixtureConfig fixture = null;
                 if (configPath != null) {
                     fixture = new JavaScriptSerializer().Deserialize<FixtureConfig>(File.ReadAllText(configPath));
                     if (fixture == null || fixture.ShortcutDirectory == null || fixture.ShortcutDirectory.Length == 0 || String.IsNullOrWhiteSpace(fixture.StateDirectory)) throw new ArgumentException("Fixture configuration requires both shortcut and state directories.");
                     if (!Path.IsPathRooted(fixture.StateDirectory) || fixture.ShortcutDirectory.Any(p => !Path.IsPathRooted(p) || !Directory.Exists(p))) throw new ArgumentException("Fixture paths must be absolute; shortcut directories must exist.");
                 }
-                string identity = WindowsIdentity.GetCurrent().User.Value + "|" + (configPath ?? "main");
-                string hash; using (SHA256 sha = SHA256.Create()) hash = BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(identity))).Replace("-", "");
-                string name = "Local\\BetterIcon.Tray." + hash;
                 if (stop) { try { using (EventWaitHandle signal = EventWaitHandle.OpenExisting(name + ".Stop")) signal.Set(); } catch (WaitHandleCannotBeOpenedException) { } return 0; }
                 bool first;
                 using (Mutex singleton = new Mutex(true, name, out first)) {
@@ -969,14 +1027,19 @@ namespace BetterIcon.Tray
                         if (!File.Exists(Path.Combine(source, "BetterIcon.TrayWorker.ps1"))) throw new FileNotFoundException("Keep the tray application beside its Windows helper files, or launch it using Start-Tray.cmd.");
                         using (EventWaitHandle show = new EventWaitHandle(false, EventResetMode.AutoReset, name + ".Show"))
                         using (EventWaitHandle quit = new EventWaitHandle(false, EventResetMode.AutoReset, name + ".Stop"))
-                        using (LauncherForm form = new LauncherForm(source, fixture, hidden, show, quit))
+                        using (EventWaitHandle installQuit = new EventWaitHandle(false, EventResetMode.AutoReset, name + ".InstallStop"))
+                        using (LauncherForm form = new LauncherForm(source, fixture, hidden, show, quit, installQuit))
                         using (LauncherContext context = new LauncherContext(form)) Application.Run(context);
                     }
                     finally { singleton.ReleaseMutex(); }
                 }
                 return 0;
             }
-            catch (Exception error) { MessageBox.Show(error.Message, "BetterIcon could not start", MessageBoxButtons.OK, MessageBoxIcon.Error); return 1; }
+            catch (Exception error) {
+                if (quietErrors) Console.Error.WriteLine(error.Message);
+                else MessageBox.Show(error.Message, "BetterIcon could not start", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return 1;
+            }
         }
     }
 }

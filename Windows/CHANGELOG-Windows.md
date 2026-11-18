@@ -1,5 +1,79 @@
 # Windows installer changelog
 
+## 1.21.0 - 2026-11-17
+
+- Include matching personal taskbar shortcuts in the Current user Apply and Restore review. Changing a pack updates those pins in place and preserves their original backups.
+- Show applied artwork on matching running ArtCraft windows while BetterIcon is in the tray, including windows opened after the pack was applied.
+
+## 1.20.0 - 2026-11-17
+
+- Add an offline per-user Setup EXE with Start-menu and optional desktop shortcuts, normal Windows uninstall registration, and upgrades that retain settings, personal packs, cached shortcut icons, and backups.
+- Wait for a graceful launcher shutdown before install or uninstall; refuse to continue while it is busy or has an open modal dialog. Never force-terminate the app.
+- Suppress Windows' transient outer frame repaint during activation while retaining 32-pixel rounded corners and native edge/corner resizing.
+- Include local build and isolated install, upgrade, uninstall, and shutdown validation scripts.
+
+## 1.19.3 - 2026-11-17
+
+- Give the icon-pack dropdown a consistent theme-colored outline, including on the white Light-mode background.
+
+## 1.19.2 - 2026-11-17
+
+- Smooth the dark-mode moon glyph with an antialiased crescent while preserving its transparent background and theme color.
+
+## 1.19.1 - 2026-11-17
+
+- Open the launcher without selecting an app automatically. Preserve explicit selections during resizing and select the first matching result when typing to filter.
+
+## 1.19.0 - 2026-11-17
+
+- Center the icon-size slider track with its label, value, and Reset button.
+- Type an exact pixel size in the value field. Enter or leaving the field applies it to both grids; Escape cancels. Keep slider, wheel zoom, Reset, artwork-based limits and saved preferences synchronized.
+- Use the active HyGel artwork in operational test fixtures, preserving legacy preference migration coverage.
+
+## 1.18.3 - 2026-11-17
+
+- Keep the divider between Launcher and Manage Icons straight, round only their two outer upper corners, and dim the inactive tab label. Retain the continuous window surface, keyboard focus cues, high-contrast colors, and resizing.
+
+## 1.18.2 - 2026-11-17
+
+- Match the approved mockup with 32-pixel rounded upper tab corners and square lower joins. Keep the tab/page outlines removed, native tab navigation, keyboard focus cues, and window resizing.
+- Match the popup's resize margin to its page surface so rectangular content no longer interrupts the top or bottom window curves. Keep dialog palettes and high-contrast behavior unchanged.
+
+## 1.18.1 - 2026-11-17
+
+- Remove the light native outlines around the main popup and tab pages. Paint the tab strip in the selected app theme while retaining native tab navigation, accessibility, 32-pixel corners, and edge/corner resizing.
+- Preserve system border behavior in Windows high contrast mode.
+
+## 1.18.0 - 2026-11-17
+
+- Replace Settings with the cleaner Manage Icons layout: pack selection, direct Import/New pack/Remove pack actions, a growing preview grid, app-name and size controls, and Apply/Restore.
+- Give extra window height to the pack preview while retaining at least one complete icon row. Keep scrolling available when large artwork or a small screen cannot fit the controls and preview together.
+- Move BetterIcon's own icon control to the bottom right. Open an upward image-and-name menu with all 16 Dark/Light variants and Match app theme; update the tray and window icons immediately and remember the selection.
+- Replace the appearance dropdown with one button that cycles Dark, Light, and System. Preserve live system-theme updates, automatic icon pairing, and high contrast colors.
+- Move hotkey configuration to Change hotkey in the tray menu. Keep Customize, Edit pack, Export ZIP, and Restore built-in packs under the tray's Pack actions menu and the pack selector's right-click menu. Refresh and Exit remain available from the tray.
+- Retain native icon rendering, 32-pixel rounded corners, edge/corner resizing, themed loading states, and per-operation shortcut review and restoration.
+
+## 1.17.0 - 2026-11-17
+
+- Remove the persistent shortcut-location dropdown from Settings. Ask Current user or All users each time Apply or Restore is invoked, including one-app context actions and the tray restore command.
+- Explain that All users requires administrator privileges before previewing or confirming a write. Retain exact shortcut review, backups, restoration checks and elevation only for shared writes.
+- Canceling the choice leaves preferences and shortcuts unchanged. Preserve older scope preferences for compatibility without using them to choose an operation's locations.
+
+## 1.16.0 - 2026-11-17
+
+- Apply the selected 32-pixel rounded outline to the main popup and update it as the window resizes.
+- Preserve native edge and curved-corner resizing, including corners covered by child controls, minimum-size tracking and the hidden title bar.
+- Support SVG artwork in bundled and personal packs, folder/ZIP imports, custom assignments and per-app icon pickers. Prefer SVG over matching ICO/PNG files, retain vectors in shared ZIPs, render previews at the selected size, and convert vectors locally into Windows shortcut ICOs.
+- Bundle a pinned SVG.NET renderer and its license notices inside the executable; packaged SVG use works offline.
+- Preserve translucent icon edges through direct native DIB uploads at every size, with explicit Common Controls v6 activation. Remove the managed image-list and HICON conversions that caused pale or dark outlines.
+- Keep native appearance pickers within their Settings row at scaled display DPI.
+
+## 1.15.1 - 2026-11-16
+
+- Keep Launcher and Settings grid backgrounds, labels and artwork in the selected Dark, Light or System theme while saving or loading.
+- Pause grid input without using Windows' native disabled colors. Resume normal mouse, keyboard, context-menu and wheel interactions when the operation finishes.
+- Preserve saved Windows pack IDs after the upstream OmegaDarling directory rename, accept the new public path as an alias, and retain public directory names in Windows ZIPs.
+
 ## 1.15.0 - 2026-11-16
 
 - Remove the redundant Restore one app section from Settings; keep individual restoration in either icon grid's right-click menu.

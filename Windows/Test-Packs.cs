@@ -34,6 +34,10 @@ static class PackTests
         WorkerClient worker = new WorkerClient(source, new FixtureConfig { ShortcutDirectory = new[] { root }, StateDirectory = state });
         byte[] originalShortcut = File.ReadAllBytes(Path.Combine(root, "PhotoCraft.lnk"));
         WorkerReply preview = worker.Run(new WorkerRequest { Action = "Preview", Scope = "CurrentUser", Theme = created.Id }, false).GetAwaiter().GetResult();
+        WorkerReply legacyName = worker.Run(new WorkerRequest { Action = "Preview", Scope = "CurrentUser", Theme = "Craft-Icons-Zach/HyGel" }, false).GetAwaiter().GetResult();
+        WorkerReply publicName = worker.Run(new WorkerRequest { Action = "Preview", Scope = "CurrentUser", Theme = "Craft-Icons-OmegaDarling/HyGel" }, false).GetAwaiter().GetResult();
+        check(legacyName.Plan.Length == 1 && publicName.Plan.Length == 1 && legacyName.Plan[0].Icon == publicName.Plan[0].Icon && legacyName.Plan[0].Status == publicName.Plan[0].Status,
+            "The public OmegaDarling folder name and saved legacy IDs resolve to the same artwork");
         check(preview.Plan.Length == 1 && preview.Plan[0].Status == "Ready" && preview.Plan[0].Icon == oldIcon, "The native worker previews a personal pack through the existing installer");
         using (Bitmap bitmap = new Bitmap(32, 32)) { using (Graphics g = Graphics.FromImage(bitmap)) g.Clear(Color.Coral); bitmap.Save(png, ImageFormat.Png); }
         ThemeEntry edited = library.Save("My edited mix", new Dictionary<string, string> { { "PhotoCraft", png } }, created.LibraryId);
@@ -90,6 +94,7 @@ static class PackTests
         check(launcherPreview.Results.Length == 1 && launcherRestore.Results.Single().Status == "Restored" && File.ReadAllBytes(launcherPath).SequenceEqual(launcherOriginal), "ArtCraft Launcher restores byte-for-byte through the reviewed native worker path");
         string launcherImport = Path.Combine(state, "Launcher import"); Directory.CreateDirectory(launcherImport); File.Copy(png, Path.Combine(launcherImport, "ArtCraft Launcher.png"));
         check(library.Import(launcherImport).Icons.Single().Application == "ArtCraftLauncher", "Launcher artwork imports with its spaced official app name");
+        SvgTests.Run(root, source, check);
     }
     static void Sharing(string state, string png, ThemeEntry bundled, Action<bool, string> check)
     {
