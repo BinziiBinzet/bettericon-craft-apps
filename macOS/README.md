@@ -1,6 +1,6 @@
 # BetterIcon for Mac
 
-BetterIcon 1.21.1 brings the Windows launcher, 13 icon packs, and all 218 original pack images to the Mac. The Universal app targets Apple silicon and Intel Macs running macOS 12.4 or later. Everything needed to use it is in the app bundle.
+The source build includes the Windows launcher, 15 icon packs, and 265 original pack images for the Mac. The Universal app targets Apple silicon and Intel Macs running macOS 12.4 or later. Everything needed to use it is in the app bundle.
 
 ## Install and use
 
@@ -21,7 +21,7 @@ The icon change uses Finder metadata on the app. Its executable, signed resource
 
 Type the beginning of an app name, use the arrow keys, and press Return to launch. Double-click also launches. Escape clears the filter and then hides the window. Control-scroll over the launcher to change icon size. The numeric size field, Reset, and Show app names affect both tabs. Drag the popup edges to resize.
 
-Import folders or Windows BetterIcon ZIPs, create personal packs, or right-click an icon and choose **Choose icon…**. Editing a built-in creates a personal copy. Right-click the pack selector for **Customize**, **Edit pack**, **Export ZIP**, and **Restore built-in packs**. Exports preserve author credits and original SVG, ICO, or PNG artwork. Mac-only ICNS files become PNGs when shared with Windows. The built-in packs leave ArtCraft Launcher’s own artwork in place. You can assign it a personal icon.
+Import folders or Windows BetterIcon ZIPs, create personal packs, or right-click an icon and choose **Choose icon…**. Editing a built-in creates a personal copy. Right-click the pack selector for **Customize**, **Edit pack**, **Export ZIP**, and **Restore built-in packs**. Exports preserve author credits and original SVG, ICO, or PNG artwork. Mac-only ICNS files become PNGs when shared with Windows. The OmegaDarling packs include ArtCraft Launcher artwork, and personal packs can provide their own.
 
 The two footer buttons select BetterIcon’s own icon and cycle Dark, Light, and System appearance. All sixteen Windows color variants are included.
 
@@ -29,7 +29,7 @@ Preferences, personal packs, and verified originals live in `~/Library/Applicati
 
 ## Local builds and checks
 
-With Xcode and a macOS SDK installed, run the scripts from this directory. The first command uses the Windows 1.21.0 release ZIP when it is available beside the checkout. You can also supply its path as the second argument. Without the ZIP, the builder checks local artwork and fetches missing images from the pinned source commits. Every image must match the Windows release hash.
+With Xcode and a macOS SDK installed, run the scripts from this directory. The builder accepts the Windows 1.21.0 release ZIP or an artwork checkout as the second argument. It uses the ZIP for matching images, checks the checkout for current artwork, and fetches older missing images from pinned source commits. Every image is checked against its manifest hash.
 
 ~~~sh
 ./build.sh "$HOME/Downloads/BetterIcon-build"
