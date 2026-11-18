@@ -1,7 +1,8 @@
 #Requires -Version 5.1
 [CmdletBinding()]
-param([string]$WindowsDirectory = $PSScriptRoot, [string]$ArtifactDirectory = [IO.Path]::GetTempPath())
+param([string]$WindowsDirectory, [string]$ArtifactDirectory = [IO.Path]::GetTempPath())
 $ErrorActionPreference = 'Stop'
+if (!$WindowsDirectory) { $WindowsDirectory = $PSScriptRoot }
 $windows = (Resolve-Path -LiteralPath $WindowsDirectory).Path
 $root = Join-Path $ArtifactDirectory ('pack-edition-qa-' + [guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($root)

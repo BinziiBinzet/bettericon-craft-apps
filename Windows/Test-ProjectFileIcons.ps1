@@ -1,7 +1,8 @@
 #Requires -Version 5.1
 [CmdletBinding()]
-param([string]$Executable = (Join-Path $PSScriptRoot 'BetterIcon-Tray.exe'), [string]$ArtifactDirectory = [IO.Path]::GetTempPath())
+param([string]$Executable, [string]$ArtifactDirectory = [IO.Path]::GetTempPath())
 $ErrorActionPreference = 'Stop'
+if (!$Executable) { $Executable = Join-Path $PSScriptRoot 'BetterIcon-Tray.exe' }
 Add-Type -AssemblyName System.Drawing,System.IO.Compression.FileSystem
 [void][Reflection.Assembly]::LoadFrom((Resolve-Path -LiteralPath $Executable).Path)
 function Check($condition, [string]$name) { if (!$condition) { throw $name }; "PASS $name" }
