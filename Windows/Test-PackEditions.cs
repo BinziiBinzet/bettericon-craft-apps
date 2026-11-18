@@ -140,6 +140,7 @@ static partial class PackEditionTests
         var fixture = new FixtureConfig { StateDirectory = state, ShortcutDirectory = new[] { args[1] }, KeepOpenForAutomation = true };
         bool lean = File.Exists(Path.Combine(args[0], "OnDemand.tsv"));
         if (args.Length > 2 && args[2] == "refresh") { CheckRefresh(args[0], state, fixture); return; }
+        CheckCurrentPackUpdate();
         if (!lean) Offline();
         const string first = "Craft-Icons-circleb/Root", second = "Craft-Icons-Komplett/Standard", third = "Craft-Icons-Zach/Ink";
         using (var show = new EventWaitHandle(false, EventResetMode.AutoReset))
@@ -194,6 +195,30 @@ static partial class PackEditionTests
                 } else Check(!Directory.Exists(cache), "The bundled edition loads both pack types entirely offline");
                 typeof(LauncherForm).GetMethod("ExitLauncher", Fields).Invoke(form, null);
             }
+        }
+    }
+    static void CheckCurrentPackUpdate()
+    {
+        var type = typeof(LauncherForm).Assembly.GetType("BetterIcon.Tray.PackPicker", true);
+        using (var host = new Form())
+        using (var picker = (ComboBox)Activator.CreateInstance(type, true)) {
+            picker.DropDownStyle = ComboBoxStyle.DropDownList; host.Controls.Add(picker);
+            var current = new ThemeEntry { Name = "First" };
+            var update = new ThemeEntry { Name = "Second", UpdateAvailable = true };
+            picker.Items.AddRange(new[] { current, update }); host.Show(); picker.SelectedItem = current;
+            int choices = 0;
+            type.GetEvent("PackChosen").AddEventHandler(picker, new EventHandler(delegate { choices++; }));
+            picker.SelectedItem = update;
+            Check(choices == 0 && picker.SelectedItem == update, "Restoring the current pack leaves its available update pending");
+            var list = OpenRows(picker);
+            IntPtr point = RowPoint(list, 1);
+            SendMessage(list, 0x0201, (IntPtr)1, point); SendMessage(list, 0x0202, IntPtr.Zero, point);
+            Check(choices == 1, "Clicking an already-selected row can download its update");
+            list = OpenRows(picker); SendMessage(list, 0x0186, (IntPtr)1, IntPtr.Zero);
+            SendMessage(picker.Handle, 0x0100, (IntPtr)Keys.Enter, IntPtr.Zero);
+            Check(choices == 2, "Enter also accepts an update to the current pack");
+            type.GetMethod("ChooseItem").Invoke(picker, new object[] { update });
+            Check(choices == 3, "The tray selection can update the currently selected pack");
         }
     }
     static void CheckRefresh(string windows, string state, FixtureConfig fixture)

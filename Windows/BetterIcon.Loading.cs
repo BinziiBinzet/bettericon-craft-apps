@@ -110,10 +110,11 @@ namespace BetterIcon.Tray
         {
             if (!Enabled || item == null || !Items.Contains(item)) return;
             bool changed = !Object.Equals(accepted, item);
+            var pack = item as ThemeEntry;
             accepted = item;
             if (DroppedDown) DroppedDown = false;
             SetSilently(item);
-            if (changed) NotifyChoice();
+            if (changed || (pack != null && pack.UpdateAvailable)) NotifyChoice();
         }
         protected override void OnSelectedIndexChanged(EventArgs e)
         {
@@ -123,7 +124,9 @@ namespace BetterIcon.Tray
             if (pack != null && pack.NeedsDownload) { SetSilently(accepted); return; }
             if (Object.Equals(accepted, SelectedItem)) return;
             accepted = SelectedItem;
-            NotifyChoice();
+            // Restoring an installed pack can reveal an update. Only an explicit
+            // row click, Enter or tray selection should start that update.
+            if (pack == null || !pack.UpdateAvailable) NotifyChoice();
         }
         void NotifyChoice() { var chosen = PackChosen; if (chosen != null) chosen(this, EventArgs.Empty); }
         void ConfirmRow()
