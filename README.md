@@ -1,6 +1,6 @@
 # BetterIcon-Craft Apps
 
-Icon installers for [Artcraft](https://getartcraft.com/) applications. The Linux installer supports all Linux desktop environments; the Windows tray launcher opens installed apps and applies icon themes to Desktop and Start-menu shortcuts with backup and restore.
+BetterIcon launches installed ArtCraft apps and manages their icons on Windows, Mac and Linux. The Linux desktop app applies themes to desktop entries for the current user. The original Linux terminal icon installer is also included.
 
 > BetterIcon is available for macOS, Windows, and Linux. The Mac app can apply and restore artwork on the installed ArtCraft application bundles. See the [Mac guide](macOS/README.md) and [Windows guide](Windows/WINDOWS.md).
 
@@ -21,12 +21,8 @@ Supports all official Artcraft Crafting Apps.
 
 ### Linux
 
-- Make the scripts executable (run this first):
-   ```bash
-   chmod +x install.sh uninstall.sh
-   ```
-- Run the installer with `./install.sh` and select your preferred theme.
-- Restore original icons or uninstall with `./uninstall.sh`.
+- Extract the graphical Linux package and run `./install.sh` to add **BetterIcon for ArtCraft** to Applications and the system tray. Press **Ctrl+Alt+A** to open Launcher. [Linux guide](Linux/README.md)
+- The terminal icon installer and restore scripts in a source checkout are `Linux/install.sh` and `Linux/uninstall.sh`.
 
 ### Windows
 

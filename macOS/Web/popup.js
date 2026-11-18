@@ -177,7 +177,7 @@ function grids() {
     "empty",
     prefix
       ? "No apps match ‘" + prefix + "’. Backspace edits the filter. Escape clears it."
-      : "No ArtCraft apps found. Right-click the menu bar icon to refresh or choose an apps folder.",
+      : model.emptyMessage || "No ArtCraft apps found. Right-click the menu bar icon to refresh or choose an apps folder.",
   );
 }
 function size(value) {
@@ -286,7 +286,7 @@ function hotkey(info) {
       i.type = "checkbox";
       i.id = "mod-" + label;
       i.checked = k[label.toLowerCase()];
-      l.append(i, document.createTextNode(label));
+      l.append(i, document.createTextNode(info.labels?.[label] || label));
       return l;
     }),
   );

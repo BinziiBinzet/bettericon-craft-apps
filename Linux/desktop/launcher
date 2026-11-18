@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+base=$(dirname "$(readlink -f "$0")")
+# Global screen coordinates on Wayland are provided by the desktop's XWayland bridge.
+export GDK_BACKEND=x11
+export BETTERICON_LAUNCHER="$HOME/.local/bin/bettericon"
+exec "$base/venv/bin/python" "$base/current/desktop/bettericon.py" "$@"
