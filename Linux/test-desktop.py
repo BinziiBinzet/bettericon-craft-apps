@@ -142,8 +142,16 @@ def gui():
     app = BetterIcon()
     app.register(None)
     pop = app.popup
-    check(wait(lambda: pop.ready), "packaged WebKit interface loads")
-    check(wait(lambda: app.tray.is_embedded()), "the X11 panel embeds the actual tray icon")
+    def panel_icon_visible():
+        if not app.tray.is_embedded():
+            return False
+        ok, _, rect, _ = app.tray.get_geometry()
+        return ok and rect.width > 1 and rect.height > 1
+    check(wait(panel_icon_visible), "the X11 panel allocates a visible tray icon")
+    check(pop.web is None and not pop.win.get_realized(), "tray startup leaves the popup and its renderer inactive")
+    context_env = dict(field.split("=", 1) for field in app.launch_context().get_environment())
+    check(all(context_env.get(key) == value for key, value in desktop._DESKTOP_ENV.items()),
+          "external launches inherit the desktop's original rendering settings")
     check(not app.key_error, "the real global shortcut registers")
     def js(code):
         result = []
@@ -176,11 +184,15 @@ def gui():
         js(f"el('{tab}Tab').click();true")
         ready(tab,size)
     click()
+    check(wait(lambda: pop.ready), "first panel click loads the packaged WebKit interface")
+    from gi.repository import WebKit2
+    check(pop.web.get_settings().get_hardware_acceleration_policy() == WebKit2.HardwareAccelerationPolicy.NEVER,
+          "the popup uses software rendering")
     ready("manage",(836,606))
     tray_box = app.tray.get_geometry()[2]
     check(pop.bounds()[1] >= tray_box.y + tray_box.height, "tray popup leaves the panel click target exposed")
     (home / "tray-center").write_text(f"{tray_box.x+tray_box.width//2} {tray_box.y+tray_box.height//2}\n")
-    check(js("el('version').href") == desktop.PROJECT and "1.23.1" in js("el('version').textContent"), "clickable version links to the BetterIcon project")
+    check(js("el('version').href") == desktop.PROJECT and desktop.VERSION in js("el('version').textContent"), "clickable version links to the BetterIcon project")
     check(wait(lambda: js("[...el('preview').querySelectorAll('img')].every(i=>i.complete&&i.naturalWidth>0)")), "the packaged preview images render")
     capture = os.environ.get("BETTERICON_TEST_CAPTURE")
     if capture:

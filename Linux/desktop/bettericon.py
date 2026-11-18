@@ -5,6 +5,11 @@ import os
 import sys
 from pathlib import Path
 
+# Keep the launcher's rendering choices out of the creative apps it opens.
+_RENDER_ENV = {"GDK_BACKEND": "x11", "WEBKIT_DISABLE_DMABUF_RENDERER": "1", "LIBGL_ALWAYS_SOFTWARE": "1"}
+_DESKTOP_ENV = {key: os.environ.get(key) for key in _RENDER_ENV}
+os.environ.update(_RENDER_ENV)
+
 import gi
 gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
@@ -27,6 +32,7 @@ class BetterIcon(Gtk.Application):
         super().__init__(application_id="com.omegadarling.BetterIcon", flags=Gio.ApplicationFlags.HANDLES_COMMAND_LINE)
         self.status = "Changes are reviewed before they are applied."
         self.key_error = ""
+        self.shortcut_editor_pending = False
         self.shortcut = self.popup = None
         self.editing, self.files = None, {}
         self.tray_menu = None
@@ -88,6 +94,15 @@ class BetterIcon(Gtk.Application):
         if self.popup:
             self.popup.js("showError", field or "status", self.status)
         print("BetterIcon:", self.status, file=sys.stderr, flush=True)
+
+    def launch_context(self):
+        context = Gdk.Display.get_default().get_app_launch_context()
+        for key, original in _DESKTOP_ENV.items():
+            if original is None:
+                context.unsetenv(key)
+            else:
+                context.setenv(key, original)
+        return context
 
     def art(self, path):
         key = hashlib.sha256(os.fsencode(path)).hexdigest()
@@ -160,7 +175,10 @@ class BetterIcon(Gtk.Application):
     def show_key(self):
         if not self.popup.win.get_visible():
             self.popup.open()
-        self.action("changeHotkey", {})
+        if self.popup.ready:
+            self.action("changeHotkey", {})
+        else:
+            self.shortcut_editor_pending = True
 
     def choose(self, title, kind, patterns=(), name=None):
         dialog = Gtk.FileChooserDialog(title=title, transient_for=self.popup.win, action=kind)
@@ -238,6 +256,10 @@ class BetterIcon(Gtk.Application):
             pop.ready = True
             self.render()
             pop.js("reset", pop.tab)
+            if self.shortcut_editor_pending:
+                self.shortcut_editor_pending = False
+                if pop.win.get_visible():
+                    self.action("changeHotkey", {})
             return
         if name == "dialogClosed":
             pop.modal = False
@@ -250,7 +272,7 @@ class BetterIcon(Gtk.Application):
         elif name == "launch":
             entry = self.catalog.entries.get(v.get("id"))
             if entry:
-                entry.info.launch([], Gdk.Display.get_default().get_app_launch_context())
+                entry.info.launch([], self.launch_context())
                 pop.hide()
         elif name == "changeHotkey" and not pop.modal:
             pop.modal = True

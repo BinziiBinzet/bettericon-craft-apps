@@ -24,13 +24,17 @@ class Popup:
         self.win.connect("focus-out-event", self.focus_out)
         self.win.connect("focus-in-event", self.focus_in)
         self.source = (resources / "Web" / "index.html").as_uri()
+        self.web = None
+
+    def create_web_view(self):
+        settings = WebKit2.Settings()
+        settings.set_hardware_acceleration_policy(WebKit2.HardwareAccelerationPolicy.NEVER)
         context = WebKit2.WebContext.new_ephemeral()
         context.register_uri_scheme("bettericon-art", self.art)
         manager = WebKit2.UserContentManager()
         manager.register_script_message_handler("betterIcon")
         manager.connect("script-message-received::betterIcon", self.message)
-        self.web = WebKit2.WebView(web_context=context, user_content_manager=manager)
-        self.web.get_settings().set_enable_developer_extras(False)
+        self.web = WebKit2.WebView(web_context=context, user_content_manager=manager, settings=settings)
         self.web.connect("decide-policy", self.navigation)
         self.web.connect("button-press-event", self.press)
         self.win.add(self.web)
@@ -59,7 +63,7 @@ class Popup:
                 decision.ignore()
                 if uri == PROJECT and nav.get_navigation_type() == WebKit2.NavigationType.LINK_CLICKED:
                     try:
-                        Gio.AppInfo.launch_default_for_uri(PROJECT, None)
+                        Gio.AppInfo.launch_default_for_uri(PROJECT, self.win.get_application().launch_context())
                     except GLib.Error as exc:
                         self.report(str(exc))
             return True
@@ -159,6 +163,8 @@ class Popup:
         if source == "tray" and self.win.get_visible():
             self.hide()
             return
+        if self.web is None:
+            self.create_web_view()
         tab = larger(self.catalog.prefs) if source == "tray" else ("manage" if source == "manage" else "launcher")
         pt = Gdk.Display.get_default().get_default_seat().get_pointer().get_position()
         x, y = pt.x, pt.y

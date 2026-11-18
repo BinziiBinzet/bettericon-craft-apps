@@ -11,7 +11,6 @@ if [[ "$1" != --private-session ]]; then
     export XDG_CONFIG_HOME="$fixture/settings" XDG_CACHE_HOME="$fixture/home/.cache" XDG_STATE_HOME="$fixture/state"
     export XDG_DATA_DIRS="$fixture/system:/usr/local/share:/usr/share" GSETTINGS_BACKEND=memory
     export XDG_CURRENT_DESKTOP=XFCE XDG_SESSION_TYPE=x11 GDK_BACKEND=x11
-    export WEBKIT_DISABLE_DMABUF_RENDERER=1 LIBGL_ALWAYS_SOFTWARE=1
     unset WAYLAND_DISPLAY DBUS_SESSION_BUS_ADDRESS AT_SPI_BUS_ADDRESS
     exec dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24 -nolisten tcp' bash "$0" --private-session "$package" "$fixture"
 fi
@@ -32,7 +31,7 @@ desktop-file-validate "$XDG_DATA_HOME/applications/com.omegadarling.BetterIcon.d
 desktop-file-validate "$XDG_CONFIG_HOME/autostart/com.omegadarling.BetterIcon.desktop"
 bin="$HOME/.local/bin/bettericon"
 root="$XDG_DATA_HOME/bettericon-desktop"
-[[ "$("$bin" --version)" == 1.23.1 ]]
+[[ "$("$bin" --version)" == "$(cat "$(dirname "$0")/desktop/VERSION")" ]]
 "$root/venv/bin/python" "$(dirname "$0")/test-desktop.py" "$root/current"
 "$bin" --tray > "$fixture/restart.log" 2>&1 &
 pid=$!
@@ -41,10 +40,19 @@ for i in {1..90}; do
     sleep .1
 done
 gtk-launch com.omegadarling.BetterIcon
-wid=$(timeout 10 xdotool search --sync --onlyvisible --name '^BetterIcon for ArtCraft$' | head -1)
-size=$(xdotool getwindowgeometry --shell "$wid")
-grep -q '^WIDTH=326$' <<< "$size"
-grep -q '^HEIGHT=258$' <<< "$size"
+wid=
+for i in {1..100}; do
+    # XEmbed also exposes a small window with the application's title.
+    for candidate in $(xdotool search --onlyvisible --name '^BetterIcon for ArtCraft$' || true); do
+        size=$(xdotool getwindowgeometry --shell "$candidate") || continue
+        if grep -qx 'WIDTH=326' <<< "$size" && grep -qx 'HEIGHT=258' <<< "$size"; then
+            wid=$candidate
+            break 2
+        fi
+    done
+    sleep .1
+done
+[[ -n "$wid" ]]
 echo 'PASS desktop entry focuses the running launcher at the saved size after restart'
 "$bin" --manage
 for i in {1..60}; do

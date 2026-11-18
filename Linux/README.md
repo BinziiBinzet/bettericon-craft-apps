@@ -1,6 +1,6 @@
 # BetterIcon for Linux
 
-BetterIcon 1.23.1 launches installed ArtCraft desktop apps and manages their icons from the **Launcher** and **Manage Icons** tabs. The graphical package includes the same built-in artwork and interface as the Mac build.
+BetterIcon 1.23.2 launches installed ArtCraft desktop apps and manages their icons from the **Launcher** and **Manage Icons** tabs. The graphical package includes the same built-in artwork and interface as the Mac build. Starting in the tray loads the window interface only when you first open it. The interface uses software rendering.
 
 ## Install
 
@@ -11,6 +11,8 @@ Extract the Linux archive, open its folder in a terminal, and run:
 ```
 
 The installer creates a per-user virtual environment, adds **BetterIcon for ArtCraft** to Applications, and starts its tray icon. BetterIcon starts in the tray when you log in. It uses the system Python 3.11 or newer, PyGObject, GTK 3, WebKitGTK 4.1 and X11 or XWayland. Ubuntu 24.04 provides the dependencies as `python3-venv python3-gi gir1.2-gtk-3.0 gir1.2-webkit2-4.1`. GNOME displays the tray icon through Ubuntu AppIndicators or the equivalent tray extension. On an X11 desktop use a panel with a system tray.
+
+On some NVIDIA machines running Ubuntu 24.04, a headless GNOME Remote Login session can close when an X11 app opens a window. On affected machines, configure the remote GNOME Shell session to start XWayland with `XWAYLAND_NO_GLAMOR=1` so it uses shared memory. The XWayland server inherits this setting when GNOME starts. [Ubuntu Mutter report](https://bugs.launchpad.net/bugs/2164959) · [Ubuntu XWayland manual](https://manpages.ubuntu.com/manpages/noble/man1/Xwayland.1.html)
 
 ## Launcher and icons
 

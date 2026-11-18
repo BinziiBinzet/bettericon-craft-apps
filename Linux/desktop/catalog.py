@@ -13,7 +13,7 @@ from pathlib import Path
 
 from gi.repository import Gio, GLib
 
-VERSION = "1.23.1"
+VERSION = Path(__file__).with_name("VERSION").read_text().strip()
 PROJECT = "https://github.com/BinziiBinzet/bettericon-craft-apps"
 CRAFT = "AniCraft ArtCraftLauncher CADCraft CraftAnything DeckCraft DesignCraft EffectCraft FigCraft FilmCraft GridCraft LightCraft MailCraft MaterialCraft PdfCraft PhotoCraft SolidCraft SoundCraft TextureCraft VectorCraft WordCraft".split()
 DEFAULT_ID = "ArtCraft/Default"
