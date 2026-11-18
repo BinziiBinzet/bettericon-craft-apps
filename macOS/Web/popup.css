@@ -321,7 +321,31 @@ footer {
   flex: none;
   color: var(--muted);
 }
-footer button {
+#launcher footer {
+  justify-content: flex-start;
+  padding: 6px 0 0;
+}
+.footer-link {
+  font: inherit;
+  color: var(--muted);
+  text-decoration: none;
+  cursor: pointer;
+}
+button.footer-link,
+button.footer-link:hover:enabled {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.footer-link:hover,
+.footer-link:focus-visible {
+  text-decoration: underline;
+}
+.footer-link:focus-visible {
+  outline-offset: 2px;
+}
+#manage footer button {
   height: 40px;
   width: 40px;
   border: 0;

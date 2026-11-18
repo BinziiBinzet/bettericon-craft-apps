@@ -217,6 +217,8 @@ function update(next) {
   size(p.size);
   text("apply", pack.default ? "Restore ArtCraft defaults…" : "Apply icons…");
   text("version", "Better Icon for ArtCraft version " + model.version);
+  el("version").href = model.projectURL;
+  showShortcut(model.shortcut);
   const variant = p.variant === "auto" ? (model.dark ? "dark" : "light") : p.variant;
   el("brand").firstElementChild.src = model.brands[p.color + "_" + variant];
   el("brand").title = "BetterIcon app icon";
@@ -267,6 +269,9 @@ function editor(info) {
 function assignment(craft, name) {
   text("file-" + craft, name || "Unassigned");
 }
+function showShortcut(shortcut) {
+  text("launcherShortcut", "Launcher shortcut · " + shortcut);
+}
 function hotkey(info) {
   const k = model.prefs.hotkey;
   el("keyEnabled").checked = k.enabled;
@@ -294,6 +299,7 @@ function doneDialog(id) {
 for (const id of ["editor", "hotkey"]) el(id).addEventListener("close", () => send("dialogClosed", { id }));
 el("launcherTab").onclick = () => tab("launcher");
 el("manageTab").onclick = () => tab("manage");
+el("launcherShortcut").onclick = () => send("changeHotkey");
 el("packs").onchange = () => send("select", { id: el("packs").value });
 el("packs").oncontextmenu = (e) => {
   e.preventDefault();
@@ -360,6 +366,7 @@ document.addEventListener("keydown", (e) => {
     return;
   }
   if (["INPUT", "SELECT"].includes(e.target.tagName) && e.key !== "Escape") return;
+  if (e.target === el("launcherShortcut") && (e.key === "Enter" || e.key === " ")) return;
   if (page === "manage" && e.key === "Escape") {
     tab("launcher");
     e.preventDefault();
@@ -431,7 +438,10 @@ window.betterIcon = {
   editor,
   assignment,
   hotkey,
-  keyStatus: (message) => text("keyStatus", message),
+  keyStatus: (message, shortcut) => {
+    text("keyStatus", message);
+    showShortcut(shortcut);
+  },
   doneDialog,
   showError: (id, message) => text(id, message),
 };

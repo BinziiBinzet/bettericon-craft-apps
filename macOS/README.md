@@ -1,12 +1,14 @@
 # BetterIcon for Mac
 
-BetterIcon 1.21.1 brings the Windows launcher, 13 icon packs, and all 218 original pack images to the Mac. The Universal app targets Apple silicon and Intel Macs running macOS 12.4 or later. Everything needed to use it is in the app bundle.
+BetterIcon 1.22.1 brings the Windows launcher, 13 icon packs, and all 218 original pack images to the Mac. The Universal app targets Apple silicon and Intel Macs running macOS 12.4 or later. Everything needed to use it is in the app bundle.
 
 ## Install and use
 
-Open the disk image, drag **BetterIcon** into Applications, then open it. Press **Control–Option–A (⌃⌥A)** to open the launcher at the pointer. You can also click the BetterIcon menu bar icon. Right-click it and choose **Change hotkey…** to set your own shortcut. Upgrades keep your saved choice.
+Open the disk image, drag **BetterIcon** into Applications, then open it. Press **Control–Option–A (⌃⌥A)** to open the launcher at the pointer. You can also click the BetterIcon menu bar icon. The lower-left corner of **Launcher** shows your current shortcut. Click it to change or disable the shortcut, or choose **Change hotkey…** from the menu bar icon. Upgrades keep your saved choice.
 
 While VoiceOver is on, BetterIcon releases ⌃⌥A so VoiceOver can use it for **Read All**. BetterIcon registers the shortcut again when VoiceOver turns off and the keys are available. [Apple’s VoiceOver reading commands](https://support.apple.com/guide/voiceover/read-text-vo2706/mac)
+
+Choose **Exit BetterIcon** in the menu bar icon's right-click menu to quit the app and release its shortcut.
 
 1. Open **Manage Icons** and choose a pack. The launcher and preview show your choice immediately.
 2. Click **Apply icons…**. Choose **All users** for apps in the main Applications folder or **Current user** for apps in your home Applications folder and Desktop. The review shows each app or Finder alias, its full path, and the proposed change. A missing assignment leaves that app’s icon in place.
@@ -23,7 +25,7 @@ Type the beginning of an app name, use the arrow keys, and press Return to launc
 
 Import folders or Windows BetterIcon ZIPs, create personal packs, or right-click an icon and choose **Choose icon…**. Editing a built-in creates a personal copy. Right-click the pack selector for **Customize**, **Edit pack**, **Export ZIP**, and **Restore built-in packs**. Exports preserve author credits and original SVG, ICO, or PNG artwork. Mac-only ICNS files become PNGs when shared with Windows. The built-in packs leave ArtCraft Launcher’s own artwork in place. You can assign it a personal icon.
 
-The two footer buttons select BetterIcon’s own icon and cycle Dark, Light, and System appearance. All sixteen Windows color variants are included.
+Click the version text at the bottom of **Manage Icons** to open the BetterIcon GitHub project in your default browser. The adjacent buttons select BetterIcon’s own icon and cycle Dark, Light, and System appearance. All sixteen Windows color variants are included.
 
 Preferences, personal packs, and verified originals live in `~/Library/Application Support/BetterIcon`. Keep this folder while using customized icons. You can move or remove BetterIcon itself independently.
 

@@ -66,7 +66,9 @@ import WebKit
         let launcher = GlobalKey { presses += 1 }
         let disabled = KeyChoice(enabled: false)
         try check(try launcher.use(choice, voiceOverEnabled: true).contains("VoiceOver"), "VoiceOver gets Read All")
+        try check(choice.displayText(registered: launcher.isRegistered) == "⌃⌥A (unavailable)", "VoiceOver-paused shortcut keeps its combination in the footer")
         try check(try launcher.use(disabled, voiceOverEnabled: true).contains("disabled"), "disabled stays disabled")
+        try check(disabled.displayText(registered: launcher.isRegistered) == "Disabled", "disabled shortcut label")
 
         // Opt in on a Mac where the default is available. All events stay inside this test process.
         guard ProcessInfo.processInfo.environment["BETTERICON_TEST_HOTKEY"] == "1" else { return }
@@ -84,6 +86,7 @@ import WebKit
         }
         _ = try launcher.use(choice, voiceOverEnabled: false)
         try deliver()
+        try check(choice.displayText(registered: launcher.isRegistered) == "⌃⌥A", "registered shortcut label")
         try check(presses == 1, "registered hotkey dispatches to the launcher callback")
         try rejects("an occupied shortcut is refused") { _ = try other.use(choice, voiceOverEnabled: false) }
         _ = try launcher.use(choice, voiceOverEnabled: true)
@@ -243,7 +246,11 @@ import WebKit
         return installed
     }
     @MainActor static func ui(_ install: Installation, out: URL) async throws {
-        let host = try Application(install, hidden: true)
+        var openedURLs = [URL]()
+        let host = try Application(install, hidden: true) { url in
+            openedURLs.append(url)
+            return true
+        }
         host.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
         // Offscreen WebKit and AppKit surface; no input to the desktop.
         let web = host.web!
@@ -257,6 +264,21 @@ import WebKit
         }
         try await until("typeof model !== 'undefined' && model && model.apps.length===3 && !working")
         try check(true, "actual app discovers fixture apps and creates its grids")
+        let footerStyle = """
+            ['fontFamily','fontSize','fontWeight','lineHeight','color'].every(
+              key => getComputedStyle(el('launcherShortcut'))[key] === getComputedStyle(el('version'))[key])
+            """
+        let stylesMatch = try await js(footerStyle)
+        try check(stylesMatch as? Bool == true, "shortcut and version share theme color and type")
+        let inCorner = try await js("""
+            (() => {
+              const link = el('launcherShortcut').getBoundingClientRect(), grid = el('apps').getBoundingClientRect();
+              return el('launcherShortcut').textContent === 'Launcher shortcut · ⌃⌥A' &&
+                Math.abs(link.left - grid.left) < 1 && link.top >= grid.bottom &&
+                link.right < innerWidth / 2 && innerHeight - link.bottom < 32;
+            })()
+            """)
+        try check(inCorner as? Bool == true, "shortcut is at the lower left outside the scrolling grid")
         try await until("model.pack.id==='Craft-Icons-Zach/Cardboard' && model.prefs.size===48")
         try check(true, "fresh launch matches the Windows Cardboard preview at 48 pixels")
         if let surface = host.window.contentView {
@@ -284,6 +306,26 @@ import WebKit
         try await until("model.prefs.size===112&&model.prefs.names===true")
         _ = try await js("if(model.prefs.theme==='System')el('appearance').click();true")
         try await until("model.prefs.theme==='Dark'")
+        let darkStylesMatch = try await js(footerStyle)
+        try check(darkStylesMatch as? Bool == true, "both footer controls follow appearance changes")
+        let project = "https://github.com/BinziiBinzet/bettericon-craft-apps"
+        let versionLink = try await js("el('version').href === '\(project)' && el('version').textContent === 'Better Icon for ArtCraft version \(host.version)'")
+        try check(versionLink as? Bool == true, "the complete version text links to the BetterIcon repository")
+        let localPage = web.url
+        _ = try await js("""
+            (() => {
+              const link = el('version'), original = link.href;
+              link.href = 'https://example.invalid/'; link.click();
+              link.href = original; link.click();
+              return true;
+            })()
+            """)
+        for _ in 0..<100 {
+            if !openedURLs.isEmpty { break }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        try check(openedURLs.map(\.absoluteString) == [project] && web.url == localPage,
+            "WebKit sends only the project URL to the external opener and keeps the launcher page loaded")
         _ = try await js("el('brand').click();true")
         let allVariants = try await js("el('menu').children.length===17 && !el('menu').hidden")
         try check(allVariants as? Bool == true, "all 16 icon variants plus match")
@@ -299,25 +341,116 @@ import WebKit
         _ = try await js("el('launcherTab').click();true")
         let launcher = try await web.takeSnapshot(configuration: nil)
         try Artwork.pngWide(launcher).write(to: out.appendingPathComponent("launcher.png"))
-        let openKey = "betterIcon.hotkey({keys:['A','F8'],status:''});true"
+        _ = try await js("document.dispatchEvent(new KeyboardEvent('keydown',{key:'p',bubbles:true}));true")
+        let footerKeys = try await js("""
+            (() => {
+              const b = el('launcherShortcut'); b.focus();
+              return ['Enter', ' '].every(key => b.dispatchEvent(new KeyboardEvent('keydown', {key,bubbles:true,cancelable:true}))) &&
+                selected.apps !== '' && prefix === 'p';
+            })()
+            """)
+        try check(footerKeys as? Bool == true, "Return and Space on the focused shortcut keep their native button action")
+        let openKey = "el('launcherShortcut').click();true"
         _ = try await js(openKey)
+        try await until("el('hotkey').open && page==='launcher'")
         let defaultShown = try await js(
             "el('keyEnabled').checked && el('mod-Control').checked && el('mod-Option').checked && !el('mod-Shift').checked && !el('mod-Command').checked && el('key').value==='A'")
-        try check(defaultShown as? Bool == true, "shortcut editor displays the new default")
+        try check(defaultShown as? Bool == true, "launcher footer opens the existing editor with the saved shortcut")
+        _ = try await js("el('key').value='F8';el('hotkey').querySelector('button[value=cancel]').click();true")
+        try await until("!el('hotkey').open && page==='launcher' && prefix==='p' && el('launcherShortcut').textContent.endsWith('⌃⌥A')")
+        try check(host.prefs.hotkey.text == "⌃⌥A", "cancel preserves the shortcut, tab and current filter")
+        _ = try await js(openKey)
+        try await until("el('hotkey').open")
+        let prefFile = install.state.appendingPathComponent("preferences.json")
+        let previousBytes = try Data(contentsOf: prefFile)
+        do {
+            defer { try? previousBytes.write(to: prefFile, options: .atomic) }
+            try Data("incomplete fixture preferences".utf8).write(to: prefFile, options: .atomic)
+            _ = try await js("el('key').value='F8';el('saveKey').click();true")
+            try await until("el('hotkey').open && el('keyError').textContent.length > 0 && el('launcherShortcut').textContent.endsWith('⌃⌥A')")
+            try check(host.prefs.hotkey.text == "⌃⌥A", "a preferences write failure keeps the old shortcut and editor open")
+        }
         _ = try await js("el('mod-Control').click();el('mod-Command').click();el('key').value='F8';el('saveKey').click();true")
-        try await until("!el('hotkey').open && model.prefs.hotkey.key==='F8'")
+        try await until("!el('hotkey').open && page==='launcher' && model.prefs.hotkey.key==='F8' && el('launcherShortcut').textContent.endsWith('⌥⌘F8')")
         try check(try Application(install, hidden: true).prefs.hotkey.text == "⌥⌘F8", "custom shortcut survives relaunch")
         _ = try await js(openKey)
+        try await until("el('hotkey').open")
         _ = try await js("el('keyEnabled').click();el('saveKey').click();true")
-        try await until("!el('hotkey').open && !model.prefs.hotkey.enabled")
+        try await until("!el('hotkey').open && !model.prefs.hotkey.enabled && el('launcherShortcut').textContent.endsWith('Disabled')")
+        _ = try await js(openKey)
+        try await until("el('hotkey').open && !el('keyEnabled').checked")
+        _ = try await js("el('hotkey').close();true")
+        try check(true, "the disabled shortcut remains editable from Launcher")
         let reloaded = try Application(install, hidden: true)
         try check(!reloaded.prefs.hotkey.enabled && reloaded.prefs.hotkey.text == "⌥⌘F8", "disabled custom shortcut survives relaunch")
         try check(
             reloaded.prefs.color == "clay" && reloaded.prefs.theme == "Dark" && reloaded.prefs.size == 112,
             "settings survive relaunch")
     }
+    @MainActor static func runQuitMenuApp(resources: URL, fixture: URL) throws {
+        let app = NSApplication.shared
+        let host = try Application(Installation(resources: resources, fixture: fixture), hidden: true)
+        app.delegate = host
+        var key: GlobalKey?
+        if ProcessInfo.processInfo.environment["BETTERICON_TEST_HOTKEY"] == "1" {
+            key = GlobalKey {}
+            _ = try key?.use(KeyChoice())
+        }
+        Task { @MainActor in
+            do {
+                let ready = "typeof model !== 'undefined' && !!model && !working"
+                for _ in 0..<150 {
+                    if let web = host.web, let loaded = try? await web.evaluateJavaScript(ready) as? Bool, loaded {
+                        host.statusMenu { menu, _ in
+                            let index = menu.indexOfItem(withTitle: "Exit BetterIcon")
+                            guard index >= 0, menu.item(at: index)?.isEnabled == true else { return }
+                            // Record AppKit's termination notification only after selecting the real command.
+                            _ = NotificationCenter.default.addObserver(
+                                forName: NSApplication.willTerminateNotification, object: app, queue: nil
+                            ) { _ in
+                                try? Data().write(to: fixture.appendingPathComponent("quit-complete"))
+                            }
+                            menu.performActionForItem(at: index)
+                        }
+                        try await Task.sleep(nanoseconds: 1_000_000_000)
+                        throw Problem("The Exit BetterIcon menu command returned without terminating the app.")
+                    }
+                    try await Task.sleep(nanoseconds: 100_000_000)
+                }
+                throw Problem("The quit test app did not finish loading.")
+            } catch {
+                FileHandle.standardError.write(Data((error.localizedDescription + "\n").utf8))
+                exit(1)
+            }
+        }
+        withExtendedLifetime((host, key)) { app.run() }
+    }
+    @MainActor static func checkQuitMenu(resources: URL, fixture: URL) async throws {
+        let child = Process()
+        child.executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
+        child.arguments = ["--quit-menu", resources.path, fixture.path]
+        try child.run()
+        for _ in 0..<250 {
+            if !child.isRunning { break }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        if child.isRunning { child.terminate(); throw Problem("Timed out waiting for the quit test app.") }
+        try check(child.terminationReason == .exit && child.terminationStatus == 0 &&
+            fm.fileExists(atPath: fixture.appendingPathComponent("quit-complete").path),
+            "Exit BetterIcon terminates the menu bar process during menu tracking")
+        if ProcessInfo.processInfo.environment["BETTERICON_TEST_HOTKEY"] == "1" {
+            let next = GlobalKey {}
+            _ = try next.use(KeyChoice())
+            try check(next.isRegistered, "a new process can register the launcher's shortcut after Exit BetterIcon")
+        }
+    }
     @MainActor static func main() async {
         do {
+            if CommandLine.arguments.count == 4, CommandLine.arguments[1] == "--quit-menu" {
+                try runQuitMenuApp(resources: URL(fileURLWithPath: CommandLine.arguments[2], isDirectory: true),
+                    fixture: URL(fileURLWithPath: CommandLine.arguments[3], isDirectory: true))
+                return
+            }
             guard CommandLine.arguments.count == 3 else {
                 throw Problem("Usage: Checks /path/to/BetterIcon.app empty-test-directory")
             }
@@ -329,6 +462,7 @@ import WebKit
             guard !fm.fileExists(atPath: out.path) else { throw Problem("Choose a new fixture directory.") }
             let install = try core(resources: resources, root: out)
             try await ui(install, out: out)
+            try await checkQuitMenu(resources: resources, fixture: out)
             print("\(checks) checks passed. \(out.path)")
         } catch {
             FileHandle.standardError.write(Data((error.localizedDescription + "\n").utf8))

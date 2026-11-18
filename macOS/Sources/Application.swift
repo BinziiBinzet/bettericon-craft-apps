@@ -50,16 +50,20 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
     private(set) var window: PopupWindow!
     private var item: NSStatusItem!, globalKey: GlobalKey?
     private var ready = false, working = false, modal = false, nativePanel = false
+    private var trackingStatusMenu = false
     private var wantedTab = "launcher", status = "Changes are reviewed before they are applied.", keyStatus = ""
     private var editing: Pack?, files = [String: URL]()
     private var appearanceObserver: NSKeyValueObservation?
     private var voiceOverObserver: NSKeyValueObservation?
     private var pendingResize: DispatchWorkItem?
     private let startHidden: Bool
+    private static let projectURL = URL(string: "https://github.com/BinziiBinzet/bettericon-craft-apps")!
+    private let openProjectURL: (URL) -> Bool
     private var menuBlocks = [() -> Void]()
     let version: String
-    init(_ install: Installation, hidden: Bool = false) throws {
+    init(_ install: Installation, hidden: Bool = false, openProjectURL: @escaping (URL) -> Bool = { NSWorkspace.shared.open($0) }) throws {
         self.install = install
+        self.openProjectURL = openProjectURL
         startHidden = hidden
         let info = try Data(
             contentsOf: install.resources.deletingLastPathComponent().appendingPathComponent("Info.plist"))
@@ -140,12 +144,22 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
             show()
             return
         }
-        if !working && !modal && !nativePanel { refresh() }
+        if !working && !modal && !nativePanel && !trackingStatusMenu { refresh() }
     }
     func webView(
         _ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
     ) {
+        if navigationAction.navigationType == .linkActivated,
+            navigationAction.sourceFrame.isMainFrame, navigationAction.targetFrame?.isMainFrame == true,
+            navigationAction.request.url == Self.projectURL
+        {
+            decisionHandler(.cancel)
+            if !working && !modal && !nativePanel && !openProjectURL(Self.projectURL) {
+                report("Could not open the BetterIcon project in your browser.")
+            }
+            return
+        }
         let page = install.resources.appendingPathComponent("Web/index.html").standardizedFileURL
         decisionHandler(
             navigationAction.request.url?.standardizedFileURL == page
@@ -168,7 +182,7 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
     }
     func applicationDidResignActive(_ notification: Notification) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { [weak self] in
-            guard let self, !NSApp.isActive, !self.modal, !self.nativePanel, !self.working,
+            guard let self, !NSApp.isActive, !self.modal, !self.nativePanel, !self.trackingStatusMenu, !self.working,
                 self.item.button?.window?.frame.contains(NSEvent.mouseLocation) != true
             else { return }
             self.window.orderOut(nil)
@@ -184,12 +198,13 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
         pendingResize = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: work)
     }
+    private var shortcutText: String { prefs.hotkey.displayText(registered: globalKey?.isRegistered ?? true) }
     private func registerKey() {
         guard let globalKey else { return }
         do {
             keyStatus = try globalKey.use(prefs.hotkey)
         } catch { keyStatus = error.localizedDescription }
-        call("keyStatus", ["message": keyStatus])
+        call("keyStatus", ["message": keyStatus, "shortcut": shortcutText])
     }
     private func savePrefs(adding: [String] = [], removing: [String] = []) {
         do {
@@ -267,7 +282,7 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
         guard ready else { return }
         let order: [String: [String]] = [
             "update": ["next"], "reset": ["pageName"], "busy": ["message"], "editor": ["info"],
-            "assignment": ["craft", "name"], "hotkey": ["info"], "keyStatus": ["message"], "doneDialog": ["id"],
+            "assignment": ["craft", "name"], "hotkey": ["info"], "keyStatus": ["message", "shortcut"], "doneDialog": ["id"],
             "showError": ["id", "message"],
         ]
         guard let keys = order[fn] else { return }
@@ -330,7 +345,7 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
             "packs": packs.map { ["id": $0.id, "title": $0.title] },
             "pack": ["id": pack.id, "default": pack.isDefault, "personal": pack.personal] as [String: Any],
             "prefs": settings, "maxSize": maxSize, "dark": dark, "brands": brandURLs, "version": version,
-            "status": status,
+            "status": status, "shortcut": shortcutText, "projectURL": Self.projectURL.absoluteString,
         ]
         call("update", ["next": state])
     }
@@ -577,7 +592,7 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
         } catch { report(error.localizedDescription) }
     }
     private func openHotkey() {
-        show(tab: "manage")
+        guard !working && !modal && !nativePanel else { return }
         modal = true
         call(
             "hotkey",
@@ -611,6 +626,7 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
         let craft = data["craft"] as? String ?? ""
         switch action {
         case "hide": if !modal { window.orderOut(nil) }
+        case "changeHotkey": openHotkey()
         case "launch": if let app = apps.first(where: { $0.url.path == data["id"] as? String }) { launch(app) }
         case "select": changeSelection(data["id"] as? String ?? "")
         case "names":
@@ -656,13 +672,23 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
                 },
                 onError: { self.call("showError", ["id": "editorError", "message": $0.localizedDescription]) })
         case "saveKey":
+            guard modal else { return }
             do {
                 let choice = try JSONDecoder().decode(
                     KeyChoice.self, from: JSONSerialization.data(withJSONObject: data))
                 guard KeyChoice.keys[choice.key] != nil else { throw Problem("Select a supported key.") }
-                if let globalKey { keyStatus = try globalKey.use(choice) }
+                let registrationStatus = try globalKey?.use(choice)
+                do {
+                    _ = try updatePreferences(install.state) { $0.hotkey = choice }
+                } catch {
+                    if let globalKey, choice != prefs.hotkey {
+                        _ = try? globalKey.use(KeyChoice(enabled: false))
+                        registerKey()
+                    }
+                    throw error
+                }
                 prefs.hotkey = choice
-                savePrefs()
+                if let registrationStatus { keyStatus = registrationStatus }
                 render()
                 call("doneDialog", ["id": "hotkey"])
             } catch { call("showError", ["id": "keyError", "message": error.localizedDescription]) }
@@ -693,7 +719,10 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
     @objc private func menuAction(_ sender: NSMenuItem) {
         if menuBlocks.indices.contains(sender.tag) { menuBlocks[sender.tag]() }
     }
-    private func statusMenu() {
+    func statusMenu(present: (NSMenu, NSStatusBarButton) -> Void = { menu, button in
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.minY - 3), in: button)
+    }) {
+        guard !trackingStatusMenu, let button = item?.button else { return }
         guard !modal && !nativePanel else {
             show()
             return
@@ -771,13 +800,15 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
             self.review(restore: true, only: nil)
         }
         _ = add("Manage Icons…", to: menu, enabled: !working) { self.show(tab: "manage") }
-        _ = add("Change hotkey…", to: menu, enabled: !working) { self.openHotkey() }
+        _ = add("Change hotkey…", to: menu, enabled: !working) {
+            self.show(tab: "manage")
+            self.openHotkey()
+        }
         menu.addItem(.separator())
         _ = add("Exit BetterIcon", to: menu, enabled: !working) { NSApp.terminate(nil) }
-        if let b = item.button {
-            nativePanel = true
-            menu.popUp(positioning: nil, at: NSPoint(x: 0, y: b.bounds.minY - 3), in: b)
-            nativePanel = false
-        }
+        // AppKit can send a selected item's action before menu tracking returns.
+        trackingStatusMenu = true
+        defer { trackingStatusMenu = false }
+        present(menu, button)
     }
 }
