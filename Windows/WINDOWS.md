@@ -1,10 +1,10 @@
 # BetterIcon-Craft Apps for Windows
 
-Windows version **1.23.0** includes a native tray launcher and a Windows app installer alongside the existing shortcut-icon tools. It shares the repository's artwork and leaves Craft executables, app settings, and file associations unchanged.
+Windows version **1.23.1** includes a native tray launcher and a Windows app installer alongside the existing shortcut-icon tools. It shares the repository's artwork and leaves Craft executables, app settings, and file associations unchanged.
 
 ## Start here
 
-Run **BetterIcon-Setup-1.23.0.exe**, then open **BetterIcon** from Start. Setup installs for your Windows account without administrator access, adds a Start-menu shortcut, and offers an optional desktop shortcut. It includes the app, helper scripts, and bundled icon packs; Git, a compiler, and an internet connection are not needed to use it. Windows 10/11 with .NET Framework 4.8 or later is required. Setup reports a missing framework before making changes. This build is unsigned, so Windows may show an unknown-publisher or SmartScreen warning.
+Run **BetterIcon-Setup-1.23.1.exe**, then open **BetterIcon** from Start. Setup installs for your Windows account without administrator access, adds a Start-menu shortcut, and offers an optional desktop shortcut. It includes the app, helper scripts, and bundled icon packs; Git, a compiler, and an internet connection are not needed to use it. Windows 10/11 with .NET Framework 4.8 or later is required. Setup reports a missing framework before making changes. This build is unsigned, so Windows may show an unknown-publisher or SmartScreen warning.
 
 Run a newer Setup to upgrade. Finish any icon operation and close BetterIcon's dialogs first; Setup waits for a graceful exit and refuses to continue if the app stays busy. It never force-terminates BetterIcon. Preferences, personal packs, shortcut backups, and already-applied icons are preserved. Setup registers BetterIcon in **Settings > Apps > Installed apps** for normal removal. Uninstall preserves those same files so existing shortcuts retain their icons and a reinstall can recover your preferences. It does not restore ArtCraft shortcuts; use BetterIcon's Restore actions before uninstalling if that is what you want.
 
@@ -31,7 +31,7 @@ Keep the extracted app or source folder in place: BetterIcon still uses its help
 
 Drag a window edge or corner on **Launcher** or **Manage Icons** to set that tab’s size. Each tab remembers its width and height across restarts. Launcher can shrink to 300 × 240 pixels and Manage Icons keeps a 790 × 570 minimum when the screen allows. Switching tabs keeps the divider at the same point on screen.
 
-Press **Ctrl+Alt+Shift+A** from any app to open the popup centered on your mouse cursor. Near an edge it leaves room for both saved tab sizes inside the monitor’s working area, clear of the taskbar. Pressing the hotkey again repositions the existing popup at the current cursor. Tray clicks still open it above the tray and toggle it closed.
+Press **Ctrl+Alt+Shift+A** from any app to open the popup centered on your mouse cursor. Near an edge it leaves room for both saved tab sizes inside the monitor’s working area, clear of the taskbar. Pressing the hotkey again repositions the existing popup at the current cursor. Clicking the tray icon opens the tab with the larger saved window area. Launcher wins a tie. A second tray click hides the window. The keyboard shortcut always opens Launcher.
 
 The Launcher uses a compact grid with app names centered underneath their icons. In **Manage Icons**, move **Icon size** from 24 pixels up to the largest available artwork in the selected pack and installed-app previews. Click the number to type an exact size, then press Enter or click away to apply it; Escape cancels the edit. Values outside the available range are limited to its minimum or maximum. The bundled PNG artwork supports 1024–1254 pixels, and custom PNGs can use the existing 4096-pixel image limit. Both tabs use the original artwork at larger sizes and remember the size after restarting. **Reset** restores 48 pixels. Names wrap below the artwork, with full names in tooltips; larger icons require scrolling. Choosing a pack with smaller artwork adjusts the slider range and size to fit its available resolution. This changes the app's display; applying shortcut icons remains a separate operation.
 
@@ -171,7 +171,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Test-Windows.ps1 -Test
 
 # Build a Setup EXE from a locally built Windows ZIP (Inno Setup on this machine).
 .\Build-AppInstaller.ps1 -OutputDirectory 'C:\path\to\setup-output' `
-  -PackagePath 'C:\path\to\BetterIcon-Craft-Apps-Windows-1.23.0.zip' `
+  -PackagePath 'C:\path\to\BetterIcon-Craft-Apps-Windows-1.23.1.zip' `
   -CompilerPath 'C:\path\to\Inno Setup\ISCC.exe'
 
 # Actual install, upgrade, and uninstall using a unique disposable installer identity.

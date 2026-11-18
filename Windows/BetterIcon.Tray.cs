@@ -498,7 +498,7 @@ namespace BetterIcon.Tray
             dismissTimer.Stop(); trayAnchor = anchor;
             if (!Enabled) { ActivateDialog(); return; }
             if (Visible && WindowState != FormWindowState.Minimized) { Hide(); return; }
-            ShowManager();
+            ShowPopup(anchor, false, preferLargerPage: true);
         }
         public void ShowManager()
         {
@@ -542,16 +542,18 @@ namespace BetterIcon.Tray
             RestorePageAtDivider();
         }
         void ActivateDialog() { foreach (Form dialog in OwnedForms) if (dialog.Visible) { dialog.Activate(); break; } }
-        void ShowPopup(Point anchor, bool centered)
+        void ShowPopup(Point anchor, bool centered, bool preferLargerPage = false)
         {
             if (!Enabled) { ActivateDialog(); return; }
             if (!Visible) SetFilter("");
             dismissTimer.Stop();
             Rectangle work = Screen.FromPoint(anchor).WorkingArea;
-            Rectangle bounds = PopupPlacement.Place(PreferredPageSize(true), PreferredPageSize(false), anchor, work, centered);
+            Size launcher = PreferredPageSize(true), manage = PreferredPageSize(false);
+            bool openManage = preferLargerPage && (long)manage.Width * manage.Height > (long)launcher.Width * launcher.Height;
+            Rectangle bounds = PopupPlacement.Place(openManage ? manage : launcher, openManage ? launcher : manage, anchor, work, centered);
             openingPopup = true;
             try {
-                pages.SelectedTab = launcherPage;
+                pages.SelectedTab = openManage ? settingsPage : launcherPage;
                 WindowState = FormWindowState.Normal;
                 ApplyPageBounds(bounds); Show();
                 // Also works when launched with STARTUPINFO's initial hidden state.
@@ -559,7 +561,8 @@ namespace BetterIcon.Tray
                 ApplyPageBounds(bounds);
             }
             finally { openingPopup = false; }
-            Activate(); apps.Focus();
+            Activate();
+            if (openManage) themes.Focus(); else apps.Focus();
             TraceFixture(centered ? "Hotkey positioned" : "Positioned", anchor);
         }
         void ExitLauncher() { if (busy) { ShowManager(); AppAppearance.Message(this, Text, "Please wait for the current operation to finish.", appearancePalette, false); return; } exiting = true; Close(); }

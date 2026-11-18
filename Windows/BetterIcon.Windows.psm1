@@ -1,7 +1,7 @@
-# BetterIcon-Craft Apps Windows support, version 1.23.0.
+# BetterIcon-Craft Apps Windows support, version 1.23.1.
 # Packaged runtime uses no network, executable patching, registry changes, or Explorer restart.
 Set-StrictMode -Version Latest
-$script:Version = '1.23.0'
+$script:Version = '1.23.1'
 $script:SvgArtworkType = $null
 $script:RepositoryRoot = Split-Path -Parent $PSScriptRoot
 $script:Applications = @('PhotoCraft','VectorCraft','FilmCraft','LightCraft','PdfCraft',

@@ -1,5 +1,9 @@
 # Windows validation
 
+## 1.23.1 tray opening behavior
+
+The native tray suite opens each tab from the tray, checks ties and differing proportions, and measures the gap above the bottom taskbar. It also opens Launcher by shortcut while the larger Manage Icons page is visible.
+
 ## 1.23.0 independent tab sizes - 2026-11-18
 
 The native tray suite resizes each tab, sends clicks to the Windows tab control, and reads the divider’s actual screen coordinates after each switch. It closes and reopens the fixture to check that both dimensions persist. It also exercises the compact Launcher footer, the larger Manage Icons minimum, tray placement at a screen edge, and work areas with negative coordinates or less space than the saved sizes.

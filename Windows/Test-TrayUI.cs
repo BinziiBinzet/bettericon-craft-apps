@@ -89,6 +89,8 @@ static class TrayTests
                     TabControl tabs = (TabControl)typeof(LauncherForm).GetField("pages", instance).GetValue(form);
                     if (pass == 0) {
                         Check(form.Bounds == PopupPlacement.CenteredOnCursor(new Size(900, 818), middle, work), "Existing preferences open at the original default size");
+                        form.Hide(); form.ToggleAboveTray(middle);
+                        Check(tabs.SelectedIndex == 0, "Equal saved sizes open Launcher from the tray");
                         typeof(LauncherForm).GetMethod("UpdateHotkeyHint", instance).Invoke(form, null);
                         ResizePopup(form, new Size(110, 90));
                         LinkLabel shortcut = (LinkLabel)typeof(LauncherForm).GetField("launcherShortcut", instance).GetValue(form);
@@ -120,9 +122,18 @@ static class TrayTests
                     form.Hide();
                     form.ToggleAboveTray(new Point(work.Right - 1, work.Bottom - 1));
                     join = TabDivider(tabs);
-                    Check(tabs.SelectedIndex == 0 && form.Size == compact && work.Contains(form.Bounds), "Tray reopens the compact Launcher near a screen edge");
-                    ClickTab(tabs, 1);
-                    Check(TabDivider(tabs) == join && form.Size == manage && work.Contains(form.Bounds), "Manage Icons fits at the tray edge without moving the divider");
+                    Check(tabs.SelectedIndex == 1 && form.Size == manage && work.Contains(form.Bounds) && work.Bottom - form.Bottom <= 9,
+                        "A tray click opens the larger Manage Icons tab adjacent to the taskbar");
+                    ClickTab(tabs, 0);
+                    Check(TabDivider(tabs) == join && form.Size == compact && work.Contains(form.Bounds), "Launcher fits at the tray edge without moving the divider");
+                    ClickTab(tabs, 1); form.ShowAtCursor(middle);
+                    Check(tabs.SelectedIndex == 0 && form.Size == compact, "The keyboard shortcut opens Launcher even when Manage Icons is larger and visible");
+                    if (pass == 0) {
+                        Size wide = new Size(1024, 540);
+                        ResizePopup(form, wide); form.Hide(); form.ToggleAboveTray(middle);
+                        Check(tabs.SelectedIndex == 0 && form.Size == wide, "The tray chooses Launcher when it has more area but less height than Manage Icons");
+                        ResizePopup(form, compact);
+                    }
                     Preferences saved = new JavaScriptSerializer().Deserialize<Preferences>(File.ReadAllText(path));
                     Check(saved.LauncherWindowSize == compact && saved.ManageWindowSize == manage && saved.IconSize == 72 && saved.Scope == "AllUsers",
                         "Only resized tabs update their saved dimensions and other preferences survive");

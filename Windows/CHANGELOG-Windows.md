@@ -1,5 +1,9 @@
 # Windows installer changelog
 
+## 1.23.1 - 2026-11-18
+
+- Clicking the tray icon opens the tab with the larger saved window area. The global keyboard shortcut always opens Launcher. Equal sizes open Launcher.
+
 ## 1.23.0 - 2026-11-18
 
 - Resize Launcher and Manage Icons independently. Each tab remembers its window size after restarting. Launcher can shrink to 300 × 240 pixels.
