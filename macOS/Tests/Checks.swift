@@ -240,17 +240,17 @@ import WebKit
             !conflict.rows[0].change && conflict.rows[0].message.contains("outside BetterIcon"),
             "preserve external icon changes")
         let rect = PopupWindow.placed(
-            size: NSSize(width: 900, height: 818), around: NSPoint(x: 1310, y: 15),
+            size: NSSize(width: 900, height: 818), reserving: NSSize(width: 300, height: 240), around: NSPoint(x: 1310, y: 15),
             in: NSRect(x: 20, y: 20, width: 1200, height: 700), belowMenu: false)
         try check(rect.maxX == 1220 && rect.minY == 20 && rect.height == 700, "popup clamped to current display")
         return installed
     }
     @MainActor static func ui(_ install: Installation, out: URL) async throws {
         var openedURLs = [URL]()
-        let host = try Application(install, hidden: true) { url in
+        let host = try Application(install, hidden: true, openProjectURL: { url in
             openedURLs.append(url)
             return true
-        }
+        })
         host.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
         // Offscreen WebKit and AppKit surface; no input to the desktop.
         let web = host.web!
@@ -339,6 +339,7 @@ import WebKit
         let snapshot = try await web.takeSnapshot(configuration: nil)
         try Artwork.pngWide(snapshot).write(to: out.appendingPathComponent("manage-icons.png"))
         _ = try await js("el('launcherTab').click();true")
+        try await until("page==='launcher'")
         let launcher = try await web.takeSnapshot(configuration: nil)
         try Artwork.pngWide(launcher).write(to: out.appendingPathComponent("launcher.png"))
         _ = try await js("document.dispatchEvent(new KeyboardEvent('keydown',{key:'p',bubbles:true}));true")
@@ -386,6 +387,119 @@ import WebKit
         try check(
             reloaded.prefs.color == "clay" && reloaded.prefs.theme == "Dark" && reloaded.prefs.size == 112,
             "settings survive relaunch")
+    }
+    @MainActor static func tabWindows(resources: URL, root: URL) async throws {
+        let compact = NSSize(width: 301, height: 241), manage = NSSize(width: 836, height: 606)
+        let wide = NSSize(width: 1024, height: 540), legacy = NSSize(width: 870, height: 809)
+        for screen in [NSRect(x: -1440, y: -200, width: 1440, height: 850),
+                       NSRect(x: 40, y: 60, width: 640, height: 440), NSRect(x: -1, y: -1, width: 1, height: 1)] {
+            for edge in [screen.origin, NSPoint(x: screen.maxX, y: screen.maxY)] {
+                let a = PopupWindow.placed(size: compact, reserving: manage, around: edge, in: screen, belowMenu: false)
+                let divider = PopupWindow.divider(of: a)
+                let b = PopupWindow.anchored(size: manage, reserving: compact, at: divider, in: screen)
+                try check(screen.contains(a) && screen.contains(b) && PopupWindow.divider(of: b) == divider,
+                    "both tabs fit around the same divider on screen \(screen) near \(edge)")
+            }
+        }
+        for name in ["Applications", "Shared"] {
+            try fm.createDirectory(at: root.appendingPathComponent(name), withIntermediateDirectories: true)
+        }
+        let install = try Installation(resources: resources, fixture: root)
+        let file = install.state.appendingPathComponent("preferences.json")
+        var old = Preferences()
+        old.width = Int(legacy.width); old.height = Int(legacy.height); old.color = "copper"
+        try save(old, at: file)
+        for pass in 0..<2 {
+            // Exercise both opening routes without activating a window on the user's desktop.
+            let host = try Application(install, hidden: true, presentWindow: { window in
+                window.alphaValue = 0; window.ignoresMouseEvents = true; window.orderBack(nil)
+            })
+            host.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+            let web = host.web!, window = host.window!
+            defer { window.orderOut(nil) }
+            func waitFor(_ condition: String) async throws {
+                for _ in 0..<150 {
+                    if (try? await web.evaluateJavaScript(condition) as? Bool) == true { return }
+                    try await Task.sleep(nanoseconds: 50_000_000)
+                }
+                throw Problem("Tab window timed out: \(condition). AppKit frame \(window.frame)")
+            }
+            func ready(_ tab: PopupTab, _ size: NSSize) async throws {
+                try await waitFor("page === '\(tab.rawValue)' && innerWidth === \(Int(size.width)) && innerHeight === \(Int(size.height)) && el('manageTab').getBoundingClientRect().left === Math.floor(innerWidth / 2)")
+                try check(window.frame.size == size && window.minSize == tab.minimum, "\(tab.rawValue) restores its size and minimum on pass \(pass)")
+            }
+            func clickTab(_ tab: PopupTab, _ size: NSSize) async throws {
+                _ = try await web.evaluateJavaScript("el('\(tab.rawValue)Tab').click()")
+                try await ready(tab, size)
+            }
+            func clickMenuBar() throws {
+                try check(NSApp.sendAction(NSSelectorFromString("statusClick"), to: host, from: nil),
+                    "AppKit delivers the menu bar button action")
+            }
+            func resize(_ size: NSSize) {
+                let frame = NSRect(x: window.frame.minX, y: window.frame.maxY - size.height, width: size.width, height: size.height)
+                window.setFrame(frame, display: true)
+                (window.contentView as? PopupSurface)?.resized?()
+            }
+            func dividerOnScreen() async throws -> NSPoint {
+                guard let point = try await web.evaluateJavaScript(
+                    "[el('manageTab').getBoundingClientRect().left, el('manageTab').getBoundingClientRect().top]") as? [Double], point.count == 2
+                else { throw Problem("Could not read WebKit's tab divider.") }
+                let local = NSPoint(x: point[0], y: web.isFlipped ? point[1] : web.bounds.height - point[1])
+                return window.convertPoint(toScreen: web.convert(local, to: nil))
+            }
+            try await waitFor("!!model && !working")
+            try clickMenuBar()
+            try await ready(pass == 0 ? .launcher : .manage, pass == 0 ? legacy : manage)
+            if pass == 0 {
+                resize(compact)
+                try await ready(.launcher, compact)
+                let fits = try await web.evaluateJavaScript("""
+                    (() => {
+                      const link=el('launcherShortcut').getBoundingClientRect(), grid=el('apps').getBoundingClientRect();
+                      return link.left >= 0 && link.right <= innerWidth && link.bottom <= innerHeight && grid.bottom <= link.top;
+                    })()
+                    """)
+                try check(fits as? Bool == true, "the compact Launcher fits its shortcut and grid")
+                _ = try await web.evaluateJavaScript("el('launcherShortcut').click()")
+                try await waitFor("el('hotkey').open && el('hotkey').getBoundingClientRect().right <= innerWidth")
+                _ = try await web.evaluateJavaScript("el('hotkey').close()")
+                let join = try await dividerOnScreen()
+                try await clickTab(.manage, legacy)
+                let expanded = try await dividerOnScreen()
+                try check(join == expanded, "switching from odd to even width preserves the rendered divider at \(join), observed \(expanded)")
+                resize(manage)
+            }
+            try await ready(.manage, manage)
+            let join = try await dividerOnScreen()
+            for tab in [PopupTab.launcher, .manage, .launcher, .manage] {
+                try await clickTab(tab, tab == .launcher ? compact : manage)
+                let rendered = try await dividerOnScreen()
+                try check(rendered == join, "tab click keeps the WebKit divider at \(join) in AppKit screen coordinates")
+            }
+            _ = try await web.evaluateJavaScript("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))")
+            try await ready(.launcher, compact)
+            let escaped = try await dividerOnScreen()
+            try check(escaped == join, "Escape switches back around the same divider")
+            try clickMenuBar()
+            try check(!window.isVisible, "a second menu bar click hides BetterIcon")
+            try clickMenuBar()
+            try await ready(.manage, manage)
+            let menuTop = window.frame.maxY
+            try check(window.screen.map { abs($0.visibleFrame.maxY - menuTop) <= 2 } == true,
+                "the larger Manage Icons window opens at the menu bar")
+            host.show(atCursor: true)
+            try await ready(.launcher, compact)
+            if pass == 0 {
+                resize(wide)
+                window.orderOut(nil); try clickMenuBar()
+                try await ready(.launcher, wide)
+                resize(compact)
+            }
+            let stored = try saved(Preferences.self, at: file, fallback: Preferences())
+            try check(stored.launcherWindowSize == compact && stored.manageWindowSize == manage && stored.color == "copper",
+                "resizing or opening one tab preserves the other tab and unrelated preferences")
+        }
     }
     @MainActor static func runQuitMenuApp(resources: URL, fixture: URL) throws {
         let app = NSApplication.shared
@@ -462,6 +576,7 @@ import WebKit
             guard !fm.fileExists(atPath: out.path) else { throw Problem("Choose a new fixture directory.") }
             let install = try core(resources: resources, root: out)
             try await ui(install, out: out)
+            try await tabWindows(resources: resources, root: out.appendingPathComponent("tab-sizes"))
             try await checkQuitMenu(resources: resources, fixture: out)
             print("\(checks) checks passed. \(out.path)")
         } catch {

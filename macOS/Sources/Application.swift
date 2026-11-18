@@ -51,18 +51,24 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
     private var item: NSStatusItem!, globalKey: GlobalKey?
     private var ready = false, working = false, modal = false, nativePanel = false
     private var trackingStatusMenu = false
-    private var wantedTab = "launcher", status = "Changes are reviewed before they are applied.", keyStatus = ""
+    private var activeTab = PopupTab.launcher
+    private var status = "Changes are reviewed before they are applied.", keyStatus = ""
     private var editing: Pack?, files = [String: URL]()
     private var appearanceObserver: NSKeyValueObservation?
     private var voiceOverObserver: NSKeyValueObservation?
-    private var pendingResize: DispatchWorkItem?
+    private var displayedSize = NSSize.zero
     private let startHidden: Bool
     private static let projectURL = URL(string: "https://github.com/BinziiBinzet/bettericon-craft-apps")!
     private let openProjectURL: (URL) -> Bool
+    private let presentWindow: (NSWindow) -> Void
     private var menuBlocks = [() -> Void]()
     let version: String
-    init(_ install: Installation, hidden: Bool = false, openProjectURL: @escaping (URL) -> Bool = { NSWorkspace.shared.open($0) }) throws {
+    init(_ install: Installation, hidden: Bool = false, presentWindow: @escaping (NSWindow) -> Void = {
+        NSApp.activate(ignoringOtherApps: true)
+        $0.makeKeyAndOrderFront(nil)
+    }, openProjectURL: @escaping (URL) -> Bool = { NSWorkspace.shared.open($0) }) throws {
         self.install = install
+        self.presentWindow = presentWindow
         self.openProjectURL = openProjectURL
         startHidden = hidden
         let info = try Data(
@@ -89,7 +95,9 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
         web = WKWebView(frame: .zero, configuration: configuration)
         web.navigationDelegate = self
         web.underPageBackgroundColor = .clear
-        let size = NSSize(width: max(480, prefs.width), height: max(400, prefs.height))
+        let preferred = prefs.windowSize(for: .launcher)
+        let available = NSScreen.main?.visibleFrame.size ?? preferred
+        let size = NSSize(width: min(preferred.width, available.width), height: min(preferred.height, available.height))
         window = PopupWindow(
             contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless, .resizable],
             backing: .buffered, defer: false)
@@ -111,6 +119,7 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
         web.autoresizingMask = [.width, .height]
         surface.addSubview(web)
         window.contentView = surface
+        displayedSize = window.frame.size
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = item.button {
             button.target = self
@@ -190,13 +199,15 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
     }
     func windowDidEndLiveResize(_ notification: Notification) { rememberSize() }
     private func rememberSize() {
-        guard window.isVisible else { return }
-        prefs.width = Int(window.frame.width)
-        prefs.height = Int(window.frame.height)
-        pendingResize?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.savePrefs() }
-        pendingResize = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: work)
+        let size = window.frame.size
+        guard window.isVisible, size != displayedSize else { return }
+        prefs.setWindowSize(size, for: activeTab)
+        fitAtDivider(activeTab)
+        do { try updatePreferences(install.state) { $0.setWindowSize(size, for: activeTab) } }
+        catch {
+            status = "Could not save window size: " + error.localizedDescription
+            call("showError", ["id": "status", "message": status])
+        }
     }
     private var shortcutText: String { prefs.hotkey.displayText(registered: globalKey?.isRegistered ?? true) }
     private func registerKey() {
@@ -239,11 +250,23 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
         let surface = dark ? NSColor(red: 31 / 255, green: 39 / 255, blue: 48 / 255, alpha: 1) : .white
         window.contentView?.layer?.backgroundColor = surface.cgColor
     }
-    func show(atCursor: Bool = false, tab: String = "launcher") {
+    private func apply(_ frame: NSRect, for tab: PopupTab) {
+        activeTab = tab
+        window.minSize = NSSize(width: min(tab.minimum.width, frame.width), height: min(tab.minimum.height, frame.height))
+        window.setFrame(frame, display: true)
+        displayedSize = window.frame.size
+    }
+    private func fitAtDivider(_ tab: PopupTab) {
+        let divider = PopupWindow.divider(of: window.frame)
+        let inside = NSPoint(x: divider.x, y: divider.y - 0.5)
+        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(inside) }) ?? window.screen ?? NSScreen.main else { return }
+        apply(PopupWindow.anchored(size: prefs.windowSize(for: tab), reserving: prefs.windowSize(for: tab.other),
+            at: divider, in: screen.visibleFrame), for: tab)
+    }
+    func show(atCursor: Bool = false, tab: PopupTab = .launcher) {
         guard window != nil else { return }
         if modal || nativePanel {
-            NSApp.activate(ignoringOtherApps: true)
-            window.makeKeyAndOrderFront(nil)
+            presentWindow(window)
             return
         }
         let mouse = NSEvent.mouseLocation
@@ -256,18 +279,15 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
             atCursor
             ? mouse
             : NSPoint(x: buttonFrame?.midX ?? bounds.midX, y: min(buttonFrame?.minY ?? bounds.maxY, bounds.maxY))
-        window.minSize = NSSize(width: min(790, bounds.width), height: min(570, bounds.height))
-        let frame = PopupWindow.placed(
-            size: NSSize(
-                width: max(Int(window.minSize.width), prefs.width),
-                height: max(Int(window.minSize.height), prefs.height)), around: point, in: bounds,
-            belowMenu: !atCursor)
-        window.setFrame(frame, display: true)
-        NSApp.activate(ignoringOtherApps: true)
-        window.makeKeyAndOrderFront(nil)
+        if window.isVisible && !atCursor && tab != activeTab {
+            fitAtDivider(tab)
+        } else {
+            apply(PopupWindow.placed(size: prefs.windowSize(for: tab), reserving: prefs.windowSize(for: tab.other),
+                around: point, in: bounds, belowMenu: !atCursor), for: tab)
+        }
+        presentWindow(window)
         window.makeFirstResponder(web)
-        wantedTab = tab
-        call("reset", ["pageName": tab])
+        call("reset", ["pageName": tab.rawValue])
     }
     @objc private func statusClick() {
         if NSApp.currentEvent?.type == .rightMouseUp
@@ -276,12 +296,13 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
             statusMenu()
             return
         }
-        if window.isVisible && !working && !modal && !nativePanel { window.orderOut(nil) } else { show() }
+        if window.isVisible && !working && !modal && !nativePanel { window.orderOut(nil) }
+        else { show(tab: prefs.largerTab) }
     }
     private func call(_ fn: String, _ args: [String: Any] = [:]) {
         guard ready else { return }
         let order: [String: [String]] = [
-            "update": ["next"], "reset": ["pageName"], "busy": ["message"], "editor": ["info"],
+            "update": ["next"], "reset": ["pageName"], "tab": ["name"], "busy": ["message"], "editor": ["info"],
             "assignment": ["craft", "name"], "hotkey": ["info"], "keyStatus": ["message", "shortcut"], "doneDialog": ["id"],
             "showError": ["id", "message"],
         ]
@@ -612,7 +633,7 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
         if action == "ready" {
             ready = true
             render()
-            call("reset", ["pageName": wantedTab])
+            call("reset", ["pageName": activeTab.rawValue])
             refresh()
             return
         }
@@ -625,6 +646,10 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
         guard !working, !nativePanel else { return }
         let craft = data["craft"] as? String ?? ""
         switch action {
+        case "tab":
+            guard !modal, let name = data["name"] as? String, let tab = PopupTab(rawValue: name) else { return }
+            if tab != activeTab { fitAtDivider(tab) }
+            call("tab", ["name": activeTab.rawValue])
         case "hide": if !modal { window.orderOut(nil) }
         case "changeHotkey": openHotkey()
         case "launch": if let app = apps.first(where: { $0.url.path == data["id"] as? String }) { launch(app) }
@@ -728,7 +753,7 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
             return
         }
         if working {
-            show(tab: wantedTab)
+            show(tab: activeTab)
             return
         }
         menuBlocks.removeAll()
@@ -762,7 +787,7 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
         let themes = sub("Change icon theme")
         for p in packs {
             let e = add(p.title, to: themes, enabled: !working) {
-                self.show(tab: "manage")
+                self.show(tab: .manage)
                 self.changeSelection(p.id)
             }
             e.state = p.id == selected.id ? .on : .off
@@ -770,25 +795,25 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
         menu.addItem(.separator())
         let packMenu = sub("Pack actions")
         _ = add("Customize…", to: packMenu, enabled: !working && !selected.isDefault) {
-            self.show(tab: "manage")
+            self.show(tab: .manage)
             self.editor("customize")
         }
         _ = add("Edit pack…", to: packMenu, enabled: !working && selected.personal) {
-            self.show(tab: "manage")
+            self.show(tab: .manage)
             self.editor("edit")
         }
         _ = add("Export ZIP…", to: packMenu, enabled: !working && selected.personal) {
-            self.show(tab: "manage")
+            self.show(tab: .manage)
             self.exportPack()
         }
         packMenu.addItem(.separator())
         _ = add("Restore built-in packs", to: packMenu, enabled: !working) {
-            self.show(tab: "manage")
+            self.show(tab: .manage)
             self.unhide()
         }
         _ = add("Refresh installed apps", to: menu, enabled: !working) { self.refresh() }
         _ = add("Include another apps folder…", to: menu, enabled: !working && !install.fixture) {
-            self.show(tab: "manage")
+            self.show(tab: .manage)
             if let url = self.chooseFile(folder: true), !self.prefs.folders.contains(url) {
                 self.prefs.folders.append(url)
                 self.savePrefs()
@@ -796,12 +821,12 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
             }
         }
         _ = add("Restore original icons…", to: menu, enabled: !working) {
-            self.show(tab: "manage")
+            self.show(tab: .manage)
             self.review(restore: true, only: nil)
         }
-        _ = add("Manage Icons…", to: menu, enabled: !working) { self.show(tab: "manage") }
+        _ = add("Manage Icons…", to: menu, enabled: !working) { self.show(tab: .manage) }
         _ = add("Change hotkey…", to: menu, enabled: !working) {
-            self.show(tab: "manage")
+            self.show(tab: .manage)
             self.openHotkey()
         }
         menu.addItem(.separator())

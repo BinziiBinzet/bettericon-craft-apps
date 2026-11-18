@@ -104,6 +104,9 @@ nav button {
 nav button + button {
   border-radius: 0 22px 0 0;
 }
+#launcherTab {
+  flex: 0 0 50%;
+}
 nav button[aria-selected="true"],
 nav button[aria-selected="true"]:hover {
   background: var(--surface);
@@ -472,7 +475,7 @@ dialog p {
   min-width: 90px;
 }
 #hotkey {
-  width: 420px;
+  width: min(420px, 90vw);
 }
 #modifiers {
   display: flex;

@@ -1,12 +1,14 @@
 # BetterIcon for Mac
 
-BetterIcon 1.22.1 brings the Windows launcher, 13 icon packs, and all 218 original pack images to the Mac. The Universal app targets Apple silicon and Intel Macs running macOS 12.4 or later. Everything needed to use it is in the app bundle.
+BetterIcon 1.23.1 brings the Windows launcher, 13 icon packs, and all 218 original pack images to the Mac. The Universal app targets Apple silicon and Intel Macs running macOS 12.4 or later. Everything needed to use it is in the app bundle.
 
 ## Install and use
 
 Open the disk image, drag **BetterIcon** into Applications, then open it. Press **Control–Option–A (⌃⌥A)** to open the launcher at the pointer. You can also click the BetterIcon menu bar icon. The lower-left corner of **Launcher** shows your current shortcut. Click it to change or disable the shortcut, or choose **Change hotkey…** from the menu bar icon. Upgrades keep your saved choice.
 
 While VoiceOver is on, BetterIcon releases ⌃⌥A so VoiceOver can use it for **Read All**. BetterIcon registers the shortcut again when VoiceOver turns off and the keys are available. [Apple’s VoiceOver reading commands](https://support.apple.com/guide/voiceover/read-text-vo2706/mac)
+
+Drag an edge or corner of **Launcher** or **Manage Icons** to set that tab’s size. Each tab remembers its dimensions across restarts. Launcher can shrink to 300 × 240 points. Switching tabs keeps their divider at the same screen position. Clicking the menu bar icon opens the tab with the larger saved window area, with Launcher winning a tie. The keyboard shortcut always opens Launcher.
 
 Choose **Exit BetterIcon** in the menu bar icon's right-click menu to quit the app and release its shortcut.
 

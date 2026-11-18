@@ -207,6 +207,23 @@ struct Preferences: Codable {
     var folders = [URL]()
     var width = 900
     var height = 818
+    var launcherWindowSize: NSSize?
+    var manageWindowSize: NSSize?
+
+    func windowSize(for tab: PopupTab) -> NSSize {
+        // On upgrade each tab starts at the user's last shared window size.
+        let legacy = NSSize(width: width > 0 ? width : 900, height: height > 0 ? height : 818)
+        let saved = (tab == .launcher ? launcherWindowSize : manageWindowSize) ?? legacy
+        let size = saved.width > 0 && saved.height > 0 ? saved : legacy
+        return NSSize(width: max(tab.minimum.width, size.width), height: max(tab.minimum.height, size.height))
+    }
+    mutating func setWindowSize(_ size: NSSize, for tab: PopupTab) {
+        if tab == .launcher { launcherWindowSize = size } else { manageWindowSize = size }
+    }
+    var largerTab: PopupTab {
+        let launcher = windowSize(for: .launcher), manage = windowSize(for: .manage)
+        return manage.width * manage.height > launcher.width * launcher.height ? .manage : .launcher
+    }
 }
 
 func withStateLock<T>(_ url: URL, blocking: Bool = true, _ operation: () throws -> T) throws -> T {

@@ -1,15 +1,31 @@
 import AppKit
 import WebKit
 
+enum PopupTab: String {
+    case launcher, manage
+    var minimum: NSSize { self == .launcher ? NSSize(width: 300, height: 240) : NSSize(width: 790, height: 570) }
+    var other: PopupTab { self == .launcher ? .manage : .launcher }
+}
+
 final class PopupWindow: NSWindow {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
-    static func placed(size: NSSize, around anchor: NSPoint, in bounds: NSRect, belowMenu: Bool) -> NSRect {
-        let width = min(size.width, bounds.width)
-        let height = min(size.height, bounds.height)
-        let x = min(max(bounds.minX, anchor.x - width / 2), bounds.maxX - width)
-        let y = min(max(bounds.minY, anchor.y - (belowMenu ? height : height / 2)), bounds.maxY - height)
-        return NSRect(x: x, y: y, width: width, height: height)
+    static func placed(size: NSSize, reserving other: NSSize, around anchor: NSPoint, in bounds: NSRect, belowMenu: Bool) -> NSRect {
+        let top = belowMenu ? anchor.y : anchor.y + min(size.height, bounds.height) / 2
+        return anchored(size: size, reserving: other, at: NSPoint(x: anchor.x, y: top), in: bounds)
+    }
+    // AppKit places windows on whole points. The first WebKit tab uses the same rounding at odd widths.
+    static func divider(of frame: NSRect) -> NSPoint {
+        NSPoint(x: frame.minX + floor(frame.width / 2), y: frame.maxY)
+    }
+    static func anchored(size: NSSize, reserving other: NSSize, at divider: NSPoint, in bounds: NSRect) -> NSRect {
+        let width = min(floor(size.width), bounds.width), height = min(floor(size.height), bounds.height)
+        let widest = min(max(width, floor(other.width)), bounds.width)
+        let tallest = min(max(height, floor(other.height)), bounds.height)
+        let left = floor(widest / 2)
+        let x = min(max(bounds.minX + left, floor(divider.x)), bounds.maxX - (widest - left))
+        let top = min(max(bounds.minY + tallest, floor(divider.y)), bounds.maxY)
+        return NSRect(x: x - floor(width / 2), y: top - height, width: width, height: height)
     }
 }
 

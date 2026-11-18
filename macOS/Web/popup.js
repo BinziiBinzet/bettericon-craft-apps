@@ -28,6 +28,9 @@ function tab(name, focus = true) {
   closeMenu();
   if (focus) (name === "launcher" ? el("apps") : el("packs")).focus();
 }
+function requestTab(name) {
+  send("tab", { name });
+}
 function reset(pageName) {
   if (activeDialog()) return;
   prefix = "";
@@ -297,8 +300,12 @@ function doneDialog(id) {
   if (el(id).open) el(id).close();
 }
 for (const id of ["editor", "hotkey"]) el(id).addEventListener("close", () => send("dialogClosed", { id }));
-el("launcherTab").onclick = () => tab("launcher");
-el("manageTab").onclick = () => tab("manage");
+// Match AppKit's whole-point divider using the tab bar's measured width.
+new ResizeObserver(([bar]) => {
+  el("launcherTab").style.flexBasis = Math.floor(bar.contentRect.width / 2) + "px";
+}).observe(el("launcherTab").parentElement);
+el("launcherTab").onclick = () => requestTab("launcher");
+el("manageTab").onclick = () => requestTab("manage");
 el("launcherShortcut").onclick = () => send("changeHotkey");
 el("packs").onchange = () => send("select", { id: el("packs").value });
 el("packs").oncontextmenu = (e) => {
@@ -366,9 +373,10 @@ document.addEventListener("keydown", (e) => {
     return;
   }
   if (["INPUT", "SELECT"].includes(e.target.tagName) && e.key !== "Escape") return;
-  if (e.target === el("launcherShortcut") && (e.key === "Enter" || e.key === " ")) return;
+  if ((e.target === el("launcherShortcut") || e.target.getAttribute?.("role") === "tab") &&
+      (e.key === "Enter" || e.key === " ")) return;
   if (page === "manage" && e.key === "Escape") {
-    tab("launcher");
+    requestTab("launcher");
     e.preventDefault();
     return;
   }
@@ -434,6 +442,7 @@ el("launcher").addEventListener(
 window.betterIcon = {
   update,
   reset,
+  tab,
   busy,
   editor,
   assignment,
