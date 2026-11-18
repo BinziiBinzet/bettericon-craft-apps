@@ -12,12 +12,24 @@ if [[ "$1" != --private-session ]]; then
     export XDG_DATA_DIRS="$fixture/system:/usr/local/share:/usr/share" GSETTINGS_BACKEND=memory
     export XDG_CURRENT_DESKTOP=XFCE XDG_SESSION_TYPE=x11 GDK_BACKEND=x11
     unset WAYLAND_DISPLAY DBUS_SESSION_BUS_ADDRESS AT_SPI_BUS_ADDRESS
+    if [[ "${2:-}" == --mutter-resize ]]; then
+        export XDG_CURRENT_DESKTOP=GNOME XDG_SESSION_TYPE=wayland XWAYLAND_NO_GLAMOR=1 LIBGL_ALWAYS_SOFTWARE=1
+        unset DISPLAY XAUTHORITY
+        options=(--wayland --headless --virtual-monitor 1440x1000)
+        if [[ -n "${MUTTER_PLUGIN:-}" ]]; then options+=(--mutter-plugin="$MUTTER_PLUGIN"); fi
+        exec dbus-run-session -- mutter "${options[@]}" -- bash "$0" --private-session "$package" "$fixture" --mutter-resize
+    fi
     exec dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24 -nolisten tcp' bash "$0" --private-session "$package" "$fixture"
 fi
 package=$2
 fixture=$3
 [[ -f "$HOME/.bettericon-test-home" ]]
 dbus-update-activation-environment DISPLAY XAUTHORITY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE XDG_RUNTIME_DIR
+if [[ "${4:-}" == --mutter-resize ]]; then
+    "$package/install.sh" --no-start
+    root="$XDG_DATA_HOME/bettericon-desktop"
+    exec "$root/venv/bin/python" "$(dirname "$0")/test-desktop.py" "$root/current" --resize-only
+fi
 cat > "$fixture/wm.xml" <<'XML'
 <openbox_config xmlns="http://openbox.org/3.4/rc"><focus><focusNew>yes</focusNew></focus></openbox_config>
 XML

@@ -31,42 +31,81 @@ final class PopupWindow: NSWindow {
 
 final class PopupSurface: NSView {
     var resized: (() -> Void)?
-    private let edge: CGFloat = 8
-    private func edges(_ p: NSPoint) -> (left: Bool, right: Bool, bottom: Bool, top: Bool) {
-        let corner: CGFloat = 32
-        let endX = p.x < corner || p.x > bounds.width - corner
-        let endY = p.y < corner || p.y > bounds.height - corner
-        let span = endX && endY ? corner : edge
-        return (p.x <= span, p.x >= bounds.width - span, p.y <= span, p.y >= bounds.height - span)
+    private struct Handle {
+        let area: NSRect
+        let x: Int
+        let y: Int
+
+        var cursor: NSCursor {
+            if #available(macOS 15, *) {
+                let position: NSCursor.FrameResizePosition
+                switch (x, y) {
+                case (-1, -1): position = .bottomLeft
+                case (1, -1): position = .bottomRight
+                case (-1, 1): position = .topLeft
+                case (1, 1): position = .topRight
+                case (-1, 0): position = .left
+                case (1, 0): position = .right
+                case (0, -1): position = .bottom
+                default: position = .top
+                }
+                return .frameResize(position: position, directions: .all)
+            }
+            if x == 0 { return .resizeUpDown }
+            if y == 0 { return .resizeLeftRight }
+            let symbol = x == y ? "arrow.down.left.and.arrow.up.right" : "arrow.up.left.and.arrow.down.right"
+            guard let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) else { return .crosshair }
+            return NSCursor(image: image, hotSpot: NSPoint(x: image.size.width / 2, y: image.size.height / 2))
+        }
+    }
+    private var drag: (handle: Handle, frame: NSRect, pointer: NSPoint)?
+    private var handles: [Handle] {
+        let w = bounds.width, h = bounds.height
+        let e: CGFloat = 8, c: CGFloat = 28
+        return [
+            Handle(area: NSMakeRect(0, c, e, h - 2*c), x: -1, y: 0),
+            Handle(area: NSMakeRect(w-e, c, e, h - 2*c), x: 1, y: 0),
+            Handle(area: NSMakeRect(c, 0, w - 2*c, e), x: 0, y: -1),
+            Handle(area: NSMakeRect(c, h-e, w - 2*c, e), x: 0, y: 1),
+            Handle(area: NSMakeRect(0, 0, c, c), x: -1, y: -1),
+            Handle(area: NSMakeRect(w-c, 0, c, c), x: 1, y: -1),
+            Handle(area: NSMakeRect(0, h-c, c, c), x: -1, y: 1),
+            Handle(area: NSMakeRect(w-c, h-c, c, c), x: 1, y: 1),
+        ]
+    }
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        for handle in handles { addCursorRect(handle.area, cursor: handle.cursor) }
     }
     override func hitTest(_ point: NSPoint) -> NSView? {
-        let p = convert(point, from: superview)
-        let e = edges(p)
-        if bounds.contains(p) && (e.left || e.right || e.top || e.bottom) { return self }
+        let local = convert(point, from: superview)
+        if handles.contains(where: { $0.area.contains(local) }) { return self }
         return super.hitTest(point)
     }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override func mouseDown(with event: NSEvent) {
-        guard let win = window else { return }
-        let mouse = NSEvent.mouseLocation
-        let start = win.frame
-        let p = convert(event.locationInWindow, from: nil)
-        let (left, right, bottom, top) = edges(p)
-        while let next = win.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
-            if next.type == .leftMouseUp { break }
-            let pos = NSEvent.mouseLocation
-            let dx = pos.x - mouse.x
-            let dy = pos.y - mouse.y
-            var frame = start
-            if left || right {
-                frame.size.width = max(win.minSize.width, start.width + (left ? -dx : dx))
-                if left { frame.origin.x = start.maxX - frame.width }
-            }
-            if bottom || top {
-                frame.size.height = max(win.minSize.height, start.height + (bottom ? -dy : dy))
-                if bottom { frame.origin.y = start.maxY - frame.height }
-            }
-            win.setFrame(frame, display: true)
+        let local = convert(event.locationInWindow, from: nil)
+        guard let win = window, let handle = handles.first(where: { $0.area.contains(local) }) else {
+            super.mouseDown(with: event)
+            return
         }
+        drag = (handle, win.frame, win.convertPoint(toScreen: event.locationInWindow))
+    }
+    override func mouseDragged(with event: NSEvent) {
+        guard let win = window, let drag else { return }
+        let current = win.convertPoint(toScreen: event.locationInWindow)
+        var frame = drag.frame
+        let x = drag.handle.x, y = drag.handle.y
+        frame.size.width = max(win.minSize.width, frame.width + CGFloat(x) * (current.x - drag.pointer.x))
+        frame.size.height = max(win.minSize.height, frame.height + CGFloat(y) * (current.y - drag.pointer.y))
+        if x < 0 { frame.origin.x = drag.frame.maxX - frame.width }
+        if y < 0 { frame.origin.y = drag.frame.maxY - frame.height }
+        if frame != win.frame { win.setFrame(frame, display: true) }
+    }
+    override func mouseUp(with event: NSEvent) {
+        guard drag != nil else { return }
+        mouseDragged(with: event)
+        drag = nil
         resized?()
     }
 }

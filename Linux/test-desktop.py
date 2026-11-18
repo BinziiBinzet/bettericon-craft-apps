@@ -45,6 +45,50 @@ def wait(condition, seconds=7):
     return False
 
 
+def xdo(*args):
+    subprocess.run(["xdotool", *map(str, args)], check=True)
+
+
+def drag_at(pop, px, py, dx, dy):
+    x, y, w, h = pop.bounds()
+    px, py = x + int(px), y + int(py)
+    xdo("mousemove", px, py, "mousedown", 1)
+    try:
+        check(wait(lambda: pop.drag is not None, 1), "the native resize handle receives the press")
+        xdo("mousemove", px + dx, py + dy)
+        check(wait(lambda: pop.bounds()[2:] != (w, h), 2), "the window resizes while the mouse button is held")
+    finally:
+        xdo("mouseup", 1)
+
+
+def compositor_resize():
+    app = BetterIcon()
+    app.register(None)
+    pop = app.popup
+    app.catalog.update(sizes={"launcher": [490, 390], "manage": [850, 640]})
+    try:
+        pop.open()
+        check(wait(lambda: pop.ready), "the packaged window opens in the private compositor")
+        area = Gdk.Display.get_default().get_monitor(0).get_workarea()
+        join = (area.x + area.width // 2, area.y + area.height // 6)
+        work = pop.limit(join)
+        pop.place("launcher", join, work)
+        check(wait(lambda: pop.bounds() == pop.desired), "Launcher reaches its starting frame")
+        drag_at(pop, 490 - 18, 390 - 18, -34, -26)
+        check(wait(lambda: tab_size(Catalog().prefs, "launcher") == (456, 364)), "Launcher saves the grip drag")
+        pop.switch("manage")
+        check(wait(lambda: pop.bounds() == pop.desired), "Manage Icons reaches its starting frame")
+        x, y, w, h = pop.bounds()
+        drag_at(pop, 4, h // 2, 30, 0)
+        check(wait(lambda: tab_size(Catalog().prefs, "manage") == (820, 640)), "Manage Icons saves the edge drag")
+        check(pop.bounds() == (x + 30, y, w - 30, h), "dragging the left edge holds the opposite edge in place")
+        pop.switch("launcher")
+        check(wait(lambda: pop.bounds()[2:] == (456, 364)), "returning to Launcher recalls its own drag")
+    finally:
+        pop.hide()
+        app.quit()
+
+
 def fixture():
     user = Path(os.environ["XDG_DATA_HOME"]) / "applications"
     system = Path(os.environ["XDG_DATA_DIRS"].split(":")[0]) / "applications"
@@ -174,8 +218,6 @@ def gui():
         off = js("[el('manageTab').getBoundingClientRect().left,el('manageTab').getBoundingClientRect().top]")
         _, x, y = pop.web.get_window().get_origin()
         return (x + off[0],y + off[1])
-    def xdo(*args):
-        subprocess.run(["xdotool",*map(str,args)],check=True)
     def click():
         ok,_,r,_ = app.tray.get_geometry()
         assert ok
@@ -183,12 +225,21 @@ def gui():
     def switch(tab,size):
         js(f"el('{tab}Tab').click();true")
         ready(tab,size)
+    def drag_grip(dx, dy):
+        grip = js("(()=>{const r=el('resizeGrip').getBoundingClientRect();return [r.x+r.width/2,r.y+r.height/2]})()")
+        drag_at(pop, *grip, dx, dy)
     click()
     check(wait(lambda: pop.ready), "first panel click loads the packaged WebKit interface")
     from gi.repository import WebKit2
     check(pop.web.get_settings().get_hardware_acceleration_policy() == WebKit2.HardwareAccelerationPolicy.NEVER,
           "the popup uses software rendering")
     ready("manage",(836,606))
+    drag_grip(-18, -16)
+    check(wait(lambda: tab_size(Catalog().prefs,"manage") == (818,590)), "the visible grip shrinks Manage Icons")
+    drag_at(pop, 814, 295, 18, 0)
+    check(wait(lambda: tab_size(Catalog().prefs,"manage") == (836,590)), "the right edge changes only the width")
+    drag_at(pop, 418, 586, 0, 16)
+    check(wait(lambda: tab_size(Catalog().prefs,"manage") == (836,606)), "the bottom edge changes only the height")
     tray_box = app.tray.get_geometry()[2]
     check(pop.bounds()[1] >= tray_box.y + tray_box.height, "tray popup leaves the panel click target exposed")
     (home / "tray-center").write_text(f"{tray_box.x+tray_box.width//2} {tray_box.y+tray_box.height//2}\n")
@@ -223,13 +274,8 @@ def gui():
     check(js("el('modifiers').innerText.includes('Alt') && el('modifiers').innerText.includes('Super')"), "editor uses Linux modifier names")
     js("el('key').value='B';el('saveKey').click();true")
     check(wait(lambda: js("!el('hotkey').open && el('launcherShortcut').textContent.includes('Ctrl+Alt+B')")), "save a new global shortcut from the UI")
-    x, y, w, h = pop.bounds()
-    xdo("mousemove",x+w-2,y+h-2,"mousedown",1)
-    wait(lambda: pop.desired is None, 1)
-    xdo("mousemove",x+w+19,y+h+17)
-    wait(lambda: pop.bounds()[2] > w, 2)
-    xdo("mouseup",1)
-    check(wait(lambda: tab_size(Catalog().prefs,"launcher")[0] > w), "drag the actual bottom corner of the borderless window")
+    drag_grip(24, 17)
+    check(wait(lambda: tab_size(Catalog().prefs,"launcher") == (325,258)), "the visible grip grows Launcher")
     # Resize through the window manager and then verify both dimensions after a second launch.
     xdo("windowsize", pop.win.get_window().get_xid(), 326, 258)
     check(wait(lambda: tab_size(Catalog().prefs,"launcher") == (326,258)), "resize persists just the active tab's new dimensions")
@@ -258,6 +304,9 @@ def gui():
 
 
 if __name__ == "__main__":
-    core()
-    gui()
+    if sys.argv[2:] == ["--resize-only"]:
+        compositor_resize()
+    else:
+        core()
+        gui()
     print(f"{count} Linux checks passed.",flush=True)

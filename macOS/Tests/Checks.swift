@@ -436,10 +436,25 @@ import WebKit
                 try check(NSApp.sendAction(NSSelectorFromString("statusClick"), to: host, from: nil),
                     "AppKit delivers the menu bar button action")
             }
-            func resize(_ size: NSSize) {
-                let frame = NSRect(x: window.frame.minX, y: window.frame.maxY - size.height, width: size.width, height: size.height)
-                window.setFrame(frame, display: true)
-                (window.contentView as? PopupSurface)?.resized?()
+            func resize(_ size: NSSize) async throws {
+                let grip = try await web.evaluateJavaScript(
+                    "(()=>{const r=el('resizeGrip').getBoundingClientRect();return [r.x+r.width/2,r.y+r.height/2]})()")
+                guard let xy = grip as? [Double], xy.count == 2 else { throw Problem("Missing window resize grip") }
+                let local = NSPoint(x: xy[0], y: web.isFlipped ? xy[1] : web.bounds.height - xy[1])
+                let start = window.convertPoint(toScreen: web.convert(local, to: nil))
+                let delta = NSPoint(x: size.width - window.frame.width, y: window.frame.height - size.height)
+                let events: [(NSEvent.EventType, CGFloat)] = [
+                    (.leftMouseDown, 0), (.leftMouseDragged, 0.5), (.leftMouseDragged, 1), (.leftMouseUp, 1),
+                ]
+                for (type, fraction) in events {
+                    let point = NSPoint(x: start.x + fraction * delta.x, y: start.y + fraction * delta.y)
+                    guard let event = NSEvent.mouseEvent(with: type, location: window.convertPoint(fromScreen: point),
+                        modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                        context: nil, eventNumber: 1, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1)
+                    else { throw Problem("Could not create the resize event") }
+                    window.sendEvent(event)
+                }
+                try check(window.frame.size == size, "dragging the rendered grip resized the window to \(size)")
             }
             func dividerOnScreen() async throws -> NSPoint {
                 guard let point = try await web.evaluateJavaScript(
@@ -452,7 +467,7 @@ import WebKit
             try clickMenuBar()
             try await ready(pass == 0 ? .launcher : .manage, pass == 0 ? legacy : manage)
             if pass == 0 {
-                resize(compact)
+                try await resize(compact)
                 try await ready(.launcher, compact)
                 let fits = try await web.evaluateJavaScript("""
                     (() => {
@@ -468,7 +483,7 @@ import WebKit
                 try await clickTab(.manage, legacy)
                 let expanded = try await dividerOnScreen()
                 try check(join == expanded, "switching from odd to even width preserves the rendered divider at \(join), observed \(expanded)")
-                resize(manage)
+                try await resize(manage)
             }
             try await ready(.manage, manage)
             let join = try await dividerOnScreen()
@@ -491,10 +506,10 @@ import WebKit
             host.show(atCursor: true)
             try await ready(.launcher, compact)
             if pass == 0 {
-                resize(wide)
+                try await resize(wide)
                 window.orderOut(nil); try clickMenuBar()
                 try await ready(.launcher, wide)
-                resize(compact)
+                try await resize(compact)
             }
             let stored = try saved(Preferences.self, at: file, fallback: Preferences())
             try check(stored.launcherWindowSize == compact && stored.manageWindowSize == manage && stored.color == "copper",
