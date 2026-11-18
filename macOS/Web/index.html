@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src bettericon-art:; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>BetterIcon for ArtCraft</title>
+    <link rel="stylesheet" href="popup.css" />
+    <script defer src="popup.js"></script>
+  </head>
+  <body>
+    <main id="popup">
+      <nav role="tablist" aria-label="BetterIcon">
+        <button id="launcherTab" role="tab" aria-controls="launcher">Launcher</button
+        ><button id="manageTab" role="tab" aria-controls="manage">Manage Icons</button>
+      </nav>
+      <div id="busy" role="status" hidden><span></span><progress></progress></div>
+      <section id="launcher" role="tabpanel" aria-labelledby="launcherTab">
+        <p id="empty" hidden></p>
+        <div id="apps" class="grid" role="listbox" aria-label="Installed ArtCraft apps" tabindex="0"></div>
+      </section>
+      <section id="manage" role="tabpanel" aria-labelledby="manageTab" hidden>
+        <div class="scroll">
+          <div class="settings">
+            <div class="pack">
+              <label for="packs"><strong>Icon pack</strong></label
+              ><select id="packs"></select>
+              <div id="detail"></div>
+              <div class="actions">
+                <button id="import">Import…</button><button id="new">New pack…</button
+                ><button id="remove">Remove pack</button>
+              </div>
+            </div>
+            <div id="preview" class="grid" role="listbox" aria-label="Icon pack preview" tabindex="0"></div>
+            <div class="display">
+              <label class="check"><input id="names" type="checkbox" />Show app names</label>
+              <div class="sizing">
+                <label for="slider">Icon size</label
+                ><input id="slider" type="range" min="24" max="4096" step="1" />
+                <input id="exact" aria-label="Exact icon size" type="text" inputmode="numeric" /><span
+                  >px</span
+                ><button id="reset">Reset</button>
+              </div>
+            </div>
+            <div>
+              <div class="actions">
+                <button id="apply" class="primary">Apply icons…</button
+                ><button id="restore">Restore all defaults…</button>
+              </div>
+              <p id="status" role="status">Changes are reviewed before they are applied.</p>
+            </div>
+          </div>
+        </div>
+        <footer>
+          <span id="version"></span><button id="brand" aria-label="BetterIcon app icon"><img alt="" /></button
+          ><button id="appearance" aria-label="Appearance"></button>
+        </footer>
+      </section>
+    </main>
+    <div id="menu" role="menu" hidden></div>
+    <dialog id="editor">
+      <form method="dialog">
+        <h1 id="editorTitle">Create icon pack</h1>
+        <label class="field">Pack name<input id="packName" required maxlength="64" /></label>
+        <label class="field">Author<input id="author" maxlength="64" /></label>
+        <p>
+          Choose artwork for the apps you want to customize. Apply icons changes the installed apps after
+          review.
+        </p>
+        <div id="assignments"></div>
+        <p class="error" id="editorError" role="alert"></p>
+        <div class="end">
+          <button value="cancel" formnovalidate>Cancel</button
+          ><button id="savePack" type="button" class="primary">Save pack</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="hotkey">
+      <form method="dialog">
+        <h1>Change hotkey</h1>
+        <label class="check"><input type="checkbox" id="keyEnabled" />Enable system-wide hotkey</label>
+        <div id="modifiers"></div>
+        <label class="field">Key<select id="key"></select></label>
+        <p id="keyStatus" role="status"></p>
+        <p class="error" id="keyError" role="alert"></p>
+        <div class="end">
+          <button value="cancel">Cancel</button
+          ><button id="saveKey" type="button" class="primary">Save</button>
+        </div>
+      </form>
+    </dialog>
+  </body>
+</html>

@@ -2,7 +2,7 @@
 
 Icon installers for [Artcraft](https://getartcraft.com/) applications. The Linux installer supports all Linux desktop environments; the Windows tray launcher opens installed apps and applies icon themes to Desktop and Start-menu shortcuts with backup and restore.
 
-> **Current Status:** Linux and Windows installers are available. macOS support is planned. See [Windows instructions and limitations](Windows/WINDOWS.md).
+> BetterIcon is available for macOS, Windows, and Linux. The Mac app can apply and restore artwork on the installed ArtCraft application bundles. See the [Mac guide](macOS/README.md) and [Windows guide](Windows/WINDOWS.md).
 
 ## Key Features
 
@@ -38,9 +38,10 @@ Supports all official Artcraft Crafting Apps.
 - Windows PowerShell and .NET Framework are included with supported Windows installations; no Python or downloaded modules are required.
 - For supported themes, backups, and taskbar limitations, read [WINDOWS.md](Windows/WINDOWS.md).
 
-### MacOS
+### macOS
 
-- Not available yet.
+- Open the BetterIcon disk image and drag **BetterIcon** into Applications. Click its menu bar icon to open the launcher.
+- In **Manage Icons**, choose a pack and click **Apply icons…**. Review the application paths before applying. **Restore all defaults…** restores their original icons. [Mac guide](macOS/README.md)
 
 ## Contributing & Forking
 
