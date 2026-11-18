@@ -47,6 +47,8 @@ namespace BetterIcon.Tray
         public bool Managed { get; set; }
         public bool NeedsDownload { get; set; }
         public bool Downloaded { get; set; }
+        public bool UpdateAvailable { get; set; }
+        public bool HasDownload { get { return NeedsDownload || UpdateAvailable; } }
         public string LibraryId { get; set; }
         public ThemeIcon[] Icons { get; set; }
         public Dictionary<string, string> FileIcons { get; set; }
@@ -61,7 +63,7 @@ namespace BetterIcon.Tray
         }
         public override string ToString()
         {
-            return IsDefault || Managed ? DisplayName : DisplayName + " (" + (NeedsDownload ? "Download" : Downloaded ? "Downloaded" : "Included") + ")";
+            return IsDefault || Managed ? DisplayName : DisplayName + " (" + (UpdateAvailable ? "Update available" : NeedsDownload ? "Download" : Downloaded ? "Downloaded" : "Included") + ")";
         }
     }
     public sealed class Catalog { public string Version { get; set; } public AppEntry[] Apps { get; set; } public ThemeEntry[] Themes { get; set; } }
@@ -93,6 +95,7 @@ namespace BetterIcon.Tray
     {
         public Dictionary<string, string> CachedProjectIcons { get; set; }
         public ThemeIcon[] DownloadedIcons { get; set; }
+        public Dictionary<string,string> DownloadedFileIcons { get; set; }
         public bool Success { get; set; }
         public string Error { get; set; }
         public Catalog Catalog { get; set; }
@@ -662,12 +665,18 @@ namespace BetterIcon.Tray
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
         }
-        async Task RefreshCatalog()
+        Task RefreshCatalog() { return ReadCatalog(false); }
+        async Task ReadCatalog(bool online)
         {
             if (busy) return;
-            SetBusy(true, "Finding apps and themes...");
+            var filePicker = OwnedForms.OfType<ProjectFileDialog>().FirstOrDefault(f => f.Visible);
+            if (online && !Enabled && (filePicker == null || filePicker.IsWorking)) { ActivateDialog(); return; }
+            if (online && filePicker != null) filePicker.Enabled = false;
+            var previous = new HashSet<string>(bundledThemes.Select(t => t.Id), StringComparer.OrdinalIgnoreCase);
+            SetBusy(true, online ? "Checking for the latest icon packs..." : "Finding apps and themes...");
             try {
-                WorkerReply reply = await worker.Run(new WorkerRequest { Action = "Catalog", Scope = Scope }, false);
+                WorkerReply reply = await worker.Run(new WorkerRequest { Action = online ? "RefreshPackCatalog" : "Catalog", Scope = Scope }, false);
+                if (IsDisposed || Disposing) return;
                 catalog = reply.Catalog;
                 if (fixtureLog == null && !IsDisposed) {
                     if (runningTaskbarIcons == null) runningTaskbarIcons = new RunningTaskbarIcons();
@@ -678,9 +687,33 @@ namespace BetterIcon.Tray
                 status.Text = "Changes are reviewed before they are applied.";
                 if (catalog.Apps.Length == 0) status.Text = "No ArtCraft shortcuts found. Install an app, then refresh from the tray menu.";
                 Text = "BetterIcon for ArtCraft  " + catalog.Version;
+                if (online) {
+                    previewStore.Refresh();
+                    if (filePicker != null && !filePicker.IsDisposed) await filePicker.RefreshChoices();
+                    int added = bundledThemes.Count(t => !previous.Contains(t.Id));
+                    int updated = bundledThemes.Count(t => t.UpdateAvailable);
+                    string result = added == 0 ? "Pack list is up to date." : added + (added == 1 ? " new pack found." : " new packs found.");
+                    result += " " + bundledThemes.Length + " packs available.";
+                    if (updated > 0) result += " Artwork updates available for " + updated + ".";
+                    PackRefreshResult(result, ToolTipIcon.Info);
+                }
             }
-            catch (Exception error) { Report(error); }
-            finally { SetBusy(false, null); }
+            catch (Exception error) {
+                if (!IsDisposed && !Disposing) {
+                    if (online) PackRefreshResult("Couldn't refresh icon packs. " + error.Message, ToolTipIcon.Warning);
+                    else Report(error);
+                }
+            }
+            finally {
+                if (online && filePicker != null && !filePicker.IsDisposed) filePicker.Enabled = true;
+                if (!IsDisposed && !Disposing) SetBusy(false, null);
+            }
+        }
+        void PackRefreshResult(string message, ToolTipIcon icon)
+        {
+            status.Text = message;
+            if (fixtureLog == null && (!Visible || pages.SelectedTab != settingsPage))
+                tray.ShowBalloonTip(3500, "BetterIcon pack list", message, icon);
         }
         [DllImport("shell32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
         static extern int SHDefExtractIconW(string file, int index, uint flags, out IntPtr large, IntPtr small, uint size);
@@ -952,6 +985,8 @@ namespace BetterIcon.Tray
             }
             trayMenu.Items.Add(packActions);
             ToolStripMenuItem reload = new ToolStripMenuItem("Refresh installed apps") { Enabled = !busy }; reload.Click += async delegate { await RefreshCatalog(); }; trayMenu.Items.Add(reload);
+            var refreshPacks = new ToolStripMenuItem("Refresh available icon packs") { Enabled = !busy };
+            refreshPacks.Click += async delegate { await ReadCatalog(true); }; trayMenu.Items.Add(refreshPacks);
             ToolStripMenuItem restoreItem = new ToolStripMenuItem("Restore original icons...") { Enabled = !busy }; restoreItem.Click += async delegate { ShowSettings(); await RestoreIcons(); }; trayMenu.Items.Add(restoreItem);
             ToolStripMenuItem settingsItem = new ToolStripMenuItem("Manage Icons...") { Enabled = !busy }; settingsItem.Click += delegate { ShowSettings(); }; trayMenu.Items.Add(settingsItem);
             ToolStripMenuItem hotkeyItem = new ToolStripMenuItem("Change hotkey...") { Enabled = !busy && hotkey != null, ToolTipText = subtitle.Text };

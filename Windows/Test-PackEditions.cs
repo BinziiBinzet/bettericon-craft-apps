@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -138,6 +139,7 @@ static partial class PackEditionTests
         File.WriteAllText(prefs, json.Serialize(new Preferences { Theme = ThemeEntry.DefaultThemeId, Hotkey = new HotkeySettings { Enabled = false } }));
         var fixture = new FixtureConfig { StateDirectory = state, ShortcutDirectory = new[] { args[1] }, KeepOpenForAutomation = true };
         bool lean = File.Exists(Path.Combine(args[0], "OnDemand.tsv"));
+        if (args.Length > 2 && args[2] == "refresh") { CheckRefresh(args[0], state, fixture); return; }
         if (!lean) Offline();
         const string first = "Craft-Icons-circleb/Root", second = "Craft-Icons-Komplett/Standard", third = "Craft-Icons-Zach/Ink";
         using (var show = new EventWaitHandle(false, EventResetMode.AutoReset))
@@ -157,7 +159,7 @@ static partial class PackEditionTests
                     continue;
                 }
                 var packs = combo.Items.OfType<ThemeEntry>().Where(t => !t.IsDefault).ToArray();
-                Check(packs.Length == 15 && packs.Sum(t => t.IconCount) == 265 && packs.All(t => t.NeedsDownload == lean), "First launch lists all 15 packs and 265 icons with the correct availability");
+                Check(packs.Length == 39 && packs.Sum(t => t.IconCount) == 543 && packs.All(t => t.NeedsDownload == lean), "First launch lists all 39 packs and 543 icons with the correct availability");
                 var cache = Path.Combine(state, "downloads");
                 Check(!Directory.Exists(cache), "Listing the catalog creates no download cache");
                 Check(packs.All(t => t.ToString().EndsWith(lean ? " (Download)" : " (Included)") && MenuLabel(form, t) == t.ToString()), "Picker and tray labels identify each pack's availability at installation");
@@ -192,6 +194,48 @@ static partial class PackEditionTests
                 } else Check(!Directory.Exists(cache), "The bundled edition loads both pack types entirely offline");
                 typeof(LauncherForm).GetMethod("ExitLauncher", Fields).Invoke(form, null);
             }
+        }
+    }
+    static void CheckRefresh(string windows, string state, FixtureConfig fixture)
+    {
+        using (var show = new EventWaitHandle(false, EventResetMode.AutoReset))
+        using (var stop = new EventWaitHandle(false, EventResetMode.AutoReset))
+        for (int pass = 0; pass < 2; pass++) using (var form = new LauncherForm(windows, fixture, true, show, stop)) {
+            form.Start(); form.ShowManager();
+            Wait(() => !Field<bool>(form, "busy") && Field<Catalog>(form, "catalog") != null);
+            var tray = Field<NotifyIcon>(form, "tray").ContextMenuStrip;
+            var combo = Field<ComboBox>(form, "themes");
+            Func<ToolStripMenuItem> command = () => tray.Items.OfType<ToolStripMenuItem>().Single(i => i.Text == "Refresh available icon packs");
+            const string id = "Craft-Icons-Cryogenn/ArtCraft iconPackage - Dark";
+            string snapshot = Path.Combine(state, "pack-catalog", "latest.tsv");
+            int before = combo.Items.OfType<ThemeEntry>().Count(t => !t.IsDefault);
+            byte[] prefs = File.ReadAllBytes(Path.Combine(state, "tray-preferences.json"));
+            if (pass == 1) {
+                Check(before >= 39 && Find(combo, id) != null, "The refreshed list survives an offline restart");
+                byte[] saved = File.ReadAllBytes(snapshot);
+                command().PerformClick();
+                Wait(() => !Field<bool>(form, "busy"));
+                Check(Field<Label>(form, "status").Text.Contains("Couldn't refresh") && saved.SequenceEqual(File.ReadAllBytes(snapshot)) &&
+                    combo.Items.OfType<ThemeEntry>().Count(t => !t.IsDefault) == before, "An offline retry reports failure and retains the complete last-known list");
+            } else {
+                Check(!File.Exists(snapshot), "Launching and opening the tray menu use the installer catalog offline");
+                tray.Show(form, new Point(15, 15)); Application.DoEvents();
+                Check(command().Enabled, "The real tray context menu offers Refresh available icon packs");
+                command().PerformClick(); tray.Close();
+                Check(Field<bool>(form, "busy") && !command().Enabled, "A refresh cannot be started twice while the status bar is checking");
+                Wait(() => !Field<bool>(form, "busy"));
+                int after = combo.Items.OfType<ThemeEntry>().Count(t => !t.IsDefault);
+                Check(File.Exists(snapshot) && after >= 39 && after >= before && Find(combo, id) != null, "The command reads the public catalog and refreshes the app dropdown (" + before + " to " + after + ")");
+                Check(MenuLabel(form, Find(combo, id)) == Find(combo, id).ToString(), "The tray theme menu shows the refreshed entry and its availability");
+                var dialog = typeof(LauncherForm).GetNestedType("ProjectFileDialog", BindingFlags.NonPublic);
+                using (var files = (Form)Activator.CreateInstance(dialog, new object[] { form, null })) {
+                    Check(Find(Field<ComboBox>(files, "packs"), id) != null, "The File icons dropdown includes the refreshed pack");
+                }
+                Check(!Directory.Exists(Path.Combine(state, "downloads")) && !Directory.Exists(Path.Combine(state, "pack-previews")), "Refreshing requests metadata without downloading packs or WebP artwork");
+                Check(prefs.SequenceEqual(File.ReadAllBytes(Path.Combine(state, "tray-preferences.json"))), "Refreshing preserves the app and file pack preferences");
+                Offline();
+            }
+            typeof(LauncherForm).GetMethod("ExitLauncher", Fields).Invoke(form, null);
         }
     }
 }

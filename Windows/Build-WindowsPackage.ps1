@@ -22,9 +22,9 @@ $files = @('install.ps1','uninstall.ps1','BetterIcon.Windows.psm1','BetterIcon.S
     'Start-Tray.cmd','Stop-Tray.cmd','Create-StartMenuShortcut.cmd','Test-Tray.ps1','Test-TrayUI.ps1','Test-TrayUI.cs','BetterIcon.Hotkey.cs','BetterIcon.Packs.cs','BetterIcon.Packs.UI.cs','BetterIcon.Shortcuts.UI.cs','Test-Shortcuts.cs','Test-Packs.cs',
     'BetterIcon.Appearance.cs','Test-Appearance.cs','BetterIcon.Loading.cs','BetterIcon.Window.cs','BetterIcon.Svg.cs','BetterIcon.NativeArtwork.cs','Test-Svg.cs','Test-IconRendering.cs','Restore-SvgDependencies.ps1','SvgDependencies.json','THIRD-PARTY-NOTICES.md','Licenses/SVG.NET.txt','Licenses/ExCSS.txt','Licenses/NET-Foundation.txt','Test-Loading.cs','Build-AppIcon.ps1','Assets/AppIcons/README.md')
 $repository = Get-BetterIconRepository
-$files += @('BetterIcon.ProjectFiles.cs','BetterIcon.ProjectFiles.UI.cs','ProjectFileTypes.json','BetterIcon.OnDemand.ps1','ArtworkRevision.txt',
+$files += @('BetterIcon.ProjectFiles.cs','BetterIcon.ProjectFiles.UI.cs','ProjectFileTypes.json','BetterIcon.OnDemand.ps1','BetterIcon.Catalog.ps1','ArtworkRevision.txt',
     'Test-ProjectFileIcons.ps1','Test-PackEditions.ps1','Test-PackEditions.cs','BetterIcon.PackPreviews.cs',
-    'PreviewArtworkRevision.txt','Licenses/ImageSharp.txt','Licenses/ImageSharp-NOTICES.txt','Test-HoverPreviews.cs')
+    'PreviewArtworkRevision.txt','Licenses/ImageSharp.txt','Licenses/ImageSharp-NOTICES.txt','Test-HoverPreviews.cs','Test-PackCatalog.ps1')
 $buildDirectory = Join-Path $output ('build-' + [guid]::NewGuid().ToString('N'))
 $build = & (Join-Path $PSScriptRoot 'Build-Tray.ps1') -OutputDirectory $buildDirectory
 $fileCount = 0; $iconCount = 0; $previewCount = 0; $appIconCount = 0
@@ -62,27 +62,24 @@ try {
             $null = [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $path.FullName, 'Windows/Assets/AppIcons/' + $relative, [IO.Compression.CompressionLevel]::Optimal)
             $fileCount++; $appIconCount++
         }
-        if ($OnDemand) {
-            $catalog = Join-Path $buildDirectory 'OnDemand.tsv'
-            $revision = (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'ArtworkRevision.txt') -Raw).Trim()
-            $rows = @(Get-Content -LiteralPath (Join-Path $repository 'macOS\Artwork.tsv') | Where-Object { $_ -match "^[a-f0-9]{64}`tCraft-Icons-" })
-            if ($rows.Count -eq 0 -or $revision -cnotmatch '^[a-f0-9]{40}$') { throw 'Missing pack catalog.' }
-            foreach ($row in $rows) {
-                $parts = $row.Split([char]9)
-                if ($parts.Count -ne 3 -or (Get-FileHash -LiteralPath (Join-Path $repository $parts[2]) -Algorithm SHA256).Hash -ine $parts[0]) { throw "Artwork mismatch: $row" }
-            }
-            [IO.File]::WriteAllLines($catalog, [string[]](@($revision) + $rows), [Text.UTF8Encoding]::new($false))
-            [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive,$catalog,'Windows/OnDemand.tsv')
-            $fileCount++
+        $catalog = Join-Path $PSScriptRoot 'PackCatalog.tsv'
+        $rows = [IO.File]::ReadAllLines($catalog)
+        if ($rows[0] -cne ([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'ArtworkRevision.txt'))).Trim()) { throw 'Incorrect seed artwork revision.' }
+        foreach ($row in $rows[1..($rows.Count-1)]) {
+            $parts = $row.Split([char]9)
+            if ($parts.Count -ne 4 -or (Get-FileHash -LiteralPath (Join-Path $repository $parts[2]) -Algorithm SHA256).Hash -ine $parts[3]) { throw "Artwork mismatch: $row" }
         }
-        foreach ($theme in @(if (!$OnDemand) { Get-BetterIconTheme })) {
+        $catalogName = if ($OnDemand) { 'OnDemand.tsv' } else { 'Included.tsv' }
+        [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive,$catalog,('Windows/' + $catalogName))
+        $fileCount++
+        foreach ($theme in @(if (!$OnDemand) { Get-BetterIconTheme -LocalArtworkOnly })) {
             $folder = $theme.Path.Substring($repository.TrimEnd('\','/').Length).TrimStart('\','/').Replace('\','/')
             foreach ($project in $theme.FileIcons.GetEnumerator()) {
                 $file = $folder + '/FileTypes/' + $project.Key.Substring(1) + [IO.Path]::GetExtension($project.Value)
                 [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $project.Value, $file)
                 $fileCount++
             }
-            foreach ($icon in @(Get-BetterIconThemeIcon -Theme $theme.Id)) {
+            foreach ($icon in @(Get-BetterIconThemeIcon -InputObject $theme)) {
                 # Preserve the repository's public directory names independently
                 # of stable Windows preference IDs.
                 $folder = $theme.Path.Substring($repository.TrimEnd('\','/').Length).TrimStart('\','/').Replace('\','/')

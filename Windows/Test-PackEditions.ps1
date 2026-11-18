@@ -1,6 +1,6 @@
 #Requires -Version 5.1
 [CmdletBinding()]
-param([string]$WindowsDirectory, [string]$ArtifactDirectory = [IO.Path]::GetTempPath())
+param([string]$WindowsDirectory, [string]$ArtifactDirectory = [IO.Path]::GetTempPath(), [switch]$Refresh)
 $ErrorActionPreference = 'Stop'
 if (!$WindowsDirectory) { $WindowsDirectory = $PSScriptRoot }
 $windows = (Resolve-Path -LiteralPath $WindowsDirectory).Path
@@ -12,5 +12,6 @@ $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 $probe = Join-Path $root 'PackEditionTests.exe'
 & $compiler /nologo /target:exe /warnaserror+ "/out:$probe" "/reference:$exe" /reference:System.dll /reference:System.Core.dll /reference:System.Drawing.dll /reference:System.Windows.Forms.dll /reference:System.Web.Extensions.dll (Join-Path $PSScriptRoot 'Test-PackEditions.cs') (Join-Path $PSScriptRoot 'Test-HoverPreviews.cs')
 if ($LASTEXITCODE) { throw 'Could not compile the edition tests.' }
-& $probe $windows $root
+$mode = if ($Refresh) { 'refresh' } else { 'editions' }
+& $probe $windows $root $mode
 if ($LASTEXITCODE) { throw "Edition tests failed. Fixture: $root" }

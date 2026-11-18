@@ -197,7 +197,7 @@ function Assert-Installed([string]$TestVersion) {
     Assert-Check ($catalog.Success -and $catalog.Catalog.Version -eq $version -and @($catalog.Catalog.Apps).Count -eq 1 -and $catalog.Catalog.Apps[0].Shortcut -eq (Join-Path $links 'PhotoCraft.lnk')) 'Installed bridge discovers only the disposable application shortcut'
     $icons = @($catalog.Catalog.Themes | ForEach-Object { $_.Icons })
     if ($editionSuffix) {
-        Assert-Check ($icons.Count -eq 0 -and @($catalog.Catalog.Themes | Where-Object NeedsDownload).Count -eq 15 -and -not (Test-Path -LiteralPath (Join-Path $state 'downloads'))) 'Installed on-demand catalog lists all packs without fetching artwork'
+        Assert-Check ($icons.Count -eq 0 -and @($catalog.Catalog.Themes | Where-Object NeedsDownload).Count -eq 39 -and -not (Test-Path -LiteralPath (Join-Path $state 'downloads'))) 'Installed on-demand catalog lists all packs without fetching artwork'
     } else {
         Assert-Check ($icons.Count -gt 0 -and @($icons | Where-Object { -not $_.Path.StartsWith($versionRoot + '\', [StringComparison]::OrdinalIgnoreCase) }).Count -eq 0) 'Installed catalog resolves bundled artwork without using the source checkout'
     }

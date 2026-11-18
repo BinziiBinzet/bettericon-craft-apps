@@ -19,9 +19,9 @@ namespace BetterIcon.Tray
     sealed class PackPreviewStore
     {
         const int Cell = 64, Gap = 6, MaxBytes = 64 * 1024;
-        sealed class Entry { public string File, Hash; public int Length, Count; }
-        readonly string source, directory, cache;
-        readonly Lazy<Dictionary<string, Entry>> catalog;
+        sealed class Entry { public string File, Hash, Revision; public int Length, Count; public bool Online; }
+        readonly string source, directory, cache, refreshedIndex;
+        volatile Lazy<Dictionary<string, Entry>> catalog;
         readonly Action<Uri, string, int, CancellationToken> fetch;
 
         public PackPreviewStore(string windows, string state, Action<Uri, string, int, CancellationToken> download = null)
@@ -29,13 +29,32 @@ namespace BetterIcon.Tray
             source = windows;
             directory = Path.GetFullPath(Path.Combine(windows, "..", "PackPreviews"));
             cache = Path.Combine(state, "pack-previews");
-            catalog = new Lazy<Dictionary<string, Entry>>(ReadCatalog);
+            refreshedIndex = Path.Combine(state, "pack-catalog", "previews.tsv");
+            Refresh();
             fetch = download ?? Download;
         }
+        public void Refresh() { catalog = new Lazy<Dictionary<string, Entry>>(ReadCatalog); }
         Dictionary<string, Entry> ReadCatalog()
         {
             var result = new Dictionary<string, Entry>(StringComparer.OrdinalIgnoreCase);
-            foreach (string line in File.ReadAllLines(Path.Combine(directory, "catalog.tsv"))) {
+            var seed = File.ReadAllText(Path.Combine(source, "PreviewArtworkRevision.txt")).Trim();
+            AddEntries(result, File.ReadAllLines(Path.Combine(directory, "catalog.tsv")), seed, false);
+            if (File.Exists(refreshedIndex)) {
+                try {
+                    var lines = File.ReadAllLines(refreshedIndex);
+                    if (lines.Length > 1) {
+                        var merged = new Dictionary<string, Entry>(result, StringComparer.OrdinalIgnoreCase);
+                        AddEntries(merged, lines.Skip(1), lines[0], true);
+                        return merged;
+                    }
+                } catch (IOException) {} catch (InvalidDataException) {}
+            }
+            return result;
+        }
+        static void AddEntries(Dictionary<string, Entry> result, IEnumerable<string> lines, string revision, bool online)
+        {
+            if (!Regex.IsMatch(revision, @"\A[0-9a-f]{40}\z")) throw new InvalidDataException("Invalid preview revision.");
+            foreach (string line in lines) {
                 string[] f = line.Split('\t');
                 int length;
                 if (f.Length != 5 || !Regex.IsMatch(f[1], @"\A[A-Za-z0-9-]+\.webp\z") ||
@@ -43,9 +62,8 @@ namespace BetterIcon.Tray
                     throw new InvalidDataException("Invalid hover preview catalog.");
                 int count = f[4].Split(',').Length;
                 if (count > 3 || f[4].Length == 0) throw new InvalidDataException("Invalid preview icon count.");
-                result.Add(f[0], new Entry { File = f[1], Hash = f[2], Length = length, Count = count });
+                result[f[0]] = new Entry { File = f[1], Hash = f[2], Length = length, Count = count, Revision = revision, Online = online };
             }
-            return result;
         }
         static byte[] Verified(string path, Entry entry)
         {
@@ -65,14 +83,20 @@ namespace BetterIcon.Tray
             string bundled = Path.Combine(directory, entry.File), cached = Path.Combine(cache, entry.Hash + ".webp");
             byte[] bytes = Verified(bundled, entry) ?? Verified(cached, entry);
             if (bytes == null) {
-                if (!File.Exists(Path.Combine(source, "OnDemand.tsv"))) return null;
-                string revision = File.ReadAllText(Path.Combine(source, "PreviewArtworkRevision.txt")).Trim();
-                if (!Regex.IsMatch(revision, @"\A[0-9a-f]{40}\z")) throw new InvalidDataException("Invalid preview revision.");
-                var uri = new Uri("https://raw.githubusercontent.com/BinziiBinzet/bettericon-craft-apps/" + revision + "/PackPreviews/" + entry.File);
+                if (!entry.Online && !File.Exists(Path.Combine(source, "OnDemand.tsv"))) return null;
+                const string raw = "https://raw.githubusercontent.com/BinziiBinzet/bettericon-craft-apps/";
+                string relative = "/PackPreviews/" + entry.File;
+                var uri = new Uri(raw + entry.Revision + relative);
                 PackLibrary.RegularPath(cache); Directory.CreateDirectory(cache);
                 string part = Path.Combine(cache, Guid.NewGuid().ToString("N") + ".part");
                 try {
-                    fetch(uri, part, entry.Length, token);
+                    try { fetch(uri, part, entry.Length, token); }
+                    catch (FileNotFoundException) {
+                        if (entry.Online) throw;
+                        // Artwork can be published between the local build and its release.
+                        token.ThrowIfCancellationRequested();
+                        fetch(new Uri(raw + "refs/heads/artwork/pack-hover-previews-v1" + relative), part, entry.Length, token);
+                    }
                     token.ThrowIfCancellationRequested();
                     bytes = Verified(part, entry);
                     if (bytes == null) throw new InvalidDataException("Incomplete hover preview.");
@@ -92,20 +116,22 @@ namespace BetterIcon.Tray
             string curl = Path.Combine(Environment.SystemDirectory, "curl.exe");
             if (File.Exists(curl)) {
                 var start = new ProcessStartInfo(curl, "--disable --fail --silent --proto =https --connect-timeout 5 --max-time 12 --max-filesize " +
-                    length.ToString(CultureInfo.InvariantCulture) + " --output \"" + destination + "\" \"" + uri.AbsoluteUri + "\"") {
-                    CreateNoWindow = true, UseShellExecute = false
+                    length.ToString(CultureInfo.InvariantCulture) + " --write-out %{http_code} --output \"" + destination + "\" \"" + uri.AbsoluteUri + "\"") {
+                    CreateNoWindow = true, UseShellExecute = false, RedirectStandardOutput = true
                 };
                 using (var process = Process.Start(start))
                 using (token.Register(delegate { try { if (!process.HasExited) process.Kill(); } catch (InvalidOperationException) {} catch (System.ComponentModel.Win32Exception) {} })) {
+                    string status = process.StandardOutput.ReadToEnd();
                     process.WaitForExit();
                     token.ThrowIfCancellationRequested();
+                    if (status == "404") throw new FileNotFoundException("This preview has not been published at this revision.");
                     if (process.ExitCode != 0) throw new IOException("Preview download unavailable.");
                 }
             } else {
                 var request = (HttpWebRequest)WebRequest.Create(uri);
                 request.Timeout = request.ReadWriteTimeout = 12000; request.AllowAutoRedirect = false;
                 using (token.Register(request.Abort))
-                using (var response = (HttpWebResponse)request.GetResponse())
+                using (var response = OpenPreview(request))
                 using (var input = response.GetResponseStream())
                 using (var output = File.Create(destination)) {
                     var buffer = new byte[4096]; int read;
@@ -115,6 +141,17 @@ namespace BetterIcon.Tray
                         output.Write(buffer, 0, read);
                     }
                 }
+            }
+        }
+        static HttpWebResponse OpenPreview(HttpWebRequest request)
+        {
+            try { return (HttpWebResponse)request.GetResponse(); }
+            catch (WebException e) {
+                var response = e.Response as HttpWebResponse;
+                if (response != null) using (response) {
+                    if (response.StatusCode == HttpStatusCode.NotFound) throw new FileNotFoundException("Preview not found.", e);
+                }
+                throw;
             }
         }
         // The embedded assembly resolver is registered before the JIT enters this method.

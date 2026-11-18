@@ -88,6 +88,8 @@ namespace BetterIcon.Tray
                     packs.SelectedIndex = choice == null ? 0 : packs.Items.IndexOf(choice);
                 } finally { filling = false; }
             }
+            public bool IsWorking { get { return working; } }
+            public Task RefreshChoices() { Reload(owner.preferences.FileTheme); return Choose(false); }
             static Dictionary<string, Bitmap> PrepareFilePreviews(Dictionary<string, string> artwork)
             {
                 var previews = new Dictionary<string, Bitmap>();
@@ -131,10 +133,10 @@ namespace BetterIcon.Tray
             async Task Choose(bool persist)
             {
                 var choice = Selected;
-                Busy(true); UpdateIndicator(progressPanel, phase, progress, true, PackActivity(choice));
+                Busy(true); UpdateIndicator(progressPanel, phase, progress, true, choice != null && !persist ? "Loading " + choice.DisplayName + "..." : PackActivity(choice));
                 try {
                     await Task.Yield();
-                    if (choice != null && choice.NeedsDownload) {
+                    if (persist && choice != null && choice.HasDownload) {
                         await owner.DownloadTheme(choice);
                         if (IsDisposed || Disposing) return;
                         packs.RefreshLabels();

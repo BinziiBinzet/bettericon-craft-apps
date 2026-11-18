@@ -1,48 +1,108 @@
-# The on-demand installer includes this catalog locally. Pack selection is the only network operation.
-function Get-DownloadCatalog {
-    if ($script:DownloadCatalog) { return $script:DownloadCatalog }
-    $lines = [IO.File]::ReadAllLines((Join-Path $PSScriptRoot 'OnDemand.tsv'))
-    $revision = $lines[0]
-    if ($revision -cnotmatch '^[a-f0-9]{40}$') { throw 'Invalid icon catalog revision.' }
-    $root = if ($env:BETTERICON_DOWNLOAD_STATE) { $env:BETTERICON_DOWNLOAD_STATE } else { Get-BetterIconStateDirectory }
-    $root = Join-Path (Get-FullPath $root) ('downloads\' + $revision)
-    $packs = [ordered]@{}
-    foreach ($line in $lines[1..($lines.Length-1)]) {
-        $fields = $line.Split([char]9)
-        if ($fields.Count -ne 3 -or $fields[0] -cnotmatch '^[a-f0-9]{64}$') { throw 'Invalid icon catalog entry.' }
-        foreach ($path in $fields[1..2]) {
-            if ($path -cnotmatch '^Craft-Icons-[A-Za-z0-9_-]+/(?:[A-Za-z0-9 _-]+/)?(?:FileTypes/)?[A-Za-z0-9 _.-]+\.png$' -or $path.Contains('..')) { throw 'Invalid artwork path in the catalog.' }
-        }
-        $parts = $fields[1].Split('/')
-        $author = $parts[0].Substring(12)
-        $isDocument = $parts[-2] -ceq 'FileTypes'
-        $name = if ($parts.Count -eq 2 -or ($parts.Count -eq 3 -and $isDocument)) { 'Root' } else { $parts[1] }
-        $group = if ($author -eq 'OmegaDarling') { 'Craft-Icons-Zach' } else { $parts[0] }
-        $id = $group + '/' + $name
-        if (!$packs.Contains($id)) {
-            $packs[$id] = [pscustomobject]@{ Id=$id; Name=$name; Author=$author; Pack=$group; Revision=$revision; Assets=@(); IconCount=0;
-                Path=(Join-Path (Join-Path $root $parts[0]) $name); Status='Download'; FileIcons=@{} }
-        }
-        $file = if ($isDocument) { 'FileTypes/' + $parts[-1] } else { $parts[-1] }
-        if ($packs[$id].Assets | Where-Object File -ieq $file) { throw 'Duplicate artwork in the pack catalog.' }
-        $packs[$id].Assets += [pscustomobject]@{ File=$file; Source=$fields[2]; Hash=$fields[0] }
-        if ($isDocument) {
-            $key = '.' + [IO.Path]::GetFileNameWithoutExtension($parts[-1]).TrimStart('.')
-            $packs[$id].FileIcons[$key] = Join-Path $packs[$id].Path $file
-        } else { $packs[$id].IconCount++ }
+function Get-SeedCatalogPath {
+    foreach ($file in 'OnDemand.tsv','Included.tsv','PackCatalog.tsv') {
+        $path = Join-Path $PSScriptRoot $file
+        if ([IO.File]::Exists($path)) { return $path }
     }
-    $script:DownloadCatalog = $packs
-    return $packs
+    throw 'The installed pack list is missing.'
+}
+
+function Test-PackAsset([string]$Path, $Asset) {
+    if (![IO.File]::Exists($Path)) { return $false }
+    if ($Asset.Hash -ne '-') { return (Get-FileDigest $Path) -ieq $Asset.Hash }
+    # Git verifies a blob over its length-prefixed contents.
+    $stream = [IO.File]::OpenRead($Path); $sha = [Security.Cryptography.SHA1]::Create()
+    try {
+        $header = [Text.Encoding]::ASCII.GetBytes('blob ' + $stream.Length + [char]0)
+        [void]$sha.TransformBlock($header,0,$header.Length,$header,0)
+        $buffer = [byte[]]::new(65536)
+        while (($read=$stream.Read($buffer,0,$buffer.Length)) -gt 0) { [void]$sha.TransformBlock($buffer,0,$read,$buffer,0) }
+        [void]$sha.TransformFinalBlock($buffer,0,0)
+        return [BitConverter]::ToString($sha.Hash).Replace('-','') -ieq $Asset.Blob
+    } finally { $sha.Dispose(); $stream.Dispose() }
 }
 
 function Test-DownloadedPack($Pack, [switch]$Verify) {
     if (![IO.File]::Exists((Join-Path $Pack.Path '.complete'))) { return $false }
-    foreach ($asset in $Pack.Assets) {
+    foreach ($asset in $Pack.Assets.Values) {
         $path = Join-Path $Pack.Path $asset.File
-        if (![IO.File]::Exists($path)) { return $false }
-        if ($Verify -and (Get-FileDigest $path) -ine $asset.Hash) { return $false }
+        if (![IO.File]::Exists($path) -or ($Verify -and !(Test-PackAsset $path $asset))) { return $false }
     }
     return $true
+}
+
+function Get-LegacyPackPath($Pack,[string]$State) {
+    # 1.24 and 1.25 stored the original catalog under this commit, with spaced app filenames.
+    $legacy = Join-Path (Join-Path (Join-Path $State 'downloads/4a2527ea0c2384904a1a3e878860f974c8f726c4') $Pack.Folder) $Pack.Name
+    if (![IO.File]::Exists((Join-Path $legacy '.complete'))) { return }
+    $files = @(Get-ChildItem -LiteralPath $legacy -File -Recurse | Where-Object Extension -in '.png','.ico','.svg')
+    if ($files.Count -ne $Pack.Assets.Count) { return }
+    foreach ($file in $files) {
+        $relative = $file.FullName.Substring($legacy.Length+1).Replace('\','/')
+        $asset = Get-CatalogAsset ($Pack.Folder + '/' + $Pack.Name + '/' + $relative)
+        if (!$asset -or !$Pack.Assets.Contains($asset.File) -or !(Test-PackAsset $file.FullName $Pack.Assets[$asset.File])) { return }
+    }
+    $legacy
+}
+
+function Get-DownloadCatalog {
+    if ($null -ne $script:DownloadCatalog) { return $script:DownloadCatalog }
+    $state = Get-PackState
+    $seedPath = Get-SeedCatalogPath
+    $seedLines = [IO.File]::ReadAllLines($seedPath)
+    $seed = Read-PackSnapshot $seedLines $state
+    $latest = $seed
+    $folder = Join-Path $state 'pack-catalog'
+    $snapshot = Join-Path $folder 'latest.tsv'
+    if ([IO.File]::Exists($snapshot)) {
+        $lines = [IO.File]::ReadAllLines($snapshot)
+        $header = if ($lines.Count) { $lines[0].Split([char]9) }
+        if ($lines.Count -gt 1 -and $header.Count -eq 2 -and $header[1] -ceq $seedLines[0]) {
+            try { $latest = Read-PackSnapshot $lines $state } catch { Write-Verbose $_.Exception.Message }
+        }
+    }
+    if (![object]::ReferenceEquals($latest,$seed)) {
+        foreach ($id in @($latest.Keys)) {
+            if ($seed.Contains($id) -and $seed[$id].Signature -ceq $latest[$id].Signature) { $latest[$id]=$seed[$id] }
+        }
+    }
+    $installed = @{}
+    $receipts = Join-Path $folder 'installed'
+    if ([IO.Directory]::Exists($receipts)) {
+        foreach ($file in [IO.Directory]::GetFiles($receipts,'*.tsv')) {
+            try {
+                $saved = Read-PackSnapshot ([IO.File]::ReadAllLines($file)) $state
+                foreach ($pack in $saved.Values) { if (Test-DownloadedPack $pack) { $pack.Downloaded=$true; $installed[$pack.Id]=$pack } }
+            } catch { Write-Verbose $_.Exception.Message }
+        }
+    }
+    $included = [IO.Path]::GetFileName($seedPath) -ne 'OnDemand.tsv'
+    $available = [ordered]@{}
+    foreach ($item in $seed.Values) {
+        $base = $item.PSObject.Copy()
+        if ($included) {
+            $base.Path = Join-Path $script:RepositoryRoot $base.Folder
+            if ($base.Name -ne 'Root') { $base.Path = Join-Path $base.Path $base.Name }
+            Set-PackFileIcons $base
+        } else {
+            $legacy = Get-LegacyPackPath $base $state
+            if (!$legacy) { continue }
+            $base.Path=$legacy; $base.Downloaded=$true; Set-PackFileIcons $base
+        }
+        $available[$base.Id]=$base
+    }
+    foreach ($pack in $installed.Values) {
+        $current = $available[$pack.Id]
+        $target = $latest[$pack.Id]
+        if (!$current -or !$target -or $current.Signature -ne $target.Signature) { $available[$pack.Id]=$pack }
+    }
+    foreach ($pack in $available.Values) { $pack.Status='Available' }
+    foreach ($target in $latest.Values) {
+        $local = $available[$target.Id]
+        if ($local) { $local.UpdateAvailable = $local.Signature -ne $target.Signature }
+        else { $available[$target.Id]=$target }
+    }
+    $script:AvailableCatalog=$available; $script:DownloadCatalog=$latest
+    return $latest
 }
 
 function Install-BetterIconDownloadedPack {
@@ -61,9 +121,14 @@ function Install-BetterIconDownloadedPack {
     $stage = Join-Path $parent ('.loading-'+[guid]::NewGuid().ToString('N'))
     try {
         Assert-RegularPath $pack.Path
-        if (Test-DownloadedPack $pack -Verify) { $pack.Status = 'Available'; return }
+        $state = Get-PackState
+        $receipt = Join-Path (Join-Path $state 'pack-catalog/installed') ((Get-PathId (Join-Path $state $pack.Id)) + '.tsv')
+        if (Test-DownloadedPack $pack -Verify) {
+            Write-PackSnapshot $receipt ([string[]](@($pack.Revision) + $pack.Rows.ToArray()))
+            $script:DownloadCatalog=$null; return
+        }
         [void][IO.Directory]::CreateDirectory($stage)
-        foreach ($asset in $pack.Assets) {
+        foreach ($asset in $pack.Assets.Values) {
             $relative = ($asset.Source.Split('/') | ForEach-Object { [Uri]::EscapeDataString($_) }) -join '/'
             $url = 'https://raw.githubusercontent.com/BinziiBinzet/bettericon-craft-apps/'+$pack.Revision+'/'+$relative
             $file = Join-Path $stage $asset.File
@@ -76,7 +141,7 @@ function Install-BetterIconDownloadedPack {
                 $client = [Net.WebClient]::new()
                 try { $client.DownloadFile($url,$file) } finally { $client.Dispose() }
             }
-            if ((Get-FileDigest $file) -ine $asset.Hash) { throw 'The downloaded artwork did not match its published checksum. Choose the pack again.' }
+            if (!(Test-PackAsset $file $asset)) { throw 'The downloaded artwork did not match its published checksum. Choose the pack again.' }
         }
         [IO.File]::WriteAllText((Join-Path $stage '.complete'), $pack.Revision)
         if ([IO.Directory]::Exists($pack.Path)) {
@@ -84,11 +149,12 @@ function Install-BetterIconDownloadedPack {
             [IO.Directory]::Move($pack.Path,$old)
             try { [IO.Directory]::Move($stage,$pack.Path) } catch { [IO.Directory]::Move($old,$pack.Path); throw }
         } else { [IO.Directory]::Move($stage,$pack.Path) }
-        $pack.Status = 'Available'
+        Write-PackSnapshot $receipt ([string[]](@($pack.Revision) + $pack.Rows.ToArray()))
+        $script:DownloadCatalog=$null
     } finally {
         # The stage is a fresh private folder containing only known flat catalog filenames.
         if ([IO.Directory]::Exists($stage)) {
-            foreach ($asset in $pack.Assets) {
+            foreach ($asset in $pack.Assets.Values) {
                 $file = Join-Path $stage $asset.File
                 if ([IO.File]::Exists($file)) { [IO.File]::Delete($file) }
             }

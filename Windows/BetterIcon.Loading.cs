@@ -205,7 +205,7 @@ namespace BetterIcon.Tray
         static string PackActivity(ThemeEntry theme)
         {
             if (theme == null) return "Loading original file icons...";
-            return (theme.NeedsDownload ? "Downloading " : "Loading ") + theme.DisplayName + "...";
+            return (theme.HasDownload ? "Downloading " : "Loading ") + theme.DisplayName + "...";
         }
         void SelectPack()
         {
@@ -289,9 +289,10 @@ namespace BetterIcon.Tray
         async Task DownloadTheme(ThemeEntry theme)
         {
             var reply = await worker.Run(new WorkerRequest { Action = "DownloadPack", Theme = theme.Id }, false);
-            if (reply.DownloadedIcons == null || reply.DownloadedIcons.Length != theme.IconCount) throw new IOException("Incomplete downloaded icon pack.");
+            if (reply.DownloadedIcons == null || reply.DownloadedFileIcons == null) throw new IOException("Incomplete downloaded icon pack.");
             theme.Icons = reply.DownloadedIcons;
-            theme.NeedsDownload = false; theme.Downloaded = true;
+            theme.IconCount = theme.Icons.Length; theme.FileIcons = reply.DownloadedFileIcons;
+            theme.NeedsDownload = false; theme.UpdateAvailable = false; theme.Downloaded = true;
             themes.RefreshLabels(); BuildTrayMenu();
         }
         async Task LoadSelectedPack()
@@ -308,7 +309,7 @@ namespace BetterIcon.Tray
                 // Show feedback immediately, then keep file I/O and decoding off the
                 // window thread so painting and the progress animation can continue.
                 await Task.Yield();
-                if (selected.NeedsDownload) {
+                if (selected.HasDownload) {
                     await DownloadTheme(selected);
                     if (IsDisposed || Disposing) return;
                     status.Text = PackActivity(selected);

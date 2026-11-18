@@ -1,6 +1,7 @@
 """Regenerate the hover artwork from the checked-in ArtCraft icon inventory (Pillow)."""
 import csv
 import hashlib
+import re
 from collections import defaultdict
 from io import BytesIO
 from pathlib import Path
@@ -16,8 +17,9 @@ GAP = 6
 
 def main():
     packs = defaultdict(dict)
-    with (ROOT / "macOS/Artwork.tsv").open(encoding="utf-8") as stream:
-        for digest, name, source in csv.reader(stream, delimiter="\t"):
+    with (ROOT / "Windows/PackCatalog.tsv").open(encoding="utf-8") as stream:
+        next(stream)  # Artwork commit followed by the per-file inventory.
+        for _, name, source, digest in csv.reader(stream, delimiter="\t"):
             canonical = Path(name)
             if not name.startswith("Craft-Icons-") or "FileTypes" in canonical.parts:
                 continue
@@ -43,7 +45,11 @@ def main():
             with Image.open(BytesIO(data)) as image:
                 tile = ImageOps.contain(image.convert("RGBA"), (CELL, CELL), Image.Resampling.LANCZOS)
                 strip.alpha_composite(tile, (index * (CELL + GAP) + (CELL - tile.width) // 2, (CELL - tile.height) // 2))
-        name = f"{author}-{theme.replace(' ', '-')}.webp"
+        label = f"{author}-{theme}".replace(" ", "-")
+        name = re.sub(r"[^A-Za-z0-9-]", "", label)
+        if name != label:
+            name += "-" + hashlib.sha256(label.encode()).hexdigest()[:10]
+        name += ".webp"
         strip.save(OUTPUT / name, format="WEBP", quality=72, method=6)
         data = (OUTPUT / name).read_bytes()
         group = "Zach" if author == "OmegaDarling" else author

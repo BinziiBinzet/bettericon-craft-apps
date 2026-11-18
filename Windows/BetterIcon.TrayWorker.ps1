@@ -52,11 +52,13 @@ try {
             }
             $reply.CachedProjectIcons = $result
         }
-        'Catalog' {
+        { $_ -in 'Catalog','RefreshPackCatalog' } {
+            if ($request.Action -eq 'RefreshPackCatalog') { Update-BetterIconPackCatalog }
             $themes = @(Get-BetterIconTheme | ForEach-Object {
                 [pscustomobject]@{ Id = $_.Id; Name = $_.Name; Pack = $_.Pack; Author = $_.Author; IconCount = $_.IconCount;
-                    NeedsDownload = ($_.Status -eq 'Download'); Downloaded = ($_.Status -eq 'Available' -and $null -ne $_.PSObject.Properties['Revision']);
-                    Icons = @(if ($_.Status -ne 'Download') { Get-BetterIconThemeIcon -Theme $_.Id }); FileIcons = $_.FileIcons }
+                    NeedsDownload = ($_.Status -eq 'Download'); Downloaded = ($_.PSObject.Properties['Downloaded'] -and $_.Downloaded);
+                    UpdateAvailable = ($_.PSObject.Properties['UpdateAvailable'] -and $_.UpdateAvailable);
+                    Icons = @(if ($_.Status -ne 'Download') { Get-BetterIconThemeIcon -InputObject $_ }); FileIcons = $_.FileIcons }
             })
             $reply.Catalog = @{ Version = Get-BetterIconVersion; Themes = $themes;
                 Apps = @(Get-BetterIconApplication -ShortcutDirectory $directories -StateDirectory $request.StateDirectory | Sort-Object Name,Scope,Shortcut) }
@@ -64,7 +66,10 @@ try {
         'DownloadPack' {
             if ($scope -ne 'CurrentUser') { throw 'Downloads are stored in the current user account.' }
             Install-BetterIconDownloadedPack -Theme $request.Theme
-            $reply.DownloadedIcons = @(Get-BetterIconThemeIcon -Theme $request.Theme)
+            $pack = Get-BetterIconTheme | Where-Object Id -eq $request.Theme | Select-Object -First 1
+            $reply.DownloadedIcons = @(Get-BetterIconThemeIcon -InputObject $pack)
+            if ($reply.DownloadedIcons.Count -ne $pack.IconCount) { throw 'Incomplete downloaded icon pack.' }
+            $reply.DownloadedFileIcons = $pack.FileIcons
         }
         'Preview' {
             $reply.Plan = @(Get-BetterIconPlan -Theme $request.Theme -Scope $scope -ShortcutDirectory $directories @themeOptions)

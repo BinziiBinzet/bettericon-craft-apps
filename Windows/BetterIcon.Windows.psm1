@@ -1,8 +1,11 @@
 # BetterIcon-Craft Apps Windows support.
 Set-StrictMode -Version Latest
-$script:Version = '1.25.0'
+$script:Version = '1.26.0'
 $script:SvgArtworkType = $null
 $script:DownloadCatalog = $null
+$script:AvailableCatalog = $null
+$script:ProjectExtensions = @((Get-Content -LiteralPath (Join-Path $PSScriptRoot 'ProjectFileTypes.json') -Raw | ConvertFrom-Json).Key)
+. (Join-Path $PSScriptRoot 'BetterIcon.Catalog.ps1')
 . (Join-Path $PSScriptRoot 'BetterIcon.OnDemand.ps1')
 $script:RepositoryRoot = Split-Path -Parent $PSScriptRoot
 $script:Applications = @('PhotoCraft','VectorCraft','FilmCraft','LightCraft','PdfCraft',
@@ -188,13 +191,12 @@ function Get-ProjectFileArtwork([string]$ThemeRoot) {
 
 function Get-BetterIconTheme {
     [CmdletBinding()]
-    param([string]$Repository = $script:RepositoryRoot)
+    param([string]$Repository = $script:RepositoryRoot, [switch]$LocalArtworkOnly)
     $repositoryPath = Get-FullPath $Repository
-    if ($repositoryPath.TrimEnd('\') -ieq $script:RepositoryRoot.TrimEnd('\') -and [IO.File]::Exists((Join-Path $PSScriptRoot 'OnDemand.tsv'))) {
-        foreach ($pack in (Get-DownloadCatalog).Values) {
-            $pack.Status = if (Test-DownloadedPack $pack) { 'Available' } else { 'Download' }
-            $pack
-        }
+    if (!$LocalArtworkOnly -and $repositoryPath.TrimEnd('\') -ieq $script:RepositoryRoot.TrimEnd('\') -and
+        ([IO.File]::Exists((Join-Path $PSScriptRoot 'OnDemand.tsv')) -or [IO.File]::Exists((Join-Path $PSScriptRoot 'Included.tsv')) -or [IO.File]::Exists((Join-Path (Get-PackState) 'pack-catalog/latest.tsv')))) {
+        $null = Get-DownloadCatalog
+        $script:AvailableCatalog.Values
         return
     }
     foreach ($pack in @(Get-ChildItem -LiteralPath $repositoryPath -Directory -ErrorAction Stop | Where-Object { $_.Name -notlike '.*' })) {
@@ -248,9 +250,10 @@ function Get-IconMap($Theme) {
 }
 
 function Get-BetterIconThemeIcon {
-    [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$Theme, [string]$Repository = $script:RepositoryRoot)
-    $selected = Resolve-Theme $Theme $Repository
+    [CmdletBinding(DefaultParameterSetName='ById')]
+    param([Parameter(Mandatory,ParameterSetName='ById')][string]$Theme, [Parameter(ParameterSetName='ById')][string]$Repository = $script:RepositoryRoot,
+        [Parameter(Mandatory,ParameterSetName='Entry')]$InputObject)
+    $selected = if ($PSCmdlet.ParameterSetName -eq 'Entry') { $InputObject } else { Resolve-Theme $Theme $Repository }
     $map = Get-IconMap $selected
     $previews = @(Get-RegularFiles $selected.Path '.png' -AppArtwork)
     foreach ($app in @($map.Keys | Sort-Object)) {
@@ -745,4 +748,4 @@ function Restore-BetterIcon {
     finally { $lock.Dispose() }
 }
 
-Export-ModuleMember -Function Get-BetterIconVersion,Get-BetterIconRepository,Get-BetterIconStateDirectory,Get-BetterIconTheme,Get-BetterIconThemeIcon,Get-BetterIconBytes,Get-BetterIconApplication,Get-BetterIconPlan,Install-BetterIconTheme,Restore-BetterIcon,Install-BetterIconDownloadedPack
+Export-ModuleMember -Function Get-BetterIconVersion,Get-BetterIconRepository,Get-BetterIconStateDirectory,Get-BetterIconTheme,Get-BetterIconThemeIcon,Get-BetterIconBytes,Get-BetterIconApplication,Get-BetterIconPlan,Install-BetterIconTheme,Restore-BetterIcon,Install-BetterIconDownloadedPack,Update-BetterIconPackCatalog

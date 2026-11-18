@@ -1,13 +1,15 @@
 # BetterIcon-Craft Apps for Windows
 
-BetterIcon **1.25.0** for Windows lets you choose separate icon packs for app shortcuts and native ArtCraft project files.
+BetterIcon **1.26.0** for Windows lets you choose separate icon packs for app shortcuts and native ArtCraft project files.
 
 ## Start here
 
 Choose an installer for Windows 10/11 with .NET Framework 4.8 or later.
 
-- **BetterIcon-Setup-1.25.0.exe** includes all 15 packs. Every pack works offline immediately after installation.
-- **BetterIcon-Setup-1.25.0-OnDemand.exe** includes the catalog. Click a pack in the list, or highlight it and press Enter, to download its artwork and verify its SHA-256 hashes. You can browse the entire list offline. Both pickers share each download and keep it for future launches.
+- **BetterIcon-Setup-1.26.0.exe** includes all 39 packs available at build time. Their artwork and hover previews work offline immediately.
+- **BetterIcon-Setup-1.26.0-OnDemand.exe** includes the catalog. Click a pack in the list, or highlight it and press Enter, to download and verify its artwork. Both pickers share each download and keep it for future launches.
+
+Right-click the system tray icon and choose **Refresh available icon packs** to check the public project's main branch. Both editions remember the refreshed list offline. New packs are marked **Download**. Packs you already have can show **Update available**. Choose one to fetch its updated artwork. Refreshing the list preserves your current app and file icon selections.
 
 Open **BetterIcon** from Start. Both editions install for your Windows account and offer an optional desktop shortcut. The setup is unsigned, so Windows may show an unknown-publisher or SmartScreen notice.
 
@@ -179,6 +181,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Test-Windows.ps1 -Test
 # Exercise the JSON bridge, then native popup placement and tray events.
 .\Test-Tray.ps1 -ArtifactDirectory 'D:\tmp'
 .\Test-TrayUI.ps1 -ArtifactDirectory 'D:\tmp'
+.\Test-PackCatalog.ps1 -ArtifactDirectory 'D:\tmp'
+# From an extracted Windows package, exercise the tray refresh against the public artwork.
+.\Test-PackEditions.ps1 -Refresh -ArtifactDirectory 'D:\tmp'
 
 # Build a native executable, or a ZIP with executable and converted ICOs.
 .\Build-Tray.ps1 -OutputDirectory 'C:\path\to\local-output'
@@ -186,7 +191,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Test-Windows.ps1 -Test
 
 # Build a Setup EXE from a locally built Windows ZIP (Inno Setup on this machine).
 .\Build-AppInstaller.ps1 -OutputDirectory 'C:\path\to\setup-output' `
-  -PackagePath 'C:\path\to\BetterIcon-Craft-Apps-Windows-1.25.0.zip' `
+  -PackagePath 'C:\path\to\BetterIcon-Craft-Apps-Windows-1.26.0.zip' `
   -CompilerPath 'C:\path\to\Inno Setup\ISCC.exe'
 
 # Actual install, upgrade, and uninstall using a unique disposable installer identity.

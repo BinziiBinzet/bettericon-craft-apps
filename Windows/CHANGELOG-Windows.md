@@ -1,5 +1,10 @@
 # Windows installer changelog
 
+## 1.26.0 - 2026-11-18
+
+- Choose **Refresh available icon packs** from the tray menu to find newly published packs and artwork updates. The app keeps the refreshed list available offline.
+- Both editions start with 39 packs covering 543 app icons. Select a pack to download its artwork or update an existing copy.
+
 ## 1.25.0 - 2026-11-18
 
 - Hover over a pack in either dropdown or the tray pack menu to preview up to three icons. ArtCraft Launcher appears first when the pack includes it.
