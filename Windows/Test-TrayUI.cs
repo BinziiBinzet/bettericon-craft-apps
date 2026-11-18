@@ -48,6 +48,89 @@ static class TrayTests
         if (!ok) throw new Exception(name);
         Console.WriteLine("PASS: " + name);
     }
+    static Point TabDivider(TabControl tabs) { return tabs.PointToScreen(tabs.GetTabRect(1).Location); }
+    static void ClickTab(TabControl tabs, int index)
+    {
+        Rectangle tab = tabs.GetTabRect(index);
+        IntPtr point = new IntPtr(((tab.Top + tab.Height / 2) << 16) | (tab.Left + tab.Width / 2));
+        SendMessage(tabs.Handle, 0x0201, new IntPtr(1), point);
+        SendMessage(tabs.Handle, 0x0202, IntPtr.Zero, point);
+    }
+    static void ResizePopup(LauncherForm form, Size size)
+    {
+        SendMessage(form.Handle, 0x0231, IntPtr.Zero, IntPtr.Zero); // WM_ENTERSIZEMOVE
+        form.Size = size;
+        SendMessage(form.Handle, 0x0232, IntPtr.Zero, IntPtr.Zero); // WM_EXITSIZEMOVE
+    }
+    static void CheckTabWindowSizes(string root, string source)
+    {
+        Size compact = new Size(301, 241), manage = new Size(836, 606);
+        foreach (Rectangle area in new[] { new Rectangle(-1440, -180, 1440, 850), new Rectangle(40, 60, 640, 480), new Rectangle(-1, -1, 1, 1) }) {
+            foreach (Point edge in new[] { area.Location, new Point(area.Right, area.Bottom) }) {
+                Rectangle a = PopupPlacement.AtTabDivider(compact, manage, edge, area);
+                Point join = new Point(a.Left + a.Width / 2, a.Top);
+                Rectangle b = PopupPlacement.AtTabDivider(manage, compact, join, area);
+                Check(area.Contains(a) && area.Contains(b) && b.Left + b.Width / 2 == join.X && b.Top == join.Y,
+                    "Both tab sizes fit around one divider on work area " + area + " near " + edge);
+            }
+        }
+        string state = Path.Combine(root, "tab-sizes"), path = Path.Combine(state, "tray-preferences.json");
+        Directory.CreateDirectory(state);
+        File.WriteAllText(path, "{\"Scope\":\"AllUsers\",\"IconSize\":72}");
+        FixtureConfig fixture = new FixtureConfig { ShortcutDirectory = new[] { root }, StateDirectory = state, KeepOpenForAutomation = true };
+        BindingFlags instance = BindingFlags.Instance | BindingFlags.NonPublic;
+        Rectangle work = Screen.PrimaryScreen.WorkingArea;
+        Point middle = new Point(work.Left + work.Width / 2, work.Top + work.Height / 2);
+        using (EventWaitHandle show = new EventWaitHandle(false, EventResetMode.AutoReset))
+        using (EventWaitHandle stop = new EventWaitHandle(false, EventResetMode.AutoReset)) {
+            for (int pass = 0; pass < 2; pass++) using (LauncherForm form = new LauncherForm(source, fixture, true, show, stop)) {
+                try {
+                    form.ShowAtCursor(middle);
+                    TabControl tabs = (TabControl)typeof(LauncherForm).GetField("pages", instance).GetValue(form);
+                    if (pass == 0) {
+                        Check(form.Bounds == PopupPlacement.CenteredOnCursor(new Size(900, 818), middle, work), "Existing preferences open at the original default size");
+                        typeof(LauncherForm).GetMethod("UpdateHotkeyHint", instance).Invoke(form, null);
+                        ResizePopup(form, new Size(110, 90));
+                        LinkLabel shortcut = (LinkLabel)typeof(LauncherForm).GetField("launcherShortcut", instance).GetValue(form);
+                        ListView grid = (ListView)typeof(LauncherForm).GetField("apps", instance).GetValue(form);
+                        Check(form.Size == new Size(300, 240) && tabs.GetTabRect(1).Right <= tabs.ClientSize.Width &&
+                            shortcut.Visible && shortcut.Text.Contains("unavailable") && shortcut.Parent.ClientRectangle.Contains(shortcut.Bounds) &&
+                            shortcut.Height >= shortcut.GetPreferredSize(new Size(shortcut.Width, 0)).Height && grid.Height >= 48,
+                            "Compact Launcher fits both tab headers, the unavailable-shortcut link and the app grid");
+                        ResizePopup(form, compact);
+                    }
+                    Check(form.Size == compact, "Launcher restores its own odd-sized window, pass " + pass);
+                    Point join = TabDivider(tabs);
+                    ClickTab(tabs, 1);
+                    Check(tabs.SelectedIndex == 1 && TabDivider(tabs) == join && form.MinimumSize == new Size(790, 570),
+                        "Clicking Manage Icons keeps the native tab divider fixed and applies its own minimum, pass " + pass);
+                    if (pass == 0) {
+                        ResizePopup(form, new Size(110, 90));
+                        Check(form.Size == new Size(790, 570), "Manage Icons retains its larger minimum after a compact Launcher resize");
+                        ResizePopup(form, manage);
+                    }
+                    Check(form.Size == manage, "Manage Icons restores its own dimensions, pass " + pass);
+                    join = TabDivider(tabs);
+                    for (int i = 0; i < 4; i++) {
+                        int page = i % 2;
+                        ClickTab(tabs, page);
+                        Check(tabs.SelectedIndex == page && form.Size == (page == 0 ? compact : manage) && TabDivider(tabs) == join,
+                            "Repeated tab clicks preserve both sizes and the divider pixel, pass " + pass + ", switch " + i);
+                    }
+                    form.Hide();
+                    form.ToggleAboveTray(new Point(work.Right - 1, work.Bottom - 1));
+                    join = TabDivider(tabs);
+                    Check(tabs.SelectedIndex == 0 && form.Size == compact && work.Contains(form.Bounds), "Tray reopens the compact Launcher near a screen edge");
+                    ClickTab(tabs, 1);
+                    Check(TabDivider(tabs) == join && form.Size == manage && work.Contains(form.Bounds), "Manage Icons fits at the tray edge without moving the divider");
+                    Preferences saved = new JavaScriptSerializer().Deserialize<Preferences>(File.ReadAllText(path));
+                    Check(saved.LauncherWindowSize == compact && saved.ManageWindowSize == manage && saved.IconSize == 72 && saved.Scope == "AllUsers",
+                        "Only resized tabs update their saved dimensions and other preferences survive");
+                }
+                finally { typeof(LauncherForm).GetMethod("RequestExternalStop", instance).Invoke(form, null); }
+            }
+        }
+    }
     static void CheckProjectLink(LinkLabel link, string root)
     {
         string target = (string)link.Links[0].LinkData;
@@ -826,6 +909,7 @@ static class TrayTests
             Check(PopupPlacement.CenteredOnCursor(new Size(900, 690), new Point(-960, 320), work) == new Rectangle(-1410, -25, 900, 690), "Cursor centering supports negative monitor coordinates");
             work = new Rectangle(0, 40, 640, 440);
             Check(work.Contains(PopupPlacement.CenteredOnCursor(new Size(2000, 1500), new Point(638, 478), work)), "Cursor popup shrinks to fit a small working area");
+            CheckTabWindowSizes(root, args[1]);
             JavaScriptSerializer json = new JavaScriptSerializer();
             Preferences migrated = json.Deserialize<Preferences>("{\"Theme\":\"Satin\",\"Scope\":\"AllUsers\"}");
             Check(migrated.Hotkey.Enabled && migrated.Hotkey.ToString() == "Ctrl+Alt+Shift+A" && migrated.Theme == "Satin" && migrated.Scope == "AllUsers", "Old theme and scope preferences acquire the chosen default hotkey");

@@ -1,5 +1,10 @@
 # Windows installer changelog
 
+## 1.23.0 - 2026-11-18
+
+- Resize Launcher and Manage Icons independently. Each tab remembers its window size after restarting. Launcher can shrink to 300 × 240 pixels.
+- Switching tabs expands or shrinks the window around the divider between the two tabs.
+
 ## 1.22.0 - 2026-11-18
 
 - Show the current launcher shortcut at the lower left of the Launcher tab. Click it to change or disable the shortcut.

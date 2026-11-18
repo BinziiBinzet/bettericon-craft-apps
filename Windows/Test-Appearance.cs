@@ -202,10 +202,11 @@ static class AppearanceTests
             foreach (string mode in new[] { "Dark", "Light", "System" }) {
                 preferences.AppearanceMode = mode; Invoke(form, "ApplyAppearance");
                 foreach (Size size in new[] { new Size(790, 570), new Size(900, 818), new Size(1100, 900) }) {
-                    form.Size = size;
-                    typeof(Form).GetMethod("OnResizeEnd", instance).Invoke(form, new object[] { EventArgs.Empty });
                     for (int page = 0; page < pages.TabCount; page++) {
-                        pages.SelectedIndex = page; form.PerformLayout(); pages.PerformLayout(); Application.DoEvents();
+                        pages.SelectedIndex = page;
+                        form.Size = size;
+                        typeof(Form).GetMethod("OnResizeEnd", instance).Invoke(form, new object[] { EventArgs.Empty });
+                        form.PerformLayout(); pages.PerformLayout(); Application.DoEvents();
                         string problem = ChromePixels(pages, (AppearancePalette)Field(form, "appearancePalette"));
                         check(problem == null, mode + " native tabs have rounded outer corners, a straight center join and no outline at " + size.Width + "x" + size.Height + ", page " + page + (problem == null ? "" : ": " + problem));
                         string surface = WindowSurfacePixels(form, (AppearancePalette)Field(form, "appearancePalette"));
