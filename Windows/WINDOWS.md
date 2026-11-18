@@ -109,13 +109,13 @@ Use reasonably short folder paths. This version requires shortcut and installed 
 
 ## Themes and matching
 
-All **13 current themes** are available: seven by **OmegaDarling**, five in **Craft-Icons-Komplett**, and the root theme in **Craft-Icons-circleb**. The current collection supplies **218 app icons**. Oil Slick is retired and is excluded from the repository's current artwork, app catalog, and new Windows packages.
+All **15 current themes** are available: nine by **OmegaDarling**, five in **Craft-Icons-Komplett**, and the root theme in **Craft-Icons-circleb**. The current collection supplies **265 app icons**. Oil Slick is retired and is excluded from the repository's current artwork, app catalog, and new Windows packages.
 
 OmegaDarling's themes use the `Craft-Icons-OmegaDarling` artwork folder while retaining legacy `Craft-Icons-Zach` IDs so saved selections, applied icons, and restore records remain compatible. Their public author credit is **OmegaDarling** in the app and command-line theme listing.
 
 SVG and PNG artwork is converted locally to transparent Windows ICOs containing 16, 24, 32, 48, 64, 128, and 256-pixel frames for Windows shortcuts. Each SVG frame is rendered directly from the vector. The Windows ZIP also retains original SVG/PNG artwork for Launcher and Manage Icons previews. Aspect ratio is preserved and source images are never rewritten. SVG takes precedence over ICO, then PNG. Without SVG, a matching PNG supplies the larger preview for an ICO when available. Multiple files in the preferred format remain ambiguous. ICNS-only artwork is not selectable.
 
-Theme discovery understands SVG/PNG folders, root-level pack artwork, and nested `ico/` folders. Use recognized app names such as `PhotoCraft.png`. A full `Pack/Theme` ID disambiguates identical theme names; the circleb theme uses `Craft-Icons-circleb/Root`. Overview sheets are ignored. Missing artwork is skipped when applying; shortcuts without an explicit icon use their executable's icon. ArtCraft Launcher can use personal artwork named `ArtCraftLauncher.png` or `ArtCraft Launcher.png`; bundled packs currently leave its default unchanged. Its custom icons use the same backup and selective restoration protections as other apps. The command-line theme list covers repository artwork; the Manage Icons tab manages the personal library.
+Theme discovery understands SVG/PNG folders, root-level pack artwork, and nested `ico/` folders. Use recognized app names such as `PhotoCraft.png`. A full `Pack/Theme` ID disambiguates identical theme names; the circleb theme uses `Craft-Icons-circleb/Root`. Overview sheets are ignored. Missing artwork is skipped when applying; shortcuts without an explicit icon use their executable's icon. ArtCraft Launcher artwork is recognized as `ArtCraftLauncher.png` or `ArtCraft Launcher.png` in bundled and personal packs. Its custom icons use the same backup and selective restoration protections as other apps. The command-line theme list covers repository artwork; the Manage Icons tab manages the personal library.
 
 ## Backups and restoration
 

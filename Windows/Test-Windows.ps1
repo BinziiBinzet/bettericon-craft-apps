@@ -50,8 +50,8 @@ function New-TestLink([string]$Directory, [string]$Name) {
 
 try {
     $themes = @(Get-BetterIconTheme)
-    Assert (@($themes | Where-Object Status -eq 'Available').Count -eq 13) 'All thirteen current ICO or PNG themes discovered from the repository parent'
-    Assert (@($themes | Where-Object { $_.Pack -eq 'Craft-Icons-Zach' -and $_.Author -eq 'OmegaDarling' }).Count -eq 7) 'Seven OmegaDarling themes remain after retiring Oil Slick'
+    Assert (@($themes | Where-Object Status -eq 'Available').Count -eq 15) 'All fifteen current ICO or PNG themes discovered from the repository parent'
+    Assert (@($themes | Where-Object { $_.Pack -eq 'Craft-Icons-Zach' -and $_.Author -eq 'OmegaDarling' }).Count -eq 9) 'Nine OmegaDarling themes remain after retiring Oil Slick'
     Assert (@($themes | Where-Object { $_.Name -eq 'Root' -and $_.Pack -ne 'Craft-Icons-circleb' }).Count -eq 0) 'Pack preview sheets are not mistaken for themes'
     $svgRepository = Join-Path $testRoot 'svg repository'
     $svgFolder = Join-Path $svgRepository 'Vectors\Only'
@@ -361,7 +361,7 @@ try {
     Assert ($launcherCatalog.Count -eq 1 -and $launcherCatalog[0].Application -eq 'ArtCraftLauncher' -and $launcherCatalog[0].UsingDefaultIcon -and -not $launcherCatalog[0].RestoreAvailable -and $launcherCatalog[0].IconPath -ieq (Join-Path $env:WINDIR 'System32\cmd.exe')) 'ArtCraft Launcher resolves its implicit executable icon and reports an existing default without inventing a backup'
     Assert ((Digest $launcherLink) -ceq $launcherOriginal -and -not (Test-Path -LiteralPath $launcherState)) 'Inspecting the default launcher leaves its shortcut and state untouched'
     $launcherPlan = @(Get-BetterIconPlan -Theme Cardboard -ShortcutDirectory $launcherLinks)
-    Assert ($launcherPlan.Count -eq 1 -and $launcherPlan[0].Status -eq 'Missing icon') 'Bundled themes safely skip ArtCraft Launcher when they have no matching artwork'
+    Assert ($launcherPlan.Count -eq 1 -and $launcherPlan[0].Status -eq 'Ready') 'Bundled themes supply ArtCraft Launcher artwork'
     $launcherRepository = Join-Path $testRoot 'launcher repository'
     $launcherTheme = Join-Path $launcherRepository 'Craft-Icons-Fixture\Launcher'
     $null = [IO.Directory]::CreateDirectory($launcherTheme)

@@ -11,7 +11,7 @@ Icon installers for [Artcraft](https://getartcraft.com/) applications. The Linux
 - **Clear Status Log:** Visual table showing which apps are ready, missing icons, or not installed.
 - **Windows Support:** A tray popup for installed apps, PNG/ICO theme previews, separate current-user/all-users scopes, and original-shortcut restoration.
 
-The themes in the legacy `Craft-Icons-Zach` folder are by **OmegaDarling**. Their public credit is separate from the folder name so existing theme IDs remain compatible.
+The nine themes in [Craft-Icons-OmegaDarling](Craft-Icons-OmegaDarling/) are by **OmegaDarling**. Each contains 20 icons, including ArtCraft Launcher. Existing `Craft-Icons-Zach` theme IDs remain compatible.
 
 ## Supported Applications
 

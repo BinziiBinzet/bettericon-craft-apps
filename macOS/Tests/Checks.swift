@@ -123,7 +123,7 @@ import WebKit
         ]
         try check(AppCatalog.dockURLs(tiles) == [film], "only local Dock file references enter discovery")
         let packs = try Pack.bundled(at: resources.appendingPathComponent("Packs"))
-        try check(packs.count == 13 && packs.reduce(0) { $0 + $1.icons.count } == 218, "all Windows pack artwork")
+        try check(packs.count == 15 && packs.reduce(0) { $0 + $1.icons.count } == 265, "all Windows pack artwork")
         let cardboard = packs.first { $0.name == "Cardboard" }!
         let edge = packs.first { $0.name == "Edgework" }!
         let photoArt = cardboard.icons["PhotoCraft"]!
@@ -275,7 +275,7 @@ import WebKit
             "document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));el('manageTab').click();el('packs').value='Craft-Icons-Zach/Cardboard';el('packs').dispatchEvent(new Event('change'));true"
         )
         try await until(
-            "model.pack.id==='Craft-Icons-Zach/Cardboard'&&!working&&el('preview').children.length===19")
+            "model.pack.id==='Craft-Icons-Zach/Cardboard'&&!working&&el('preview').children.length===20")
         try await until("[...el('preview').querySelectorAll('img')].every(i=>i.complete&&i.naturalWidth>0)")
         try check(true, "pack selection, keyboard search, and full-resolution preview")
         _ = try await js("el('names').click();true")
