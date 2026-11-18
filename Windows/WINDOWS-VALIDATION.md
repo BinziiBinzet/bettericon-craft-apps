@@ -1,5 +1,9 @@
 # Windows validation
 
+## 1.22.0 launcher links - 2026-11-18
+
+The native tray suite checks the Launcher shortcut's position, both links' typography and theme colors, and keyboard access to the shortcut editor. It saves a new binding in disposable preferences, disables it, and exercises startup with a saved binding held by another window. For the version link, the suite verifies the repository URL and activates the same shell handler with a disposable launch target.
+
 ## 1.21.0 taskbar shortcuts and running apps - 2026-11-17
 
 Disposable Windows shell links exercised two icon packs, renamed pins, exact executable

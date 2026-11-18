@@ -417,12 +417,17 @@ static class AppearanceTests
             check(json.Serialize(new { writtenFinal.Theme, writtenFinal.Scope, writtenFinal.IconSize, writtenFinal.Hotkey, writtenFinal.DefaultShortcuts }) == otherPreferences, "Appearance changes preserve all existing launcher, pack and shortcut preferences");
             iconButton.PerformClick(); Invoke(form, "SetBusy", true, null);
             check(!modeButton.Enabled && !iconButton.Enabled && !iconChoices.Visible, "Appearance controls and their open menu pause during a shortcut operation");
+            LinkLabel shortcutLink = (LinkLabel)Field(form, "launcherShortcut"), versionLink = (LinkLabel)Field(form, "appVersion");
+            check(!shortcutLink.Enabled, "The launcher shortcut editor pauses during an icon operation");
             Invoke(form, "SetBusy", false, null);
+            check(shortcutLink.Enabled, "The launcher shortcut editor becomes available when the operation finishes");
 
             CheckChrome(form, check); CheckBusyThemes(form, check); CheckGridInput(form, check);
             foreach (string mode in new[] { "Dark", "Light" }) {
                 SelectMode(form, mode);
                 AppearancePalette p = (AppearancePalette)Field(form, "appearancePalette");
+                check(new[] { shortcutLink, versionLink }.All(link => link.LinkColor == p.Muted &&
+                    link.VisitedLinkColor == p.Muted && link.ActiveLinkColor == p.Text), mode + " keeps both footer links in the same muted text color");
                 using (HotkeySettingsDialog dialog = new HotkeySettingsDialog(pref.Hotkey, false, value => null)) {
                     Invoke(form, "ApplyDialogAppearance", dialog); dialog.Show(form);
                     check(dialog.BackColor == p.Background && dialog.Controls.Cast<Control>().SelectMany(Descendants).Where(c => (c.Tag as string) == "ErrorText").All(c => c.ForeColor == p.Error), mode + " applies to the hotkey dialog and its error text");

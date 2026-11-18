@@ -288,6 +288,7 @@ namespace BetterIcon.Tray
         readonly List<ArtworkSource> appSources = new List<ArtworkSource>();
         bool renderingArtwork;
         readonly Label filterHint = new Label();
+        readonly LinkLabel launcherShortcut = new LinkLabel();
         readonly Label status = new Label();
         readonly Label subtitle = new Label();
         readonly Button apply = new Button(), restore = new Button();
@@ -394,6 +395,12 @@ namespace BetterIcon.Tray
         }
 
         static Button Button(string text, int width) { return new Button { Text = text, Width = width, Height = 34, FlatStyle = FlatStyle.Flat, UseVisualStyleBackColor = true, Margin = new Padding(4) }; }
+        void ConfigureFooterLink(LinkLabel link, string description)
+        {
+            link.AutoSize = true; link.TabStop = true; link.UseMnemonic = false;
+            link.LinkBehavior = LinkBehavior.HoverUnderline; link.Tag = "SecondaryText";
+            link.AccessibleDescription = description; appearanceTips.SetToolTip(link, description);
+        }
         void BuildWindow(bool testing)
         {
             pages.Dock = DockStyle.Fill; pages.SizeMode = TabSizeMode.Fixed; pages.ItemSize = new Size(420, 38);
@@ -411,7 +418,15 @@ namespace BetterIcon.Tray
             apps.IconSizeWheel += ChangeIconSizeFromWheel;
             filterHint.Dock = DockStyle.Top; filterHint.Height = 42; filterHint.Text = "Finding installed apps...";
             filterHint.TextAlign = ContentAlignment.MiddleLeft;
-            launcherPage.Controls.Add(apps); launcherPage.Controls.Add(filterHint);
+            ConfigureFooterLink(launcherShortcut, "Change the keyboard shortcut that opens the launcher.");
+            launcherShortcut.Margin = Padding.Empty;
+            launcherShortcut.LinkClicked += delegate { ChangeHotkey(); };
+            FlowLayoutPanel launcherFooter = new FlowLayoutPanel {
+                Dock = DockStyle.Bottom, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                WrapContents = false, Padding = new Padding(0, 6, 0, 0)
+            };
+            launcherFooter.Controls.Add(launcherShortcut);
+            launcherPage.Controls.Add(apps); launcherPage.Controls.Add(filterHint); launcherPage.Controls.Add(launcherFooter);
             BuildSettingsPage(testing);
             BuildLoadingIndicator();
             iconMenu.ShowItemToolTips = true; iconMenu.Items.Add(chooseAppIcon); iconMenu.Items.Add(restoreIconDefault);
@@ -435,6 +450,7 @@ namespace BetterIcon.Tray
             if (value) { iconMenu.Close(); iconMenuTarget = null; chooseAppIcon.Enabled = restoreIconDefault.Enabled = false; }
             iconSizeSlider.Enabled = iconSizeValue.Enabled = resetIconSize.Enabled = !value;
             showAppNames.Enabled = !value;
+            launcherShortcut.Enabled = !value && hotkey != null;
             SetAppearanceBusy(value);
             UpdatePackButtons();
             if (!String.IsNullOrEmpty(message)) status.Text = message;
@@ -487,7 +503,11 @@ namespace BetterIcon.Tray
         }
         void UpdateHotkeyHint()
         {
-            string hint = !preferences.Hotkey.Enabled ? "Global hotkey disabled." : hotkey != null && hotkey.IsRegistered ? preferences.Hotkey + " opens at your cursor." : "Hotkey unavailable. Choose another combination.";
+            bool registered = hotkey != null && hotkey.IsRegistered;
+            string shortcut = preferences.Hotkey.Enabled ? preferences.Hotkey.ToString() : "Disabled";
+            if (preferences.Hotkey.Enabled && !registered) shortcut += " (unavailable)";
+            launcherShortcut.Text = "Launcher shortcut \u00b7 " + shortcut;
+            string hint = !preferences.Hotkey.Enabled ? "Global hotkey disabled." : registered ? preferences.Hotkey + " opens at your cursor." : "Hotkey unavailable. Choose another combination.";
             subtitle.Text = (fixtureLog == null ? "" : "Test shortcuts only. ") + hint;
             BuildTrayMenu();
         }

@@ -48,6 +48,22 @@ static class TrayTests
         if (!ok) throw new Exception(name);
         Console.WriteLine("PASS: " + name);
     }
+    static void CheckProjectLink(LinkLabel link, string root)
+    {
+        string target = (string)link.Links[0].LinkData;
+        Check(target == "https://github.com/BinziiBinzet/bettericon-craft-apps" &&
+            link.Text == "Better Icon for ArtCraft version " + typeof(LauncherForm).Assembly.GetName().Version.ToString(3),
+            "The full version label links to the BetterIcon repository");
+        // Use the same shell action with a disposable shortcut so the check cannot open the user's browser.
+        int before = Directory.GetFiles(root, "launches.txt.*.launched").Length;
+        try {
+            link.Links[0].LinkData = Path.Combine(root, "PhotoCraft.lnk");
+            ((IButtonControl)link).PerformClick();
+            Check(SpinWait.SpinUntil(() => Directory.GetFiles(root, "launches.txt.*.launched").Length == before + 1, 5000),
+                "Activating the version link hands its destination to the Windows shell");
+        }
+        finally { link.Links[0].LinkData = target; }
+    }
     static void CheckWindowResizing(LauncherForm form)
     {
         int style = GetWindowLong(form.Handle, -16);
@@ -392,7 +408,7 @@ static class TrayTests
             scroll.AutoScrollPosition = Point.Empty; form.PerformLayout();
         }
     }
-    static void CheckLargeStartup(string root, string source)
+    static void CheckLargeStartup(string root, string source, HotkeySettings unavailable)
     {
         using (EventWaitHandle show = new EventWaitHandle(false, EventResetMode.AutoReset))
         using (EventWaitHandle stop = new EventWaitHandle(false, EventResetMode.AutoReset))
@@ -411,6 +427,9 @@ static class TrayTests
                     using (Bitmap app = GridImage(launcher, 0)) using (Bitmap pack = GridImage(preview, 0))
                         Check(!form.Visible && slider.Value == 512 && slider.Maximum == 1024 && app.Width == 512 && pack.Width == 512, "Hidden startup restores large saved icons in both native grids without a 256-pixel initialization error");
                     Check(!((IconGridView)launcher).ShowAppNames && !((IconGridView)preview).ShowAppNames && !((CheckBox)typeof(LauncherForm).GetField("showAppNames", instance).GetValue(form)).Checked && HiddenLabels(launcher) && HiddenLabels(preview), "A fresh message-loop startup restores icon-only mode in both large-image grids and Settings");
+                    LinkLabel shortcutLink = (LinkLabel)typeof(LauncherForm).GetField("launcherShortcut", instance).GetValue(form);
+                    Check(shortcutLink.Enabled && shortcutLink.Text.EndsWith(unavailable + " (unavailable)"),
+                        "Startup identifies a saved shortcut held by another window and keeps the editor accessible");
                     stop.Set();
                 }
                 catch (Exception error) { failure = error; timer.Stop(); context.ExitThread(); }
@@ -426,19 +445,20 @@ static class TrayTests
         CheckBox names = (CheckBox)field("showAppNames");
         IconGridView launcher = (IconGridView)field("apps"), preview = (IconGridView)field("packPreview");
         TrackBar slider = (TrackBar)field("iconSizeSlider"); int previousSize = slider.Value;
-        TabControl pages = (TabControl)field("pages");
+        // Start with a fresh, unfiltered popup before choosing a name to type.
+        form.Hide(); form.ShowManager();
         ThemeEntry previousTheme = (ThemeEntry)((ComboBox)field("themes")).SelectedItem;
         Check(json.Deserialize<Preferences>("{\"Theme\":\"Satin\"}").ShowAppNames && names.Checked && launcher.ShowAppNames && preview.ShowAppNames, "Existing preferences retain visible app names by default");
         slider.Value = 48;
         Size namedCell = launcher.GridCellSize;
         string[] titles = launcher.Items.Cast<ListViewItem>().Select(item => item.Text).ToArray();
+        Check(titles.Length > 0, "The icon-only keyboard test starts with installed fixture apps");
         Bitmap[] artwork = ((List<Bitmap>)field("appArtwork")).ToArray();
         names.Checked = false;
         Check(!launcher.ShowAppNames && !preview.ShowAppNames && HiddenLabels(launcher) && HiddenLabels(preview), "Show app names switches native visual labels off in both grids");
         Check(launcher.GridCellSize.Width < namedCell.Width && launcher.GridCellSize.Height < namedCell.Height && launcher.GridCellSize == preview.GridCellSize, "Icon-only mode removes unused name space and packs both grids more tightly");
         Check(launcher.Items.Cast<ListViewItem>().Select(item => item.Text).SequenceEqual(titles) && launcher.Items.Cast<ListViewItem>().All(item => !String.IsNullOrWhiteSpace(item.ToolTipText)) && ((List<Bitmap>)field("appArtwork")).SequenceEqual(artwork), "Hiding labels retains accessible item names, hover tooltips and the existing artwork cache");
         Check(!json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).ShowAppNames, "The icon-only choice is saved for subsequent launches");
-        form.ShowManager(); pages.SelectedIndex = 0;
         string query = titles[0].Substring(0, Math.Min(2, titles[0].Length));
         PlainText(form, query);
         Check(launcher.Items.Count > 0 && launcher.Items.Cast<ListViewItem>().All(item => item.Text.StartsWith(query, StringComparison.OrdinalIgnoreCase)), "Typing still filters real app names when their visual labels are hidden");
@@ -921,7 +941,17 @@ static class TrayTests
                         Check(form.Visible && list.SelectedItems.Count == 0, "The existing-instance show signal reopens the launcher without its previous selection");
                         TabControl pages = (TabControl)typeof(LauncherForm).GetField("pages", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
                         Check(pages.TabPages.Count == 2 && pages.TabPages[0].Text == "Launcher" && pages.TabPages[1].Text == "Manage Icons", "Launcher and Manage Icons occupy the left and right tabs");
-                        Check(pages.TabPages[0].Controls.Count == 2 && !filter.Visible, "The populated Launcher page contains only the app grid");
+                        TabPage launcherPage = pages.TabPages[0];
+                        LinkLabel shortcutLink = Descendants(launcherPage).OfType<LinkLabel>().Single();
+                        LinkLabel versionLink = Descendants(pages.TabPages[1]).OfType<LinkLabel>().Single();
+                        Rectangle linkBounds = launcherPage.RectangleToClient(shortcutLink.RectangleToScreen(shortcutLink.ClientRectangle));
+                        Check(!filter.Visible && shortcutLink.Visible && linkBounds.Left == list.Left && linkBounds.Top >= list.Bottom &&
+                            launcherPage.ClientSize.Height - linkBounds.Bottom <= launcherPage.Padding.Bottom + 2 &&
+                            linkBounds.Right < launcherPage.ClientSize.Width / 2,
+                            "The shortcut sits at the lower left of the populated Launcher, below the grid");
+                        Check(shortcutLink.Text.EndsWith("Disabled") && shortcutLink.Enabled && shortcutLink.TabStop &&
+                            versionLink.TabStop && shortcutLink.Font.Equals(versionLink.Font) && shortcutLink.LinkBehavior == LinkBehavior.HoverUnderline &&
+                            versionLink.LinkBehavior == shortcutLink.LinkBehavior, "The disabled shortcut remains editable and uses the version link's typography and hover style");
                         TrackBar slider = (TrackBar)typeof(LauncherForm).GetField("iconSizeSlider", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
                         List<Bitmap> cached = (List<Bitmap>)typeof(LauncherForm).GetField("appArtwork", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
                         ListView previewGrid = (ListView)typeof(LauncherForm).GetField("packPreview", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
@@ -965,6 +995,7 @@ static class TrayTests
                         Check(list.Items.Count == 3 && !filter.Visible && list.SelectedItems.Count == 0, "Reopening starts with all apps, no stale filter, and no selected icon");
                         pages.SelectedIndex = 1; type("fil");
                         Check(list.Items.Count == 3 && pages.SelectedIndex == 1, "Settings keyboard input does not filter the launcher");
+                        CheckProjectLink(versionLink, root);
                         Bitmap[] sources = cached.ToArray(), previewSources = previewCached.ToArray();
                         previewGrid.Items[1].Selected = true;
                         foreach (int size in new[] { 24, 128, 32, 96 }) slider.Value = size;
@@ -1106,16 +1137,34 @@ static class TrayTests
                         Check(hotkeyTrayDisabled && trayCommands.Enabled, "The hotkey dialog pauses tray commands and restores them after cancellation");
                         MethodInfo saveHotkey = typeof(LauncherForm).GetMethod("SaveHotkey", BindingFlags.Instance | BindingFlags.NonPublic);
                         string themeBefore = json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).Theme;
-                        Check(saveHotkey.Invoke(form, new object[] { second }) == null, "Settings apply a custom combination without restarting");
+                        using (System.Windows.Forms.Timer editShortcut = new System.Windows.Forms.Timer { Interval = 25 }) {
+                            editShortcut.Tick += delegate {
+                                HotkeySettingsDialog dialog = form.OwnedForms.OfType<HotkeySettingsDialog>().FirstOrDefault();
+                                if (dialog == null) return;
+                                editShortcut.Stop();
+                                Descendants(dialog).OfType<CheckBox>().Single(box => box.Text == "Enable system-wide hotkey").Checked = true;
+                                ComboBox keys = Descendants(dialog).OfType<ComboBox>().Single();
+                                keys.SelectedIndex = keys.FindStringExact(HotkeySettings.KeyName(second.Key));
+                                ((Button)dialog.AcceptButton).PerformClick();
+                                if (dialog.Visible) dialog.Close();
+                            };
+                            editShortcut.Start();
+                            Check(shortcutLink.Focus(), "The Launcher shortcut can receive keyboard focus");
+                            Message enter = Message.Create(shortcutLink.Handle, 0x0100, new IntPtr((int)Keys.Enter), IntPtr.Zero);
+                            if (!shortcutLink.PreProcessMessage(ref enter)) SendMessage(enter.HWnd, enter.Msg, enter.WParam, enter.LParam);
+                        }
+                        Check(pages.SelectedTab == launcherPage && shortcutLink.Text.EndsWith(second.ToString()),
+                            "The launcher footer opens the real shortcut editor and shows the saved combination immediately");
                         Preferences saved = json.Deserialize<Preferences>(File.ReadAllText(preferencesPath));
                         Check(saved.Hotkey.Key == second.Key && saved.Hotkey.Enabled && saved.Theme == themeBefore && saved.Scope == "CurrentUser" && saved.IconSize == 80, "Custom hotkey persists without changing theme, scope, or icon size");
                         using (FileStream locked = File.Open(preferencesPath, FileMode.Open, FileAccess.Read, FileShare.None)) {
                             string saveError = (string)saveHotkey.Invoke(form, new object[] { first });
                             GlobalHotkey active = (GlobalHotkey)typeof(LauncherForm).GetField("hotkey", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
-                            Check(saveError != null && active.Current.Key == second.Key, "A settings write failure rolls back to the previous working shortcut");
+                            Check(saveError != null && active.Current.Key == second.Key && shortcutLink.Text.EndsWith(second.ToString()), "A settings write failure restores the previous working shortcut and its footer text");
                         }
                         HotkeySettings off = second.Copy(); off.Enabled = false;
-                        Check(saveHotkey.Invoke(form, new object[] { off }) == null && !json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).Hotkey.Enabled, "Disabled hotkey is saved for subsequent launches");
+                        Check(saveHotkey.Invoke(form, new object[] { off }) == null && !json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).Hotkey.Enabled &&
+                            shortcutLink.Text.EndsWith("Disabled") && shortcutLink.Enabled, "Disabling the shortcut persists and leaves its footer available for editing");
                         CheckDefaultAndIndividualRestore(form, root, preferencesPath, json);
                         CheckAppIconEditing(form, root, preferencesPath, json);
                         CheckLargeArtwork(form, root, preferencesPath, json);
@@ -1131,7 +1180,12 @@ static class TrayTests
                 timer.Start(); Application.Run(context);
                 if (eventFailure != null) throw eventFailure;
             }
-            CheckLargeStartup(root, args[1]);
+            using (GlobalHotkey occupied = new GlobalHotkey(delegate { })) {
+                Check(occupied.TrySet(first, out hotkeyError), "The restart fixture reserves the saved shortcut before opening the launcher");
+                Preferences restart = json.Deserialize<Preferences>(File.ReadAllText(preferencesPath));
+                restart.Hotkey = first; File.WriteAllText(preferencesPath, json.Serialize(restart));
+                CheckLargeStartup(root, args[1], first);
+            }
             CheckContextRestore(root, args[1], json);
             ShortcutScopeTests.Run(root, args[1], json, Check);
         }

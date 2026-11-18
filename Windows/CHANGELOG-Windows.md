@@ -1,5 +1,10 @@
 # Windows installer changelog
 
+## 1.22.0 - 2026-11-18
+
+- Show the current launcher shortcut at the lower left of the Launcher tab. Click it to change or disable the shortcut.
+- Open the BetterIcon GitHub project from the version text on Manage Icons.
+
 ## 1.21.0 - 2026-11-17
 
 - Include matching personal taskbar shortcuts in the Current user Apply and Restore review. Changing a pack updates those pins in place and preserves their original backups.
