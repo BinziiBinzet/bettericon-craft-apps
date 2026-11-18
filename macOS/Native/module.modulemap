@@ -1,0 +1,5 @@
+module BetterIconArchive [system] {
+    header "Archive.h"
+    link "archive"
+    export *
+}
