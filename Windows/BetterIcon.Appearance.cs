@@ -121,6 +121,12 @@ namespace BetterIcon.Tray
             // rectangular inner panel otherwise appears to cut through its curves.
             control.BackColor = control is LauncherForm && !palette.HighContrast ? palette.Surface : control is Form ? palette.Background : control is TabPage || control is ListView || control.Name.EndsWith("Section", StringComparison.Ordinal) ? palette.Surface : parent;
             control.ForeColor = role == "ErrorText" ? palette.Error : role == "SecondaryText" ? palette.Muted : palette.Text;
+            LinkLabel link = control as LinkLabel;
+            if (link != null) {
+                link.LinkColor = link.VisitedLinkColor = control.ForeColor;
+                link.ActiveLinkColor = palette.Text;
+                link.DisabledLinkColor = palette.HighContrast ? SystemColors.GrayText : palette.Muted;
+            }
             Button button = control as Button;
             if (button != null) {
                 button.FlatStyle = FlatStyle.Flat; button.UseVisualStyleBackColor = false;

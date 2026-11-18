@@ -202,10 +202,11 @@ static class AppearanceTests
             foreach (string mode in new[] { "Dark", "Light", "System" }) {
                 preferences.AppearanceMode = mode; Invoke(form, "ApplyAppearance");
                 foreach (Size size in new[] { new Size(790, 570), new Size(900, 818), new Size(1100, 900) }) {
-                    form.Size = size;
-                    typeof(Form).GetMethod("OnResizeEnd", instance).Invoke(form, new object[] { EventArgs.Empty });
                     for (int page = 0; page < pages.TabCount; page++) {
-                        pages.SelectedIndex = page; form.PerformLayout(); pages.PerformLayout(); Application.DoEvents();
+                        pages.SelectedIndex = page;
+                        form.Size = size;
+                        typeof(Form).GetMethod("OnResizeEnd", instance).Invoke(form, new object[] { EventArgs.Empty });
+                        form.PerformLayout(); pages.PerformLayout(); Application.DoEvents();
                         string problem = ChromePixels(pages, (AppearancePalette)Field(form, "appearancePalette"));
                         check(problem == null, mode + " native tabs have rounded outer corners, a straight center join and no outline at " + size.Width + "x" + size.Height + ", page " + page + (problem == null ? "" : ": " + problem));
                         string surface = WindowSurfacePixels(form, (AppearancePalette)Field(form, "appearancePalette"));
@@ -417,12 +418,17 @@ static class AppearanceTests
             check(json.Serialize(new { writtenFinal.Theme, writtenFinal.Scope, writtenFinal.IconSize, writtenFinal.Hotkey, writtenFinal.DefaultShortcuts }) == otherPreferences, "Appearance changes preserve all existing launcher, pack and shortcut preferences");
             iconButton.PerformClick(); Invoke(form, "SetBusy", true, null);
             check(!modeButton.Enabled && !iconButton.Enabled && !iconChoices.Visible, "Appearance controls and their open menu pause during a shortcut operation");
+            LinkLabel shortcutLink = (LinkLabel)Field(form, "launcherShortcut"), versionLink = (LinkLabel)Field(form, "appVersion");
+            check(!shortcutLink.Enabled, "The launcher shortcut editor pauses during an icon operation");
             Invoke(form, "SetBusy", false, null);
+            check(shortcutLink.Enabled, "The launcher shortcut editor becomes available when the operation finishes");
 
             CheckChrome(form, check); CheckBusyThemes(form, check); CheckGridInput(form, check);
             foreach (string mode in new[] { "Dark", "Light" }) {
                 SelectMode(form, mode);
                 AppearancePalette p = (AppearancePalette)Field(form, "appearancePalette");
+                check(new[] { shortcutLink, versionLink }.All(link => link.LinkColor == p.Muted &&
+                    link.VisitedLinkColor == p.Muted && link.ActiveLinkColor == p.Text), mode + " keeps both footer links in the same muted text color");
                 using (HotkeySettingsDialog dialog = new HotkeySettingsDialog(pref.Hotkey, false, value => null)) {
                     Invoke(form, "ApplyDialogAppearance", dialog); dialog.Show(form);
                     check(dialog.BackColor == p.Background && dialog.Controls.Cast<Control>().SelectMany(Descendants).Where(c => (c.Tag as string) == "ErrorText").All(c => c.ForeColor == p.Error), mode + " applies to the hotkey dialog and its error text");

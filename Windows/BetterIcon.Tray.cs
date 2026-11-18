@@ -100,6 +100,8 @@ namespace BetterIcon.Tray
         public HotkeySettings Hotkey { get; set; }
         public string[] DefaultShortcuts { get; set; }
         public bool ShowAppNames { get; set; }
+        public Size LauncherWindowSize { get; set; }
+        public Size ManageWindowSize { get; set; }
         string appearanceMode = "System", appIconStyle = "sage", appIconVariant = "Auto";
         public string AppearanceMode { get { return appearanceMode; } set { appearanceMode = value == "Dark" || value == "Light" ? value : "System"; } }
         public string AppIconStyle { get { return appIconStyle; } set { appIconStyle = AppBranding.Styles.Contains(value) ? value : "sage"; } }
@@ -163,21 +165,40 @@ namespace BetterIcon.Tray
     {
         public static Rectangle AboveTray(Size size, Point anchor, Rectangle work)
         {
-            return Place(size, anchor, work, false);
+            return Place(size, size, anchor, work, false);
         }
         public static Rectangle CenteredOnCursor(Size size, Point cursor, Rectangle work)
         {
-            return Place(size, cursor, work, true);
+            return Place(size, size, cursor, work, true);
         }
-        static Rectangle Place(Size size, Point anchor, Rectangle work, bool centered)
+        static Rectangle UsableArea(Rectangle work)
         {
             if (work.Width < 1 || work.Height < 1) throw new ArgumentException("Invalid screen working area.");
             int gap = Math.Min(8, (Math.Min(work.Width, work.Height) - 1) / 2);
-            int width = Math.Max(1, Math.Min(size.Width, work.Width - gap * 2));
-            int height = Math.Max(1, Math.Min(size.Height, work.Height - gap * 2));
-            int x = Math.Max(work.Left + gap, Math.Min(anchor.X - width / 2, work.Right - gap - width));
-            int y = Math.Max(work.Top + gap, Math.Min(centered ? anchor.Y - height / 2 : anchor.Y - gap - height, work.Bottom - gap - height));
-            return new Rectangle(x, y, width, height);
+            return Rectangle.Inflate(work, -gap, -gap);
+        }
+        internal static Rectangle Place(Size page, Size otherPage, Point anchor, Rectangle work, bool centered)
+        {
+            Rectangle area = UsableArea(work);
+            int height = Math.Max(1, Math.Min(page.Height, area.Height));
+            int top = centered ? anchor.Y - height / 2 : anchor.Y - (area.Top - work.Top) - height;
+            return FitTabs(page, otherPage, new Point(anchor.X, top), area);
+        }
+        public static Rectangle AtTabDivider(Size page, Size otherPage, Point topCenter, Rectangle work)
+        {
+            return FitTabs(page, otherPage, topCenter, UsableArea(work));
+        }
+        static Rectangle FitTabs(Size page, Size otherPage, Point topCenter, Rectangle area)
+        {
+            int width = Math.Max(1, Math.Min(page.Width, area.Width));
+            int height = Math.Max(1, Math.Min(page.Height, area.Height));
+            int widest = Math.Max(width, Math.Min(otherPage.Width, area.Width));
+            int tallest = Math.Max(height, Math.Min(otherPage.Height, area.Height));
+            // Equal-width tab headers keep their join at a fixed offset from the top center.
+            // Leave room for both pages now, so neither edge forces the join to move on a switch.
+            int center = Math.Max(area.Left + widest / 2, Math.Min(topCenter.X, area.Right - (widest - widest / 2)));
+            int top = Math.Max(area.Top, Math.Min(topCenter.Y, area.Bottom - tallest));
+            return new Rectangle(center - width / 2, top, width, height);
         }
     }
 
@@ -288,6 +309,7 @@ namespace BetterIcon.Tray
         readonly List<ArtworkSource> appSources = new List<ArtworkSource>();
         bool renderingArtwork;
         readonly Label filterHint = new Label();
+        readonly LinkLabel launcherShortcut = new LinkLabel();
         readonly Label status = new Label();
         readonly Label subtitle = new Label();
         readonly Button apply = new Button(), restore = new Button();
@@ -302,6 +324,10 @@ namespace BetterIcon.Tray
         Preferences preferences = new Preferences();
         GlobalHotkey hotkey;
         bool busy, exiting, notified;
+        static readonly Size DefaultWindowSize = new Size(900, 818);
+        static readonly Size LauncherMinimum = new Size(300, 240), ManageMinimum = new Size(790, 570);
+        Size displayedPageSize;
+        bool openingPopup;
         Point? trayAnchor;
         string filterText = "";
         readonly Color ink = Color.FromArgb(26, 39, 58), accent = Color.FromArgb(41, 100, 208);
@@ -321,7 +347,7 @@ namespace BetterIcon.Tray
             Text = "BetterIcon for ArtCraft"; Name = "BetterIconLauncher";
             Font = new Font("Segoe UI", 10F); ForeColor = ink; BackColor = Color.FromArgb(244, 247, 251);
             AutoScaleMode = AutoScaleMode.Font; FormBorderStyle = FormBorderStyle.None;
-            ClientSize = new Size(900, 818); MinimumSize = new Size(790, 570);
+            ClientSize = DefaultWindowSize; MinimumSize = LauncherMinimum;
             // Keep a small exposed client margin so child controls cannot consume
             // the native edge hit tests. Font autoscaling scales this margin too.
             Padding = new Padding(8);
@@ -394,13 +420,19 @@ namespace BetterIcon.Tray
         }
 
         static Button Button(string text, int width) { return new Button { Text = text, Width = width, Height = 34, FlatStyle = FlatStyle.Flat, UseVisualStyleBackColor = true, Margin = new Padding(4) }; }
+        void ConfigureFooterLink(LinkLabel link, string description)
+        {
+            link.AutoSize = true; link.TabStop = true; link.UseMnemonic = false;
+            link.LinkBehavior = LinkBehavior.HoverUnderline; link.Tag = "SecondaryText";
+            link.AccessibleDescription = description; appearanceTips.SetToolTip(link, description);
+        }
         void BuildWindow(bool testing)
         {
             pages.Dock = DockStyle.Fill; pages.SizeMode = TabSizeMode.Fixed; pages.ItemSize = new Size(420, 38);
             pages.DrawMode = TabDrawMode.OwnerDrawFixed; pages.DrawItem += DrawPageTab;
             // Updating ItemSize from TabControl.SizeChanged re-enters native layout.
             // Resize only once layout settles, after showing or a user resize.
-            ResizeEnd += delegate { SizeTabs(); TraceFixture("Resized"); };
+            ResizeEnd += delegate { FinishWindowResize(); TraceFixture("Resized"); };
             launcherPage.BackColor = Color.White; launcherPage.Padding = new Padding(18);
             settingsPage.BackColor = BackColor;
             pages.TabPages.AddRange(new[] { launcherPage, settingsPage }); Controls.Add(pages);
@@ -411,7 +443,18 @@ namespace BetterIcon.Tray
             apps.IconSizeWheel += ChangeIconSizeFromWheel;
             filterHint.Dock = DockStyle.Top; filterHint.Height = 42; filterHint.Text = "Finding installed apps...";
             filterHint.TextAlign = ContentAlignment.MiddleLeft;
-            launcherPage.Controls.Add(apps); launcherPage.Controls.Add(filterHint);
+            ConfigureFooterLink(launcherShortcut, "Change the keyboard shortcut that opens the launcher.");
+            launcherShortcut.Margin = Padding.Empty;
+            launcherShortcut.LinkClicked += delegate { ChangeHotkey(); };
+            FlowLayoutPanel launcherFooter = new FlowLayoutPanel {
+                Dock = DockStyle.Bottom, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                WrapContents = false, Padding = new Padding(0, 6, 0, 0)
+            };
+            launcherFooter.ClientSizeChanged += delegate {
+                launcherShortcut.MaximumSize = new Size(Math.Max(1, launcherFooter.ClientSize.Width), 0);
+            };
+            launcherFooter.Controls.Add(launcherShortcut);
+            launcherPage.Controls.Add(apps); launcherPage.Controls.Add(filterHint); launcherPage.Controls.Add(launcherFooter);
             BuildSettingsPage(testing);
             BuildLoadingIndicator();
             iconMenu.ShowItemToolTips = true; iconMenu.Items.Add(chooseAppIcon); iconMenu.Items.Add(restoreIconDefault);
@@ -422,7 +465,11 @@ namespace BetterIcon.Tray
             };
             apps.IconMenuRequested += point => ShowIconMenu(apps, point);
             packPreview.IconMenuRequested += point => ShowIconMenu(packPreview, point);
-            pages.SelectedIndexChanged += delegate { pages.Invalidate(); if (pages.SelectedTab == launcherPage) apps.Focus(); };
+            pages.SelectedIndexChanged += delegate {
+                if (Visible && !openingPopup && WindowState == FormWindowState.Normal) RestorePageAtDivider();
+                pages.Invalidate();
+                if (pages.SelectedTab == launcherPage) apps.Focus();
+            };
         }
         // Retain old preference values for compatibility; every write operation
         // gets a fresh scope from its dialog instead of this legacy setting.
@@ -435,6 +482,7 @@ namespace BetterIcon.Tray
             if (value) { iconMenu.Close(); iconMenuTarget = null; chooseAppIcon.Enabled = restoreIconDefault.Enabled = false; }
             iconSizeSlider.Enabled = iconSizeValue.Enabled = resetIconSize.Enabled = !value;
             showAppNames.Enabled = !value;
+            launcherShortcut.Enabled = !value && hotkey != null;
             SetAppearanceBusy(value);
             UpdatePackButtons();
             if (!String.IsNullOrEmpty(message)) status.Text = message;
@@ -450,7 +498,7 @@ namespace BetterIcon.Tray
             dismissTimer.Stop(); trayAnchor = anchor;
             if (!Enabled) { ActivateDialog(); return; }
             if (Visible && WindowState != FormWindowState.Minimized) { Hide(); return; }
-            ShowManager();
+            ShowPopup(anchor, false, preferLargerPage: true);
         }
         public void ShowManager()
         {
@@ -459,21 +507,62 @@ namespace BetterIcon.Tray
             ShowPopup(anchor, false);
         }
         public void ShowAtCursor(Point cursor) { ShowPopup(cursor, true); }
+        Size PreferredPageSize(bool launcher)
+        {
+            Size size = launcher ? preferences.LauncherWindowSize : preferences.ManageWindowSize;
+            if (size.Width <= 0 || size.Height <= 0) size = DefaultWindowSize;
+            Size minimum = launcher ? LauncherMinimum : ManageMinimum;
+            return new Size(Math.Max(size.Width, minimum.Width), Math.Max(size.Height, minimum.Height));
+        }
+        void ApplyPageBounds(Rectangle bounds)
+        {
+            Size minimum = pages.SelectedTab == launcherPage ? LauncherMinimum : ManageMinimum;
+            MinimumSize = new Size(Math.Min(minimum.Width, bounds.Width), Math.Min(minimum.Height, bounds.Height));
+            Bounds = bounds;
+            SizeTabs();
+            displayedPageSize = Size;
+        }
+        void RestorePageAtDivider()
+        {
+            bool launcher = pages.SelectedTab == launcherPage;
+            Point topCenter = new Point(Left + Width / 2, Top);
+            ApplyPageBounds(PopupPlacement.AtTabDivider(PreferredPageSize(launcher), PreferredPageSize(!launcher),
+                topCenter, Screen.FromPoint(topCenter).WorkingArea));
+        }
+        void FinishWindowResize()
+        {
+            if (!Visible || WindowState != FormWindowState.Normal) return;
+            if (Size != displayedPageSize) {
+                if (pages.SelectedTab == launcherPage) preferences.LauncherWindowSize = Size;
+                else preferences.ManageWindowSize = Size;
+                try { WritePreferences(); }
+                catch (IOException) { status.Text = "Window size changed for this session, but could not be saved."; }
+                catch (UnauthorizedAccessException) { status.Text = "Window size changed for this session, but could not be saved."; }
+            }
+            RestorePageAtDivider();
+        }
         void ActivateDialog() { foreach (Form dialog in OwnedForms) if (dialog.Visible) { dialog.Activate(); break; } }
-        void ShowPopup(Point anchor, bool centered)
+        void ShowPopup(Point anchor, bool centered, bool preferLargerPage = false)
         {
             if (!Enabled) { ActivateDialog(); return; }
             if (!Visible) SetFilter("");
-            pages.SelectedTab = launcherPage;
             dismissTimer.Stop();
             Rectangle work = Screen.FromPoint(anchor).WorkingArea;
-            WindowState = FormWindowState.Normal;
-            Rectangle bounds = centered ? PopupPlacement.CenteredOnCursor(Size, anchor, work) : PopupPlacement.AboveTray(Size, anchor, work);
-            MinimumSize = new Size(Math.Min(790, bounds.Width), Math.Min(570, bounds.Height));
-            Bounds = bounds; Show();
-            // Also works when launched with STARTUPINFO's initial hidden state.
-            ShowWindow(Handle, 1);
-            Bounds = centered ? PopupPlacement.CenteredOnCursor(Size, anchor, work) : PopupPlacement.AboveTray(Size, anchor, work); SizeTabs(); Activate(); apps.Focus();
+            Size launcher = PreferredPageSize(true), manage = PreferredPageSize(false);
+            bool openManage = preferLargerPage && (long)manage.Width * manage.Height > (long)launcher.Width * launcher.Height;
+            Rectangle bounds = PopupPlacement.Place(openManage ? manage : launcher, openManage ? launcher : manage, anchor, work, centered);
+            openingPopup = true;
+            try {
+                pages.SelectedTab = openManage ? settingsPage : launcherPage;
+                WindowState = FormWindowState.Normal;
+                ApplyPageBounds(bounds); Show();
+                // Also works when launched with STARTUPINFO's initial hidden state.
+                ShowWindow(Handle, 1);
+                ApplyPageBounds(bounds);
+            }
+            finally { openingPopup = false; }
+            Activate();
+            if (openManage) themes.Focus(); else apps.Focus();
             TraceFixture(centered ? "Hotkey positioned" : "Positioned", anchor);
         }
         void ExitLauncher() { if (busy) { ShowManager(); AppAppearance.Message(this, Text, "Please wait for the current operation to finish.", appearancePalette, false); return; } exiting = true; Close(); }
@@ -487,7 +576,11 @@ namespace BetterIcon.Tray
         }
         void UpdateHotkeyHint()
         {
-            string hint = !preferences.Hotkey.Enabled ? "Global hotkey disabled." : hotkey != null && hotkey.IsRegistered ? preferences.Hotkey + " opens at your cursor." : "Hotkey unavailable. Choose another combination.";
+            bool registered = hotkey != null && hotkey.IsRegistered;
+            string shortcut = preferences.Hotkey.Enabled ? preferences.Hotkey.ToString() : "Disabled";
+            if (preferences.Hotkey.Enabled && !registered) shortcut += " (unavailable)";
+            launcherShortcut.Text = "Launcher shortcut \u00b7 " + shortcut;
+            string hint = !preferences.Hotkey.Enabled ? "Global hotkey disabled." : registered ? preferences.Hotkey + " opens at your cursor." : "Hotkey unavailable. Choose another combination.";
             subtitle.Text = (fixtureLog == null ? "" : "Test shortcuts only. ") + hint;
             BuildTrayMenu();
         }

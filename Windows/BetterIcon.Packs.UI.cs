@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Globalization;
@@ -127,7 +128,7 @@ namespace BetterIcon.Tray
         readonly Button resetIconSize = new Button();
         readonly CheckBox showAppNames = new CheckBox();
         readonly Button removePackButton = new Button();
-        readonly Label appVersion = new Label();
+        readonly LinkLabel appVersion = new LinkLabel();
         bool arrangingManageIcons;
         readonly List<Button> packButtons = new List<Button>();
         int iconWheelDelta;
@@ -343,8 +344,17 @@ namespace BetterIcon.Tray
             TableLayoutPanel footer = SettingsTable(3); footer.Name = "ManageIconsFooter"; footer.Padding = new Padding(24, 6, 24, 12);
             footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             appVersion.Text = "Better Icon for ArtCraft version " + typeof(LauncherForm).Assembly.GetName().Version.ToString(3);
-            appVersion.AutoSize = true; appVersion.Dock = DockStyle.Fill; appVersion.TextAlign = ContentAlignment.MiddleRight;
-            appVersion.Margin = new Padding(0, 0, 10, 0); appVersion.Tag = "SecondaryText";
+            ConfigureFooterLink(appVersion, "Open the BetterIcon project on GitHub.");
+            appVersion.Anchor = AnchorStyles.Right; appVersion.Margin = new Padding(0, 0, 10, 0);
+            appVersion.Links[0].LinkData = "https://github.com/BinziiBinzet/bettericon-craft-apps";
+            appVersion.LinkClicked += delegate(object sender, LinkLabelLinkClickedEventArgs e) {
+                try {
+                    ProcessStartInfo projectPage = new ProcessStartInfo((string)e.Link.LinkData) { UseShellExecute = true };
+                    Process browser = Process.Start(projectPage);
+                    if (browser != null) browser.Dispose();
+                }
+                catch (System.ComponentModel.Win32Exception error) { Report(error); }
+            };
             footer.Controls.Add(appVersion, 0, 0); footer.Controls.Add(appIconButton, 1, 0); footer.Controls.Add(appearanceModeButton, 2, 0);
             root.Controls.Add(footer, 0, 1);
             settingsScroll.ClientSizeChanged += delegate { LayoutManageIcons(); };
