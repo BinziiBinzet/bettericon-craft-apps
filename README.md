@@ -37,7 +37,7 @@ BetterIcon checks for new and updated icon packs at startup and about every 30 m
 
 VimiummuimiV’s eight Modern Flat variations now appear as one 13-icon pack. If you used a former variant for apps or project files, BetterIcon 1.26.1 remembers that choice in the corresponding picker. Matching downloads work offline immediately. If your cached artwork differs, you can keep using it until you select **Modern Flat** to download the update. [Modern Flat artwork and sources](Craft-Icons-VimiummuimiV/)
 
-The nine themes in [Craft-Icons-OmegaDarling](Craft-Icons-OmegaDarling/) are by **OmegaDarling**. All include ArtCraft Launcher. Edgework and Foldmark each contain 21 icons. Existing `Craft-Icons-Zach` theme IDs remain compatible.
+The nine themes in [Craft-Icons-OmegaDarling](Craft-Icons-OmegaDarling/) are by **OmegaDarling**. Each contains 20 icons, including ArtCraft Launcher. Existing `Craft-Icons-Zach` theme IDs remain compatible.
 
 The selected ArtCraft Discord artwork is organized by the posting creator. Each style folder contains app-named PNGs and a BetterIcon pack description. The folders can be imported individually in Manage Icons.
 
