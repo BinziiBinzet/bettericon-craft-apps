@@ -1,8 +1,14 @@
 # BetterIcon-Craft Apps
 
-Icon installers for [Artcraft](https://getartcraft.com/) applications. The Linux installer supports all Linux desktop environments; the Windows tray launcher opens installed apps and applies icon themes to Desktop and Start-menu shortcuts with backup and restore.
+BetterIcon launches installed ArtCraft apps and manages their icons on Windows, Mac and Linux. The Linux desktop app applies themes to desktop entries for the current user. The original Linux terminal icon installer is also included.
 
-> BetterIcon is available for macOS, Windows, and Linux. The Mac app can apply and restore artwork on the installed ArtCraft application bundles. See the [Mac guide](macOS/README.md) and [Windows guide](Windows/WINDOWS.md).
+Download the release for your platform. Each release includes a SHA-256 checksum.
+
+- [Windows 1.23.1 installer and portable ZIP](https://github.com/BinziiBinzet/bettericon-craft-apps/releases/tag/windows-v1.23.1)
+- [macOS 1.23.1 disk image](https://github.com/BinziiBinzet/bettericon-craft-apps/releases/tag/macos-v1.23.1)
+- [Linux 1.23.2 graphical installer](https://github.com/BinziiBinzet/bettericon-craft-apps/releases/tag/linux-v1.23.2)
+
+Resize **Launcher** and **Manage Icons** independently. Switching tabs keeps their divider in place. The tray or menu bar icon opens the larger saved tab, with Launcher winning a tie. The keyboard shortcut always opens Launcher. Click the shortcut in its lower-left corner to change it.
 
 ## Key Features
 
@@ -42,26 +48,22 @@ Supports all official Artcraft Crafting Apps.
 
 ### Linux
 
-- Make the scripts executable (run this first):
-   ```bash
-   chmod +x install.sh uninstall.sh
-   ```
-- Run the installer with `./install.sh` and select your preferred theme.
-- Restore original icons or uninstall with `./uninstall.sh`.
+- Extract the graphical Linux package and run `./install.sh` to add **BetterIcon for ArtCraft** to Applications and the system tray. Press **Ctrl+Alt+A** to open Launcher. [Linux guide](Linux/README.md)
+- The terminal icon installer and restore scripts in a source checkout are `Linux/install.sh` and `Linux/uninstall.sh`.
 
 ### Windows
 
-- Open `Windows/Start-Tray.cmd` in a source checkout, or `Windows/BetterIcon-Tray.exe` in a locally built Windows ZIP.
-- Click the tray icon to open the launcher above the system tray; click it again to close the popup. The **Launcher** tab shows app icons and names; type to narrow the list, then press Enter or double-click to launch. The **Settings** tab manages icon packs, custom artwork, apply/restore, and the configurable global hotkey.
+- Run the Setup EXE to install BetterIcon and its Start menu shortcut. In the portable ZIP, open `Windows/BetterIcon-Tray.exe`. A source checkout also includes `Windows/Start-Tray.cmd`.
+- On **Launcher**, type to narrow the list, then press Enter or double-click an app. Open **Manage Icons** to preview packs and review artwork changes. Click the tray icon again to close the popup.
 - **Restore original icons** restores the saved shortcuts. Shared shortcuts request administrator access only when applying or restoring.
-- Share personal packs with **Settings > Export ZIP**; recipients use **Import ZIP**. Names, author credits, and artwork are preserved.
+- Share personal packs with **Manage Icons → Export ZIP**. Recipients use **Import ZIP** to load the artwork and its credits.
 - The command-line installers remain available as `Windows/Install-Windows.cmd` and `Windows/Restore-Windows.cmd`.
 - Windows PowerShell and .NET Framework are included with supported Windows installations; no Python or downloaded modules are required.
 - For supported themes, backups, and taskbar limitations, read [WINDOWS.md](Windows/WINDOWS.md).
 
 ### macOS
 
-- Open the BetterIcon disk image and drag **BetterIcon** into Applications. Click its menu bar icon to open the launcher.
+- Open the BetterIcon disk image and drag **BetterIcon** into Applications. Open it once to add the menu bar icon.
 - In **Manage Icons**, choose a pack and click **Apply icons…**. Review the application paths before applying. **Restore all defaults…** restores their original icons. [Mac guide](macOS/README.md)
 
 ## Contributing & Forking

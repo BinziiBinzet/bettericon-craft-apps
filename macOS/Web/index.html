@@ -12,6 +12,7 @@
     <script defer src="popup.js"></script>
   </head>
   <body>
+    <div id="resizeGrip" aria-hidden="true"></div>
     <main id="popup">
       <nav role="tablist" aria-label="BetterIcon">
         <button id="launcherTab" role="tab" aria-controls="launcher">Launcher</button
@@ -21,6 +22,9 @@
       <section id="launcher" role="tabpanel" aria-labelledby="launcherTab">
         <p id="empty" hidden></p>
         <div id="apps" class="grid" role="listbox" aria-label="Installed ArtCraft apps" tabindex="0"></div>
+        <footer>
+          <button type="button" id="launcherShortcut" class="footer-link" aria-haspopup="dialog" aria-controls="hotkey" title="Change the keyboard shortcut that opens the launcher."></button>
+        </footer>
       </section>
       <section id="manage" role="tabpanel" aria-labelledby="manageTab" hidden>
         <div class="scroll">
@@ -55,7 +59,7 @@
           </div>
         </div>
         <footer>
-          <span id="version"></span><button id="brand" aria-label="BetterIcon app icon"><img alt="" /></button
+          <a id="version" class="footer-link" title="Open the BetterIcon project on GitHub."></a><button id="brand" aria-label="BetterIcon app icon"><img alt="" /></button
           ><button id="appearance" aria-label="Appearance"></button>
         </footer>
       </section>

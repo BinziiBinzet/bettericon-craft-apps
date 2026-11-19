@@ -28,6 +28,9 @@ function tab(name, focus = true) {
   closeMenu();
   if (focus) (name === "launcher" ? el("apps") : el("packs")).focus();
 }
+function requestTab(name) {
+  send("tab", { name });
+}
 function reset(pageName) {
   if (activeDialog()) return;
   prefix = "";
@@ -174,7 +177,7 @@ function grids() {
     "empty",
     prefix
       ? "No apps match ‘" + prefix + "’. Backspace edits the filter. Escape clears it."
-      : "No ArtCraft apps found. Right-click the menu bar icon to refresh or choose an apps folder.",
+      : model.emptyMessage || "No ArtCraft apps found. Right-click the menu bar icon to refresh or choose an apps folder.",
   );
 }
 function size(value) {
@@ -217,6 +220,8 @@ function update(next) {
   size(p.size);
   text("apply", pack.default ? "Restore ArtCraft defaults…" : "Apply icons…");
   text("version", "Better Icon for ArtCraft version " + model.version);
+  el("version").href = model.projectURL;
+  showShortcut(model.shortcut);
   const variant = p.variant === "auto" ? (model.dark ? "dark" : "light") : p.variant;
   el("brand").firstElementChild.src = model.brands[p.color + "_" + variant];
   el("brand").title = "BetterIcon app icon";
@@ -267,6 +272,9 @@ function editor(info) {
 function assignment(craft, name) {
   text("file-" + craft, name || "Unassigned");
 }
+function showShortcut(shortcut) {
+  text("launcherShortcut", "Launcher shortcut · " + shortcut);
+}
 function hotkey(info) {
   const k = model.prefs.hotkey;
   el("keyEnabled").checked = k.enabled;
@@ -278,7 +286,7 @@ function hotkey(info) {
       i.type = "checkbox";
       i.id = "mod-" + label;
       i.checked = k[label.toLowerCase()];
-      l.append(i, document.createTextNode(label));
+      l.append(i, document.createTextNode(info.labels?.[label] || label));
       return l;
     }),
   );
@@ -292,8 +300,13 @@ function doneDialog(id) {
   if (el(id).open) el(id).close();
 }
 for (const id of ["editor", "hotkey"]) el(id).addEventListener("close", () => send("dialogClosed", { id }));
-el("launcherTab").onclick = () => tab("launcher");
-el("manageTab").onclick = () => tab("manage");
+// Match AppKit's whole-point divider using the tab bar's measured width.
+new ResizeObserver(([bar]) => {
+  el("launcherTab").style.flexBasis = Math.floor(bar.contentRect.width / 2) + "px";
+}).observe(el("launcherTab").parentElement);
+el("launcherTab").onclick = () => requestTab("launcher");
+el("manageTab").onclick = () => requestTab("manage");
+el("launcherShortcut").onclick = () => send("changeHotkey");
 el("packs").onchange = () => send("select", { id: el("packs").value });
 el("packs").oncontextmenu = (e) => {
   e.preventDefault();
@@ -360,8 +373,10 @@ document.addEventListener("keydown", (e) => {
     return;
   }
   if (["INPUT", "SELECT"].includes(e.target.tagName) && e.key !== "Escape") return;
+  if ((e.target === el("launcherShortcut") || e.target.getAttribute?.("role") === "tab") &&
+      (e.key === "Enter" || e.key === " ")) return;
   if (page === "manage" && e.key === "Escape") {
-    tab("launcher");
+    requestTab("launcher");
     e.preventDefault();
     return;
   }
@@ -427,11 +442,15 @@ el("launcher").addEventListener(
 window.betterIcon = {
   update,
   reset,
+  tab,
   busy,
   editor,
   assignment,
   hotkey,
-  keyStatus: (message) => text("keyStatus", message),
+  keyStatus: (message, shortcut) => {
+    text("keyStatus", message);
+    showShortcut(shortcut);
+  },
   doneDialog,
   showError: (id, message) => text(id, message),
 };

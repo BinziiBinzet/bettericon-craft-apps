@@ -7,6 +7,10 @@ struct KeyChoice: Codable, Equatable {
     var text: String {
         [control ? "⌃" : "", option ? "⌥" : "", shift ? "⇧" : "", command ? "⌘" : "", key].joined()
     }
+    func displayText(registered: Bool) -> String {
+        guard enabled else { return "Disabled" }
+        return registered ? text : "\(text) (unavailable)"
+    }
     var modifiers: UInt32 {
         UInt32(
             (control ? controlKey : 0) | (option ? optionKey : 0) | (shift ? shiftKey : 0) | (command ? cmdKey : 0)
@@ -29,6 +33,7 @@ final class GlobalKey {
     private static let signature: OSType = 0x4249_434E
     private var handler: EventHandlerRef?
     private var registration: EventHotKeyRef?
+    var isRegistered: Bool { registration != nil }
     private var active: KeyChoice?
     private let fire: () -> Void
     init(fire: @escaping () -> Void) {

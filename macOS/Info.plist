@@ -6,8 +6,8 @@
   <key>CFBundleName</key><string>BetterIcon</string>
   <key>CFBundleDisplayName</key><string>BetterIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>1.21.2</string>
-  <key>CFBundleVersion</key><string>3</string>
+  <key>CFBundleShortVersionString</key><string>1.23.3</string>
+  <key>CFBundleVersion</key><string>6</string>
   <key>CFBundleIconFile</key><string>BetterIcon.icns</string>
   <key>LSMinimumSystemVersion</key><string>12.4</string>
   <key>LSUIElement</key><true/>
