@@ -1,0 +1,15 @@
+<?xml version='1.0' encoding='utf-8'?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 256 256">
+  <title>ArtCraft Launcher / Foldmark</title>
+  <defs>
+    <clipPath id="artcraft-shape">
+      <path d="M 18.805 179.391 L 113.5443 36.5039 L 172.3073 36.5039 L 237.8206 179.1615 L 211.4373 220.0772 L 179.4555 150.3626 L 59.3428 219.9288 Z M 141.756 68.153 L 162.2867 112.9081 L 80.7445 160.1295 Z" clip-rule="evenodd" />
+    </clipPath>
+  </defs>
+  <g clip-path="url(#artcraft-shape)">
+    <rect width="256" height="256" fill="#045DAF" />
+    <path d="M 48 169 C 78 165 111 132 120 99 C 129 65 128 43 148 19 C 161 16 169 24 181 34 C 151 37 155 64 149 92 C 139 135 101 166 48 169 Z" fill="#DFDFCB" />
+    <path d="M 29 206 C 53 217 99 178 136 159 C 166 144 184 134 188 114 C 196 80 180 53 161 42 C 207 57 226 106 207 143 C 187 181 132 177 96 193 C 62 208 44 223 29 206 Z" fill="#DFDFCB" />
+    <path d="M 176 155 C 211 150 231 159 239 182 L 223 203 C 221 177 208 155 176 155 Z" fill="#DFDFCB" />
+  </g>
+</svg>

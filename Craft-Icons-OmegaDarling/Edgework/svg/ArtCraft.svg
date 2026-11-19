@@ -1,0 +1,14 @@
+<?xml version='1.0' encoding='utf-8'?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 256 256">
+  <title>ArtCraft Launcher / Edgework</title>
+  <defs>
+    <clipPath id="artcraft-shape">
+      <path d="M 18.805 179.391 L 113.5443 36.5039 L 172.3073 36.5039 L 237.8206 179.1615 L 211.4373 220.0772 L 179.4555 150.3626 L 59.3428 219.9288 Z M 141.756 68.153 L 162.2867 112.9081 L 80.7445 160.1295 Z" clip-rule="evenodd" />
+    </clipPath>
+  </defs>
+  <g clip-path="url(#artcraft-shape)">
+    <rect width="256" height="256" fill="#57464F" />
+    <path d="M 8 185 L 126 23 L 152 22 L 105 104 L 83 113 L 125 58 L 72 111 L 61 148 L 91 120 L 56 182 L 79 174 L 34 224 Z" fill="#50CFE5" />
+    <path d="M 70 188 L 177 119 L 159 101 L 181 99 L 151 43 L 179 23 L 220 126 L 185 141 L 222 139 L 242 178 L 214 227 L 190 165 L 104 204 L 119 182 L 51 225 Z" fill="#50CFE5" />
+  </g>
+</svg>
