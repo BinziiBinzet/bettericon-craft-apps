@@ -51,6 +51,7 @@ class BetterIcon(Gtk.Application):
         GLib.set_application_name("BetterIcon for ArtCraft")
         self.catalog = Catalog()
         self.packs = Packs(RES, self.catalog.data)
+        self.migrate_pack_selections()
         self.icons = DesktopIcons(self.catalog.data)
         self.projects = ProjectIcons(self.catalog.data, self.packs.formats)
         self.popup = Popup(self, self.catalog, RES, self.action, self.error)
@@ -236,7 +237,17 @@ class BetterIcon(Gtk.Application):
 
     def finish_catalog(self, rows, message):
         self.packs.use_catalog(rows)
+        self.migrate_pack_selections()
         self.status = message
+
+    def migrate_pack_selections(self):
+        changes = {}
+        for key in ("selected", "fileSelected"):
+            current = self.packs.previous_ids.get(self.catalog.prefs.get(key))
+            if current:
+                changes[key] = current
+        if changes:
+            self.catalog.update(**changes)
 
     def catalog_operation(self, message, work, done):
         if self.catalog_busy:

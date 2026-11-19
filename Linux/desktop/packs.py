@@ -100,6 +100,7 @@ class Packs:
     def use_catalog(self, rows):
         default = Pack(DEFAULT_ID, "ArtCraft default", "", status="Default", can_files=True)
         self.builtin = {DEFAULT_ID: default}
+        self.previous_ids = {old: row["ID"] for row in rows for old in row.get("PreviousIDs", [])}
         for row in rows:
             self.builtin[row["ID"]] = Pack(row["ID"], row["Name"], row["Author"],
                 {k: Path(v) for k, v in row["Icons"].items()},

@@ -1,6 +1,6 @@
 # BetterIcon-Craft Apps Windows support.
 Set-StrictMode -Version Latest
-$script:Version = '1.26.0'
+$script:Version = '1.26.1'
 $script:SvgArtworkType = $null
 $script:DownloadCatalog = $null
 $script:AvailableCatalog = $null
@@ -224,7 +224,14 @@ function Get-BetterIconTheme {
 
 function Resolve-Theme([string]$Theme, [string]$Repository) {
     $Theme = $Theme -replace '^Craft-Icons-OmegaDarling/', 'Craft-Icons-Zach/'
-    $matches = @(Get-BetterIconTheme -Repository $Repository | Where-Object { $_.Id -ieq $Theme -or $_.Name -ieq $Theme })
+    $catalog = @(Get-BetterIconTheme -Repository $Repository)
+    $matches = @($catalog | Where-Object { $_.Id -ieq $Theme -or $_.Name -ieq $Theme })
+    if ($Theme -and !$matches.Count) {
+        $replacements = @((Get-BetterIconPackAliases).GetEnumerator() | Where-Object {
+            $_.Key -ieq $Theme -or $_.Key.Split('/')[-1] -ieq $Theme
+        } | ForEach-Object Value | Select-Object -Unique)
+        $matches = @($catalog | Where-Object { $_.Id -in $replacements })
+    }
     if ($matches.Count -ne 1) { throw "Theme '$Theme' was not found or is ambiguous. Use -ListThemes and a full Pack/Theme ID." }
     $matches[0]
 }
@@ -748,4 +755,4 @@ function Restore-BetterIcon {
     finally { $lock.Dispose() }
 }
 
-Export-ModuleMember -Function Get-BetterIconVersion,Get-BetterIconRepository,Get-BetterIconStateDirectory,Get-BetterIconTheme,Get-BetterIconThemeIcon,Get-BetterIconBytes,Get-BetterIconApplication,Get-BetterIconPlan,Install-BetterIconTheme,Restore-BetterIcon,Install-BetterIconDownloadedPack,Update-BetterIconPackCatalog
+Export-ModuleMember -Function Get-BetterIconVersion,Get-BetterIconRepository,Get-BetterIconStateDirectory,Get-BetterIconTheme,Get-BetterIconThemeIcon,Get-BetterIconBytes,Get-BetterIconApplication,Get-BetterIconPlan,Install-BetterIconTheme,Restore-BetterIcon,Install-BetterIconDownloadedPack,Update-BetterIconPackCatalog,Get-BetterIconPackAliases

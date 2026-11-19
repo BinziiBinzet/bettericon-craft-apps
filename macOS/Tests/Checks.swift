@@ -278,11 +278,30 @@ import WebKit
         return installed
     }
     @MainActor static func ui(_ install: Installation, out: URL) async throws {
+        let flat = "Craft-Icons-VimiummuimiV/Modern Flat"
+        let personal = try PackLibrary(install.state.appendingPathComponent("Packs")).visible([])
+        guard let appPack = personal.first(where: { $0.personal && $0.canApps }),
+              let filePack = personal.first(where: { $0.personal && !$0.documents.isEmpty }) else {
+            throw Problem("Missing personal pack fixtures")
+        }
+        _ = try updatePreferences(install.state) {
+            $0.selected = appPack.id
+            $0.fileSelected = flat + " - Bolt - Sliders"
+        }
+        let migrated = try Application(install, hidden: true)
+        try check(migrated.prefs.selected == appPack.id && migrated.prefs.fileSelected == flat,
+                  "old file selection migrates independently of a personal app pack")
+        _ = try updatePreferences(install.state) {
+            $0.selected = flat + " - Spark - Knob"
+            $0.fileSelected = filePack.id
+        }
         var openedURLs = [URL]()
         let host = try Application(install, hidden: true, openProjectURL: { url in
             openedURLs.append(url)
             return true
         })
+        let prefs = try saved(Preferences.self, at: install.state.appendingPathComponent("preferences.json"), fallback: Preferences())
+        try check(prefs.selected == flat && prefs.fileSelected == filePack.id, "app selection migrates on disk and preserves personal file choice")
         host.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
         // Offscreen WebKit and AppKit surface; no input to the desktop.
         let web = host.web!
@@ -296,11 +315,14 @@ import WebKit
         }
         try await until("typeof model !== 'undefined' && model && model.apps.length===3 && !working")
         try check(true, "actual app discovers fixture apps and creates its grids")
+        try await until("model.packs.filter(p=>p.id.startsWith('\(flat)')).length===1 && model.packs.some(p=>p.id==='\(flat)' && p.canApps && p.canFiles) && model.filePack.id==='\(filePack.id)'")
         var trayImage = false
+        var flatItems = 0
         host.statusMenu { menu, _ in
             guard let themes = menu.item(withTitle: "Change icon theme")?.submenu,
                   let row = themes.items.first(where: { ($0.representedObject as? Pack)?.name == "Mascots" }),
                   let preview = themes.delegate as? TrayPackPreview else { return }
+            flatItems = themes.items.filter { $0.title.hasPrefix("Modern Flat") }.count
             preview.menu(themes, willHighlight: row)
             let until = Date().addingTimeInterval(15)
             while Date() < until && !trayImage {
@@ -309,6 +331,7 @@ import WebKit
             }
             preview.menuDidClose(themes)
         }
+        try check(flatItems == 1, "one Modern Flat menu bar choice")
         try check(trayImage, "menu bar pack hover displays a non-activating preview")
         let footerStyle = """
             ['fontFamily','fontSize','fontWeight','lineHeight','color'].every(

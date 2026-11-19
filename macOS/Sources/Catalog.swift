@@ -166,6 +166,7 @@ struct Pack {
     var canApps = true
     var canFiles = false
     var hasPreview = false
+    var previousIDs = [String]()
     var canPreview: Bool { hasPreview || !icons.isEmpty || !documents.isEmpty }
     var model: [String: Any] {
         ["id": id, "title": title, "status": isDefault ? "Default" : status, "default": isDefault,

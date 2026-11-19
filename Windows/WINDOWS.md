@@ -1,13 +1,13 @@
 # BetterIcon-Craft Apps for Windows
 
-BetterIcon **1.26.0** for Windows lets you choose separate icon packs for app shortcuts and native ArtCraft project files.
+BetterIcon **1.26.1** for Windows lets you choose separate icon packs for app shortcuts and native ArtCraft project files.
 
 ## Start here
 
 Choose an installer for Windows 10/11 with .NET Framework 4.8 or later.
 
-- **Windows — Bundled** (`BetterIcon-1.26.0-Windows-Bundled.exe`) includes all 39 packs available at build time. Their artwork and hover previews work offline immediately.
-- **Windows — On-demand** (`BetterIcon-1.26.0-Windows-OnDemand.exe`) includes the catalog. Click a pack in the list, or highlight it and press Enter, to download and verify its artwork. Both pickers share each download and keep it for future launches.
+- **Windows — Bundled** (`BetterIcon-1.26.1-Windows-Bundled.exe`) includes all 32 packs available at build time. Their artwork and hover previews work offline immediately.
+- **Windows — On-demand** (`BetterIcon-1.26.1-Windows-OnDemand.exe`) includes the catalog. Click a pack in the list, or highlight it and press Enter, to download and verify its artwork. Both pickers share each download and keep it for future launches.
 
 Right-click the system tray icon and choose **Refresh available icon packs** to check the public project's main branch. Both editions remember the refreshed list offline. New packs are marked **Download**. Packs you already have can show **Update available**. Choose one to fetch its updated artwork. Refreshing the list preserves your current app and file icon selections.
 
@@ -128,7 +128,7 @@ Use reasonably short folder paths. This version requires shortcut and installed 
 
 ## Themes and matching
 
-A source checkout contains **32 themes** and **452 app icons**. Modern Flat combines the eight former variants into one 13-icon pack. The circleb Origami Animals pack is a separate import ZIP in the existing circleb folder. [Creator credits and sources](../README.md#community-icon-packs)
+A source checkout contains **32 themes** and **452 app icons**. Modern Flat combines the eight former variants into one 13-icon pack. In Windows 1.26.1, an existing Modern Flat selection follows the combined pack. If an older downloaded design is marked **Update available**, select it to get the current artwork. The circleb Origami Animals pack is a separate import ZIP in the existing circleb folder. [Creator credits and sources](../README.md#community-icon-packs)
 
 OmegaDarling's themes use the `Craft-Icons-OmegaDarling` artwork folder while retaining legacy `Craft-Icons-Zach` IDs so saved selections, applied icons, and restore records remain compatible. Their public author credit is **OmegaDarling** in the app and command-line theme listing.
 
@@ -191,7 +191,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Test-Windows.ps1 -Test
 
 # Build a Setup EXE from a locally built Windows ZIP (Inno Setup on this machine).
 .\Build-AppInstaller.ps1 -OutputDirectory 'C:\path\to\setup-output' `
-  -PackagePath 'C:\path\to\BetterIcon-Craft-Apps-Windows-1.26.0.zip' `
+  -PackagePath 'C:\path\to\BetterIcon-Craft-Apps-Windows-1.26.1.zip' `
   -CompilerPath 'C:\path\to\Inno Setup\ISCC.exe'
 
 # Actual install, upgrade, and uninstall using a unique disposable installer identity.

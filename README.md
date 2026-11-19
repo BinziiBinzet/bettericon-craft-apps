@@ -2,9 +2,9 @@
 
 BetterIcon puts your installed ArtCraft apps in one launcher, accessible from the Windows or Linux system tray and the macOS menu bar. You can give the apps a new set of icons and choose different artwork for their project files.
 
-**[Download BetterIcon 1.26.0 for Windows, macOS, or Linux](https://github.com/BinziiBinzet/bettericon-craft-apps/releases/tag/v1.26.0)**. Each platform has two editions, with SHA-256 checksums on the release page.
+**[Download BetterIcon 1.26.1 for Windows, macOS, or Linux](https://github.com/BinziiBinzet/bettericon-craft-apps/releases/tag/v1.26.1)**. Each platform has two editions, with SHA-256 checksums on the release page.
 
-- **Bundled** includes the 39 icon packs and previews available when 1.26.0 was built, ready for offline use.
+- **Bundled** includes all 32 icon packs and their previews, ready for offline use.
 - **On-demand** starts with the pack list and downloads the full artwork when you select a pack.
 
 ## BetterIcon in action
@@ -35,7 +35,7 @@ The progress bar shows when artwork is downloading or loading from disk. To chec
 
 ## Community icon packs
 
-The current catalog has 32 packs. VimiummuimiV’s eight Modern Flat variations are combined into one 13-icon pack. Choose **Refresh available icon packs** from the tray or menu bar to find it. On macOS and Linux 1.26.0, refresh a second time if the first refresh still shows the old list. Version 1.26.0 also keeps any older variants bundled with your installer or downloaded previously. [Modern Flat artwork and sources](Craft-Icons-VimiummuimiV/)
+VimiummuimiV’s eight Modern Flat variations now appear as one 13-icon pack. If you used a former variant for apps or project files, BetterIcon 1.26.1 remembers that choice in the corresponding picker. Matching downloads work offline immediately. If your cached artwork differs, you can keep using it until you select **Modern Flat** to download the update. [Modern Flat artwork and sources](Craft-Icons-VimiummuimiV/)
 
 The nine themes in [Craft-Icons-OmegaDarling](Craft-Icons-OmegaDarling/) are by **OmegaDarling**. Each contains 20 icons, including ArtCraft Launcher. Existing `Craft-Icons-Zach` theme IDs remain compatible.
 

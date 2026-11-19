@@ -3,7 +3,7 @@ set -euo pipefail
 export COPYFILE_DISABLE=1
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(dirname "$here")"
-out="${1:?Usage: build.sh OUTPUT_DIRECTORY [Windows-1.26.0.zip or artwork checkout] [Bundled|OnDemand]}"
+out="${1:?Usage: build.sh OUTPUT_DIRECTORY [Windows-1.26.1.zip or artwork checkout] [Bundled|OnDemand]}"
 mkdir -p "$out"
 out="$(cd "$out" && pwd)"
 version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$here/Info.plist")"

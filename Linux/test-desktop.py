@@ -208,8 +208,17 @@ def core():
 
 
 def gui():
+    flat = "Craft-Icons-VimiummuimiV/Modern Flat"
+    cat = Catalog()
+    personal = [p for p in Packs(payload, cat.data).all.values() if p.personal]
+    personal_app = next(p.id for p in personal if p.can_apps)
+    personal_file = next(p.id for p in personal if p.documents)
+    cat.update(selected=flat + " - Spark - Knob", fileSelected=personal_file)
     app = BetterIcon()
     app.register(None)
+    prefs = Catalog().prefs
+    check(prefs["selected"] == flat and prefs["fileSelected"] == personal_file,
+          "startup migrates the saved app selection and preserves the personal file pack")
     pop = app.popup
     def panel_icon_visible():
         if not app.tray.is_embedded():
@@ -259,20 +268,29 @@ def gui():
     check(pop.web.get_settings().get_hardware_acceleration_policy() == WebKit2.HardwareAccelerationPolicy.NEVER,
           "the popup uses software rendering")
     ready("manage",(836,606))
+    check(js("model.packs.filter(p=>p.id.startsWith('" + flat + "')).length===1") and
+          js("model.packs.some(p=>p.id==='" + flat + "' && p.canApps && p.canFiles)") and
+          js("model.filePack.id") == personal_file, "both pickers share one Modern Flat choice")
     slim = (payload / "Catalog/edition").read_text().strip() == "OnDemand"
     base = app.packs.cache / "acquired"
     prior = set(base.glob("*"))
     app.menu(app.tray, 3, Gtk.get_current_event_time())
     submenu = next(i for i in app.tray_menu.get_children() if i.get_label() == "Change icon theme").get_submenu()
+    check(sum(i.get_label().startswith("Modern Flat") for i in submenu.get_children()) == 1,
+          "one Modern Flat tray choice")
     mast = next(i for i in submenu.get_children() if "Mascots" in i.get_label())
     mast.emit("select")
     check(wait(lambda: app.tray_preview is not None and app.tray_preview.get_visible(), 25), "native tray hover displays a preview")
     mast.emit("deselect")
     refresh_item = next(i for i in app.tray_menu.get_children() if i.get_label() == "Refresh available icon packs")
     app.tray_menu.popdown()
+    app.catalog.update(selected=personal_app, fileSelected=flat + " - Bolt - Sliders")
     refresh_item.activate()
     check(wait(lambda: js("model.status==='Available icon packs refreshed.' && !working"), 40) and
           set(base.glob("*")) == prior, "native tray refresh fetches metadata only")
+    prefs = Catalog().prefs
+    check(prefs["fileSelected"] == flat and prefs["selected"] == personal_app,
+          "first refresh migrates the file selection and preserves the personal app pack")
     js("el('filePacks').click();true")
     js("""(()=>{const row=[...el('packOptions').children].find(r=>r.dataset.id==='Craft-Icons-4NovemberKilo/Mascots');
               row.scrollIntoView({block:'nearest'});const r=row.getBoundingClientRect();row.dispatchEvent(

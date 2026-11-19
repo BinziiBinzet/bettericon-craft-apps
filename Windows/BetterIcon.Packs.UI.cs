@@ -387,7 +387,8 @@ namespace BetterIcon.Tray
         void ReloadLibrary(string selectId)
         {
             if (catalog == null) return;
-            string chosen = selectId ?? (SelectedTheme == null ? preferences.Theme : SelectedTheme.Id);
+            string chosen = catalog.CurrentPackId(selectId ?? (SelectedTheme == null ? preferences.Theme : SelectedTheme.Id));
+            preferences.FileTheme = catalog.CurrentPackId(preferences.FileTheme);
             ThemeEntry defaults = new ThemeEntry { Id = ThemeEntry.DefaultThemeId, Name = "ArtCraft default", IsDefault = true, Icons = new ThemeIcon[0], IconCount = catalog.Apps.Select(a => a.Application).Distinct().Count() };
             catalog.Themes = new[] { defaults }.Concat(library.VisibleThemes(bundledThemes).Where(t => !t.IsDefault && t.IconCount > 0)).ToArray();
             fillingThemes = true;

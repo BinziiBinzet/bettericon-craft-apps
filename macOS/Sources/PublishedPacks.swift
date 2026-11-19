@@ -35,6 +35,7 @@ struct PublishedPacks {
         let ID, Name, Author, Status: String
         let Icons, FileIcons: [String: String]
         let CanApps, CanFiles, HasPreview: Bool
+        let PreviousIDs: [String]?
     }
     func list(_ action: String = "list", id: String? = nil) throws -> [Pack] {
         let data = try run([action] + (id.map { [$0] } ?? []))
@@ -42,7 +43,8 @@ struct PublishedPacks {
             Pack(id: item.ID, name: item.Name, author: item.Author,
                  icons: item.Icons.mapValues { URL(fileURLWithPath: $0) },
                  documents: item.FileIcons.mapValues { URL(fileURLWithPath: $0) },
-                 status: item.Status, canApps: item.CanApps, canFiles: item.CanFiles, hasPreview: item.HasPreview)
+                 status: item.Status, canApps: item.CanApps, canFiles: item.CanFiles, hasPreview: item.HasPreview,
+                 previousIDs: item.PreviousIDs ?? [])
         }
     }
     func preview(_ pack: Pack) throws -> URL? {
