@@ -1,4 +1,7 @@
-"""Regenerate the hover artwork from the checked-in ArtCraft icon inventory (Pillow)."""
+"""Regenerate the hover artwork from the checked-in ArtCraft icon inventory.
+
+Requires Pillow and, for SVG artwork, resvg-py in the local export environment.
+"""
 import csv
 import hashlib
 import re
@@ -42,6 +45,10 @@ def main():
             data = path.read_bytes()
             if hashlib.sha256(data).hexdigest() != digest:
                 raise ValueError(f"Artwork differs from the inventory: {path}")
+            if path.suffix.lower() == ".svg":
+                from resvg_py import svg_to_bytes
+
+                data = svg_to_bytes(svg_string=data.decode("utf-8-sig"))
             with Image.open(BytesIO(data)) as image:
                 tile = ImageOps.contain(image.convert("RGBA"), (CELL, CELL), Image.Resampling.LANCZOS)
                 strip.alpha_composite(tile, (index * (CELL + GAP) + (CELL - tile.width) // 2, (CELL - tile.height) // 2))

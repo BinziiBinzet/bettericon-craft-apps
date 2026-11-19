@@ -1,6 +1,6 @@
 # OmegaDarling icon themes
 
-Nine themes with 20 icons each, including ArtCraft Launcher.
+Nine themes with ArtCraft Launcher. Edgework and Foldmark each have 21 icons including FontCraft, and the other seven themes have 20.
 
 | Theme | Example sheet |
 | --- | --- |
@@ -14,6 +14,9 @@ Nine themes with 20 icons each, including ArtCraft Launcher.
 | [NegativeSpace](NegativeSpace/) | [Preview](7.%20NegativeSpace.png) |
 | [Pop](Pop/) | [Preview](Pop.png) |
 
-Each folder contains full-resolution PNGs for the Craft apps and ArtCraft Launcher. CADCraft uses the ant mascot in every theme.
+Edgework and Foldmark include editable SVG sources and approved full-resolution PNGs. BetterIcon downloads the verified artwork from the top level of each theme. The other themes use full-resolution PNGs. CADCraft uses the ant mascot in every theme.
+
+- Edgework [SVG sources](Edgework/svg/) and [PNG exports](Edgework/png/)
+- Foldmark [SVG sources](Foldmark/svg/) and [PNG exports](Foldmark/png/)
 
 Artwork by **OmegaDarling**, distributed under the repository's [MIT license](../LICENSE).
