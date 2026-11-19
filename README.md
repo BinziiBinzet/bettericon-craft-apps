@@ -35,7 +35,7 @@ The progress bar shows when artwork is downloading or loading from disk. To chec
 
 ## Community icon packs
 
-The current catalog has 32 packs. VimiummuimiV’s eight Modern Flat variations are combined into one 13-icon pack. Choose **Refresh available icon packs** from the tray or menu bar to find it. Version 1.26.0 also keeps any older variants bundled with your installer or downloaded previously. [Modern Flat artwork and sources](Craft-Icons-VimiummuimiV/)
+The current catalog has 32 packs. VimiummuimiV’s eight Modern Flat variations are combined into one 13-icon pack. Choose **Refresh available icon packs** from the tray or menu bar to find it. On macOS and Linux 1.26.0, refresh a second time if the first refresh still shows the old list. Version 1.26.0 also keeps any older variants bundled with your installer or downloaded previously. [Modern Flat artwork and sources](Craft-Icons-VimiummuimiV/)
 
 The nine themes in [Craft-Icons-OmegaDarling](Craft-Icons-OmegaDarling/) are by **OmegaDarling**. Each contains 20 icons, including ArtCraft Launcher. Existing `Craft-Icons-Zach` theme IDs remain compatible.
 
