@@ -15,6 +15,7 @@ using BetterIcon.Tray;
 static class TrayTests
 {
     [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")] static extern bool PostMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
     [StructLayout(LayoutKind.Sequential)] struct NativeRect { public int Left, Top, Right, Bottom; }
     [DllImport("user32.dll", EntryPoint = "SendMessageW")] static extern IntPtr SendMessageRect(IntPtr window, int message, IntPtr wParam, out NativeRect rectangle);
     [DllImport("user32.dll")] static extern bool GetKeyboardState(byte[] state);
@@ -49,6 +50,67 @@ static class TrayTests
         Console.WriteLine("PASS: " + name);
     }
     static Point TabDivider(TabControl tabs) { return tabs.PointToScreen(tabs.GetTabRect(1).Location); }
+    static IntPtr MousePoint(Rectangle rect)
+    {
+        return new IntPtr(((rect.Top + rect.Height / 2) << 16) | ((rect.Left + rect.Width / 2) & 0xffff));
+    }
+    static Bitmap PaintGrid(ListView grid)
+    {
+        Bitmap frame = new Bitmap(grid.Width, grid.Height);
+        grid.Refresh();
+        grid.DrawToBitmap(frame, grid.ClientRectangle);
+        return frame;
+    }
+    static void CheckLauncherFeedback(ListView grid, string root)
+    {
+        Rectangle tile = grid.Items[0].Bounds;
+        IntPtr point = MousePoint(grid.GetItemRect(0, ItemBoundsPortion.Icon));
+        SendMessage(grid.Handle, 0x02A3, IntPtr.Zero, IntPtr.Zero); // WM_MOUSELEAVE
+        using (Bitmap idle = PaintGrid(grid)) {
+            SendMessage(grid.Handle, 0x0200, IntPtr.Zero, point);
+            using (Bitmap hover = PaintGrid(grid)) {
+                Check(grid.SelectedItems.Count == 0, "Hover brightens artwork without committing a selection");
+                SendMessage(grid.Handle, 0x02A3, IntPtr.Zero, IntPtr.Zero);
+                grid.Items[0].Selected = grid.Items[0].Focused = true;
+                using (Bitmap selected = PaintGrid(grid)) {
+                    int brighter = 0, changedBackground = 0, different = 0;
+                    Rectangle icon = grid.GetItemRect(0, ItemBoundsPortion.Icon);
+                    for (int y = tile.Top; y < tile.Bottom; y++)
+                        for (int x = tile.Left; x < tile.Right; x++) {
+                            Color before = idle.GetPixel(x, y), after = hover.GetPixel(x, y);
+                            // Inside the image, antialiased artwork may round to the background RGB.
+                            if (!icon.Contains(x, y) && before != after) changedBackground++;
+                            if (after.R > before.R + 8 || after.G > before.G + 8 || after.B > before.B + 8) brighter++;
+                            if (after != selected.GetPixel(x, y)) different++;
+                        }
+                    Check(brighter > 50 && changedBackground == 0 && different == 0,
+                        "Mouse and keyboard brighten the same artwork with clear padding (" + brighter + " brighter pixels, " +
+                        changedBackground + " changed background pixels, " + different + " mouse/keyboard differences)");
+                }
+            }
+        }
+        // The receiving shortcut writes one unique receipt per launched process.
+        int initial = Directory.GetFiles(root, "launches.txt.*.launched").Length;
+        point = MousePoint(grid.GetItemRect(2, ItemBoundsPortion.Label));
+        PostMessage(grid.Handle, 0x0201, new IntPtr(1), point);
+        PostMessage(grid.Handle, 0x0202, IntPtr.Zero, point);
+        Application.DoEvents();
+        for (int retry = 0; retry < 100 && Directory.GetFiles(root, "launches.txt.*.launched").Length == initial; retry++) {
+            Application.DoEvents();
+            Thread.Sleep(20);
+        }
+        Check(Directory.GetFiles(root, "launches.txt.*.launched").Length == initial + 1,
+            "One left click on the app label opens the fixture shortcut exactly once");
+        PostMessage(grid.Handle, 0x0203, new IntPtr(1), point); // second press of a double-click
+        PostMessage(grid.Handle, 0x0202, IntPtr.Zero, point);
+        Application.DoEvents();
+        for (int elapsed = 0; elapsed < SystemInformation.DoubleClickTime + 100; elapsed += 20) {
+            Application.DoEvents();
+            Thread.Sleep(20);
+        }
+        Check(Directory.GetFiles(root, "launches.txt.*.launched").Length == initial + 1,
+            "The second press of a double-click does not open a duplicate app");
+    }
     static void ClickTab(TabControl tabs, int index)
     {
         Rectangle tab = tabs.GetTabRect(index);
@@ -1088,6 +1150,7 @@ static class TrayTests
                         Check(GridImages(list) == typingImages && ImageList_GetImageCount(GridImages(list)) == artworkCount, "Typing reuses the loaded artwork instead of rebuilding image lists");
                         form.Hide(); form.ShowManager();
                         Check(list.Items.Count == 3 && !filter.Visible && list.SelectedItems.Count == 0, "Reopening starts with all apps, no stale filter, and no selected icon");
+                        CheckLauncherFeedback(list, root);
                         pages.SelectedIndex = 1; type("fil");
                         Check(list.Items.Count == 3 && pages.SelectedIndex == 1, "Settings keyboard input does not filter the launcher");
                         CheckProjectLink(versionLink, root);

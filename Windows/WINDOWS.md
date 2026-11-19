@@ -1,13 +1,13 @@
 # BetterIcon-Craft Apps for Windows
 
-BetterIcon **1.26.4** for Windows lets you choose separate icon packs for app shortcuts and native ArtCraft project files.
+BetterIcon **1.27.0** for Windows lets you choose separate icon packs for app shortcuts and native ArtCraft project files.
 
 ## Start here
 
 Choose an installer for Windows 10/11 with .NET Framework 4.8 or later.
 
-- **Windows — Bundled** (`BetterIcon-1.26.4-Windows-Bundled.exe`) includes all 32 packs available at build time. Their artwork and hover previews work offline immediately.
-- **Windows — On-demand** (`BetterIcon-1.26.4-Windows-OnDemand.exe`) includes the catalog. Click a pack in the list, or highlight it and press Enter, to download and verify its artwork. Both pickers share each download and keep it for future launches.
+- **Windows — Bundled** (`BetterIcon-1.27.0-Windows-Bundled.exe`) includes all 32 packs available at build time. Their artwork and hover previews work offline immediately.
+- **Windows — On-demand** (`BetterIcon-1.27.0-Windows-OnDemand.exe`) includes the catalog. Click a pack in the list, or highlight it and press Enter, to download and verify its artwork. Both pickers share each download and keep it for future launches.
 
 Click the repeat-arrows button beside the App icon pack picker to **Refresh available icon packs**. The system tray menu offers the same command. Both editions remember the refreshed list offline. New packs are marked **Download**. Packs you already have can show **Update available**. Choose one to fetch its updated artwork. Refreshing the list preserves your current app and file icon selections.
 
@@ -26,7 +26,7 @@ If a version older than 1.20.0 is already running, finish any edits and choose *
 1. Download or clone the repository and extract it to a folder. Keep `Windows/` beside the `Craft-Icons-*` artwork folders.
 2. In a source checkout, double-click **Windows/Start-Tray.cmd**. It compiles the launcher locally on first use. In a built Windows ZIP, open **Windows/BetterIcon-Tray.exe** directly.
 3. Click its notification-area icon to open the popup above the system tray. Click the icon again to hide it. The popup has 32-pixel rounded corners and opens directly to its tabs without a title bar or window buttons. Drag any outer edge or curved corner to resize it; the outline follows the new size. Click elsewhere or use Escape to hide it. It stays inside the clicked monitor's working area.
-4. The popup opens with no app selected. Start typing an app's name to narrow the grid immediately and select the first match, without a search field. For example, `f` shows FigCraft and FilmCraft; `fiL` leaves FilmCraft. Use arrows to choose a result and **Enter** to launch, or double-click an app. **Backspace** edits the filter; **Ctrl+Backspace** clears it. **Escape** clears a filter first, then closes the popup. Reopening starts with all apps and no selection. Open menus and Manage Icons keep their normal keyboard behavior.
+4. The popup opens with no app selected. Start typing an app's name to narrow the grid immediately and select the first match, without a search field. For example, `f` shows FigCraft and FilmCraft; `fiL` leaves FilmCraft. Click an app once to open it, or use the arrow keys and press **Enter**. Hovering over an app or choosing it with the keyboard lightens the icon artwork. **Backspace** edits the filter; **Ctrl+Backspace** clears it. **Escape** clears a filter first, then closes the popup. Reopening starts with all apps and no selection. Open menus and Manage Icons keep their normal keyboard behavior.
 5. The **Launcher** tab shows your apps and the current launcher shortcut. Click the shortcut at the lower left to edit it. Open the right **Manage Icons** tab to manage icon packs, preview artwork, or adjust the display. Click the version text at the bottom of Manage Icons to visit the BetterIcon GitHub project. Click **Apply icons**, then choose **Current user** or **All users** and review the exact shortcuts. All users uses the shared Desktop and Start menu and requires administrator privileges; normal app launches remain unelevated.
 6. To undo one app, right-click its icon in either tab and choose **Restore ArtCraft default**. To undo all apps, select **ArtCraft default** (the first icon pack) and **Restore ArtCraft defaults**, or use **Restore all defaults** beside Apply icons. Each restore asks **Current user** or **All users** before the review. Choose the same locations used for application. Canceling either dialog changes no shortcuts.
 
@@ -193,7 +193,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Test-Windows.ps1 -Test
 
 # Build a Setup EXE from a locally built Windows ZIP (Inno Setup on this machine).
 .\Build-AppInstaller.ps1 -OutputDirectory 'C:\path\to\setup-output' `
-  -PackagePath 'C:\path\to\BetterIcon-Craft-Apps-Windows-1.26.4.zip' `
+  -PackagePath 'C:\path\to\BetterIcon-Craft-Apps-Windows-1.27.0.zip' `
   -CompilerPath 'C:\path\to\Inno Setup\ISCC.exe'
 
 # Actual install, upgrade, and uninstall using a unique disposable installer identity.

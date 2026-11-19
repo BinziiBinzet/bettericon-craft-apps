@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -246,12 +247,13 @@ namespace BetterIcon.Tray
     }
 
     // Keep native list selection, accessibility and keyboard navigation, with labels below the artwork.
-    public sealed class IconGridView : ListView
+    public class IconGridView : ListView
     {
         [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
         [DllImport("comctl32.dll")] static extern bool ImageList_Destroy(IntPtr list);
         IntPtr largeArtwork;
         int iconSize = Preferences.DefaultIconSize;
+        protected int IconSize { get { return iconSize; } }
         bool showAppNames = true, inputBlocked, savedTabStop;
         public event Action<int> IconSizeWheel;
         public event Action<Point?> IconMenuRequested;
@@ -333,6 +335,67 @@ namespace BetterIcon.Tray
         }
     }
 
+    sealed class LauncherGridView : IconGridView
+    {
+        readonly IList<Bitmap> artwork;
+        readonly ImageAttributes lighter = new ImageAttributes();
+        ListViewItem hovered;
+
+        public LauncherGridView(IList<Bitmap> artwork)
+        {
+            this.artwork = artwork;
+            Activation = ItemActivation.OneClick;
+            OwnerDraw = true;
+            // Blend each color toward white, keeping the original alpha (including SVG cutouts).
+            const float lift = 0.30F;
+            lighter.SetColorMatrix(new ColorMatrix {
+                Matrix00 = 1 - lift, Matrix11 = 1 - lift, Matrix22 = 1 - lift,
+                Matrix40 = lift, Matrix41 = lift, Matrix42 = lift
+            });
+        }
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) lighter.Dispose();
+            base.Dispose(disposing);
+        }
+        void SetHovered(ListViewItem item)
+        {
+            if (hovered == item) return;
+            ListViewItem old = hovered;
+            hovered = item;
+            if (old != null && old.ListView == this) Invalidate(old.Bounds);
+            if (item != null) Invalidate(item.Bounds);
+            if (SelectedItems.Count == 1) Invalidate(SelectedItems[0].Bounds);
+        }
+        public void ClearHover() { SetHovered(null); }
+        protected override void OnMouseMove(MouseEventArgs e)
+        {
+            base.OnMouseMove(e);
+            SetHovered(GetItemAt(e.X, e.Y));
+        }
+        protected override void OnMouseLeave(EventArgs e) { base.OnMouseLeave(e); ClearHover(); }
+        protected override void OnKeyDown(KeyEventArgs e) { ClearHover(); base.OnKeyDown(e); }
+        protected override void OnDrawItem(DrawListViewItemEventArgs e)
+        {
+            bool active = !InputBlocked && (hovered == null ? e.Item.Selected : hovered == e.Item);
+            Rectangle icon = GetItemRect(e.ItemIndex, ItemBoundsPortion.Icon);
+            int index = e.Item.ImageIndex;
+            if (index >= 0 && index < artwork.Count) {
+                Bitmap image = artwork[index];
+                Rectangle destination = new Rectangle(icon.Left + (icon.Width - IconSize) / 2,
+                    icon.Top + (icon.Height - IconSize) / 2, IconSize, IconSize);
+                e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                e.Graphics.DrawImage(image, destination, 0, 0, image.Width, image.Height, GraphicsUnit.Pixel, active ? lighter : null);
+            }
+            if (ShowAppNames) {
+                Rectangle label = GetItemRect(e.ItemIndex, ItemBoundsPortion.Label);
+                TextRenderer.DrawText(e.Graphics, e.Item.Text, Font, label, ForeColor,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis |
+                    TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding | TextFormatFlags.PreserveGraphicsClipping);
+            }
+        }
+    }
+
     public sealed partial class LauncherForm : Form
     {
         [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr window, int command);
@@ -347,7 +410,7 @@ namespace BetterIcon.Tray
         readonly PackPicker themes = new PackPicker();
         readonly PackPreviewStore previewStore;
         readonly PackHoverPreview trayHover;
-        readonly IconGridView apps = new IconGridView();
+        readonly LauncherGridView apps;
         readonly List<ListViewItem> appTiles = new List<ListViewItem>();
         readonly List<Bitmap> appArtwork = new List<Bitmap>();
         sealed class ArtworkSource { public string Path; public int Index, MaximumSize; }
@@ -388,6 +451,7 @@ namespace BetterIcon.Tray
 
         public LauncherForm(string source, FixtureConfig fixture, bool hidden, EventWaitHandle show, EventWaitHandle stop, EventWaitHandle installStop)
         {
+            apps = new LauncherGridView(appArtwork);
             worker = new WorkerClient(source, fixture); startInTray = hidden; showEvent = show; stopEvent = stop; installStopEvent = installStop;
             automaticPackChecks = fixture == null || fixture.AutomaticPackChecks;
             string state = fixture == null ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BetterIcon-Craft Apps") : fixture.StateDirectory;
@@ -917,6 +981,7 @@ namespace BetterIcon.Tray
         // Filter existing tiles, so each keystroke does not reload artwork from disk.
         void FilterApps()
         {
+            apps.ClearHover();
             apps.BeginUpdate();
             try {
                 apps.Items.Clear();
@@ -931,7 +996,7 @@ namespace BetterIcon.Tray
                 }
                 filterHint.Text = catalog == null ? "Finding installed apps..." : filterText.Length == 0 ? "No ArtCraft apps found. Right-click the tray icon to refresh." : "No apps match '" + filterText + "'. Backspace edits; Esc clears.";
                 filterHint.Visible = apps.Items.Count == 0;
-                apps.AccessibleDescription = (filterText.Length == 0 ? "Type an app name to filter. Enter opens. Escape closes." : "Filter: " + filterText + ". " + apps.Items.Count + " matches. Escape clears.") + " Ctrl+mouse wheel changes icon size.";
+                apps.AccessibleDescription = (filterText.Length == 0 ? "Type an app name to filter. Click or press Enter to open. Escape closes." : "Filter: " + filterText + ". " + apps.Items.Count + " matches. Escape clears.") + " Ctrl+mouse wheel changes icon size.";
             }
             finally { apps.EndUpdate(); }
         }
@@ -953,7 +1018,7 @@ namespace BetterIcon.Tray
                 }
                 apps.Focus(); return true;
             }
-            if (key == Keys.Enter && apps.ContainsFocus) { LaunchSelected(); return true; }
+            if (key == Keys.Enter && apps.ContainsFocus) { apps.ClearHover(); LaunchSelected(); return true; }
             return false;
         }
         protected override bool ProcessCmdKey(ref Message message, Keys keyData)

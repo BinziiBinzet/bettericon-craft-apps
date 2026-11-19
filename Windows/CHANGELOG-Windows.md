@@ -1,5 +1,9 @@
 # Windows installer changelog
 
+## 1.27.0 - 2026-11-19
+
+- Open a launcher app with one click. Hovering or selecting with the keyboard lightens the icon artwork and preserves its transparent edges.
+
 ## 1.26.4 - 2026-11-19
 
 - Smooth clipped SVG artwork in the launcher, pack previews, and generated Windows icons.

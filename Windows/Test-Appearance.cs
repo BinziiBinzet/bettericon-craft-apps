@@ -387,7 +387,12 @@ static class AppearanceTests
             check(iconChoices.Items.Cast<ToolStripItem>().Zip(iconChoices.Items.Cast<ToolStripItem>().Skip(1), (first, second) => first.Bounds.Bottom <= second.Bounds.Top && first.Bounds.Left == second.Bounds.Left).All(value => value), "App-icon choices form a nonoverlapping vertical list");
             iconChoices.Close();
             AppearancePalette darkPalette = AppAppearance.Resolve("Dark");
-            check(((AppearancePalette)Field(form, "appearancePalette")).Dark && form.BackColor == (darkPalette.HighContrast ? darkPalette.Background : darkPalette.Surface) && ((Control)Field(form, "apps")).BackColor == darkPalette.Surface && ((Control)Field(form, "packPreview")).ForeColor == darkPalette.Text && !((ListView)Field(form, "apps")).OwnerDraw, "Dark appearance reaches the window and both grids retain native icon and label rendering");
+            ListView launcherGrid = (ListView)Field(form, "apps"), packGrid = (ListView)Field(form, "packPreview");
+            check(((AppearancePalette)Field(form, "appearancePalette")).Dark &&
+                form.BackColor == (darkPalette.HighContrast ? darkPalette.Background : darkPalette.Surface) &&
+                launcherGrid.BackColor == darkPalette.Surface && packGrid.ForeColor == darkPalette.Text &&
+                launcherGrid.OwnerDraw && !packGrid.OwnerDraw,
+                "Dark appearance reaches both grids with artwork highlighting confined to the launcher");
             check(menus.All(menu => menu.BackColor == AppAppearance.Resolve("Dark").Surface && menu.Items.Cast<ToolStripItem>().All(item => item.ForeColor == AppAppearance.Resolve("Dark").Text)), "Dark appearance reaches tray, icon, import and pack action menus including rebuilt items");
             HashSet<string> signatures = new HashSet<string>();
             foreach (string style in AppBranding.Styles) foreach (string variant in new[] { "dark", "light" }) {
