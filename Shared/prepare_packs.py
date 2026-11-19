@@ -7,7 +7,6 @@ from contextlib import ExitStack
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PREVIEW_REVISION = "1322a6a9fce3888fa4ccb0b8ecb919aad7c49154"
 
 
 def prepare(resources, source, edition):
@@ -18,7 +17,8 @@ def prepare(resources, source, edition):
     shutil.copyfile(manifest, catalog / "packs.tsv")
     shutil.copyfile(ROOT / "Windows/ProjectFileTypes.json", catalog / "ProjectFileTypes.json")
     (catalog / "edition").write_text(edition + "\n")
-    (catalog / "previews.tsv").write_bytes(PREVIEW_REVISION.encode() + b"\n" + previews.read_bytes())
+    preview_revision = (ROOT / "Windows/PreviewArtworkRevision.txt").read_bytes().strip()
+    (catalog / "previews.tsv").write_bytes(preview_revision + b"\n" + previews.read_bytes())
     with ExitStack() as stack:
         archive = stack.enter_context(zipfile.ZipFile(source)) if source.is_file() else None
 

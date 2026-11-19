@@ -37,7 +37,7 @@ try {
     finally { [Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell) | Out-Null }
     $original = @{}; foreach ($path in @(Get-ChildItem -LiteralPath $links -File)) { $original[$path.FullName] = (Get-FileHash -LiteralPath $path.FullName).Hash }
     $catalog = Run-Worker 'Catalog'
-    Assert ($catalog.Success -and $catalog.Catalog.Apps.Count -eq 2 -and $catalog.Catalog.Themes.Count -eq 39) 'Tray catalog includes installed fixture apps and all current themes'
+    Assert ($catalog.Success -and $catalog.Catalog.Apps.Count -eq 2 -and $catalog.Catalog.Themes.Count -eq 32) 'Tray catalog includes installed fixture apps and all current themes'
     Assert (-not (Test-Path -LiteralPath $state)) 'Catalog does not create an icon installation'
     $preview = Run-Worker 'Preview'
     Assert ($preview.Success -and $preview.Plan.Count -eq 2 -and -not (Test-Path -LiteralPath $state)) 'Tray preview is read-only and returns exact shortcut plans'

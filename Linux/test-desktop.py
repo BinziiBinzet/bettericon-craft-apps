@@ -111,8 +111,8 @@ def core():
     check({e.craft for e in cat.entries.values()} == {"FilmCraft","PhotoCraft"}, "discover user and shared ArtCraft desktop entries")
     packs = Packs(payload, cat.data)
     slim = (payload / "Catalog/edition").read_text().strip() == "OnDemand"
-    check(len(packs.builtin) == 40 and sum(len(p.icons) for p in packs.builtin.values()) == (0 if slim else 543),
-          "expected packaged artwork and 39 pack choices")
+    check(len(packs.builtin) == 33 and sum(len(p.icons) for p in packs.builtin.values()) == (0 if slim else 452),
+          "expected packaged artwork and 32 pack choices")
     if slim:
         packs.use_catalog(packs.run("acquire", "Craft-Icons-Zach/Cardboard"))
     pack = packs.all["Craft-Icons-Zach/Cardboard"]

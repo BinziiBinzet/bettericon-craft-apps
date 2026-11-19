@@ -4,7 +4,7 @@ BetterIcon puts your installed ArtCraft apps in one launcher, accessible from th
 
 **[Download BetterIcon 1.26.0 for Windows, macOS, or Linux](https://github.com/BinziiBinzet/bettericon-craft-apps/releases/tag/v1.26.0)**. Each platform has two editions, with SHA-256 checksums on the release page.
 
-- **Bundled** includes all 39 icon packs and their previews for offline use.
+- **Bundled** includes the 39 icon packs and previews available when 1.26.0 was built, ready for offline use.
 - **On-demand** starts with the pack list and downloads the full artwork when you select a pack.
 
 ## BetterIcon in action
@@ -34,6 +34,8 @@ Hover over a pack name to see up to three sample icons. ArtCraft Launcher appear
 The progress bar shows when artwork is downloading or loading from disk. To check for new packs and updates, right-click the tray or menu bar icon and choose **Refresh available icon packs**.
 
 ## Community icon packs
+
+The current catalog has 32 packs. VimiummuimiV’s eight Modern Flat variations are combined into one 13-icon pack. Choose **Refresh available icon packs** from the tray or menu bar to find it. Version 1.26.0 also keeps any older variants bundled with your installer or downloaded previously. [Modern Flat artwork and sources](Craft-Icons-VimiummuimiV/)
 
 The nine themes in [Craft-Icons-OmegaDarling](Craft-Icons-OmegaDarling/) are by **OmegaDarling**. Each contains 20 icons, including ArtCraft Launcher. Existing `Craft-Icons-Zach` theme IDs remain compatible.
 
