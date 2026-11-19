@@ -14,7 +14,7 @@ Nine themes with ArtCraft Launcher. Edgework and Foldmark each have 21 icons inc
 | [NegativeSpace](NegativeSpace/) | [Preview](7.%20NegativeSpace.png) |
 | [Pop](Pop/) | [Preview](Pop.png) |
 
-Edgework and Foldmark include editable SVG sources and approved full-resolution PNGs. BetterIcon downloads the verified artwork from the top level of each theme. The other themes use full-resolution PNGs. CADCraft uses the ant mascot in every theme.
+Edgework and Foldmark include editable SVG sources and approved full-resolution PNGs. BetterIcon 1.26.3 downloads the 20 recognized app icons in each theme as SVG. FontCraft artwork is available in the editable SVG and PNG download folders. The other themes use full-resolution PNGs. CADCraft uses the ant mascot in every theme.
 
 - Edgework [SVG sources](Edgework/svg/) and [PNG exports](Edgework/png/)
 - Foldmark [SVG sources](Foldmark/svg/) and [PNG exports](Foldmark/png/)
