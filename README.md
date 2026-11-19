@@ -2,11 +2,10 @@
 
 BetterIcon launches installed ArtCraft apps and manages their icons on Windows, Mac and Linux. The Linux desktop app applies themes to desktop entries for the current user. The original Linux terminal icon installer is also included.
 
-Download the release for your platform. Each release includes a SHA-256 checksum.
+Get the Windows, macOS, or Linux installer and its SHA-256 checksum from the [BetterIcon 1.26.0 release](https://github.com/BinziiBinzet/bettericon-craft-apps/releases/tag/v1.26.0).
 
-- [Windows 1.23.1 installer and portable ZIP](https://github.com/BinziiBinzet/bettericon-craft-apps/releases/tag/windows-v1.23.1)
-- [macOS 1.23.1 disk image](https://github.com/BinziiBinzet/bettericon-craft-apps/releases/tag/macos-v1.23.1)
-- [Linux 1.23.2 graphical installer](https://github.com/BinziiBinzet/bettericon-craft-apps/releases/tag/linux-v1.23.2)
+- **Bundled** includes all 39 icon packs and their previews for offline use.
+- **On-demand** starts with the pack list. Hover over a pack for a small preview, then click it or press Enter to download its artwork.
 
 Resize **Launcher** and **Manage Icons** independently. Switching tabs keeps their divider in place. The tray or menu bar icon opens the larger saved tab, with Launcher winning a tie. The keyboard shortcut always opens Launcher. Click the shortcut in its lower-left corner to change it.
 
@@ -21,7 +20,7 @@ The nine themes in [Craft-Icons-OmegaDarling](Craft-Icons-OmegaDarling/) are by 
 
 ## Community icon packs
 
-The selected ArtCraft Discord artwork is organized by the posting creator. Each style folder contains app-named PNGs and a BetterIcon pack description. The folders can be imported individually in Manage Icons. Existing installed releases do not automatically download new repository artwork.
+The selected ArtCraft Discord artwork is organized by the posting creator. Each style folder contains app-named PNGs and a BetterIcon pack description. The folders can be imported individually in Manage Icons. Choose **Refresh available icon packs** from the tray or menu bar to check for new packs and updates.
 
 | Creator | Collection |
 | --- | --- |
@@ -36,9 +35,9 @@ The selected ArtCraft Discord artwork is organized by the posting creator. Each 
 | Cryogenn | [ArtCraft iconPackage](Craft-Icons-Cryogenn/) |
 | Mike22 | [CraftApps AIO November](Craft-Icons-Mike22/) |
 
-The circleb Origami Animals set is a separate import ZIP in the existing circleb folder. VimiummuimiV and Mike22 also supplied file-type artwork, which is preserved in their source archives. The current BetterIcon app does not install file-type associations.
+The circleb Origami Animals set is a separate import ZIP in the existing circleb folder. VimiummuimiV and Mike22 also supplied file-type artwork, which is preserved in their source archives. BetterIcon lets you choose separate packs for apps and ArtCraft project files.
 
-The new style folders are discovered by a Windows source checkout and the Linux installer. The current Linux installer does not list MailCraft or ArtCraft Launcher. The current macOS build has a fixed bundled artwork inventory; import a downloaded style folder or ZIP to use these additions there. Credits, source links, inferred app assignments, and artwork notes appear in each creator folder.
+Credits, source links, inferred app assignments, and artwork notes appear in each creator folder.
 
 ## Supported Applications
 
@@ -53,7 +52,7 @@ Supports all official Artcraft Crafting Apps.
 
 ### Windows
 
-- Run the Setup EXE to install BetterIcon and its Start menu shortcut. In the portable ZIP, open `Windows/BetterIcon-Tray.exe`. A source checkout also includes `Windows/Start-Tray.cmd`.
+- Run either Windows installer to add BetterIcon and its Start menu shortcut. A source checkout also includes `Windows/Start-Tray.cmd`.
 - On **Launcher**, type to narrow the list, then press Enter or double-click an app. Open **Manage Icons** to preview packs and review artwork changes. Click the tray icon again to close the popup.
 - **Restore original icons** restores the saved shortcuts. Shared shortcuts request administrator access only when applying or restoring.
 - Share personal packs with **Manage Icons → Export ZIP**. Recipients use **Import ZIP** to load the artwork and its credits.
