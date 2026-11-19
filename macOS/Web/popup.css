@@ -267,13 +267,23 @@ nav button[aria-selected="true"]:hover {
   margin-top: 3px;
   overflow-wrap: anywhere;
 }
-.tile[aria-selected="true"] {
+#preview .tile[aria-selected="true"] {
   background: var(--selection);
   outline: 1px solid var(--border);
   outline-offset: -1px;
 }
 .grid .tile:hover:not([aria-selected="true"]) {
   background: transparent;
+}
+#apps .tile {
+  background: transparent;
+  outline: none;
+  cursor: pointer;
+}
+/* Blend RGB 30% toward white, retaining alpha in the silhouette and cutouts. */
+#apps.pointer .tile.hovered img,
+#apps:not(.pointer) .tile[aria-selected="true"] img {
+  filter: invert(1) brightness(0.7) invert(1);
 }
 body.iconOnly .tile span {
   display: none;
@@ -501,7 +511,7 @@ dialog p {
   :root {
     --border: currentColor;
   }
-  .tile[aria-selected="true"] {
+  #preview .tile[aria-selected="true"] {
     outline: 3px solid currentColor;
   }
 }

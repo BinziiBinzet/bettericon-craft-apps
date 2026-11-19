@@ -448,6 +448,26 @@ import WebKit
         try await until("model.pack.default && !working")
         try await until("[...el('apps').querySelectorAll('img')].every(i=>i.complete&&i.naturalWidth>0)")
         try check(true, "WebKit loads actual system icon images")
+        let feedback = try await js("""
+            (() => {
+              const tile = el('apps').firstElementChild;
+              tile.dispatchEvent(new PointerEvent('pointermove', {bubbles:true}));
+              const hover = getComputedStyle(tile.firstChild).filter;
+              const clear = getComputedStyle(tile).backgroundColor === 'rgba(0, 0, 0, 0)' &&
+                getComputedStyle(tile).outlineStyle === 'none' && selected.apps === '';
+              document.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}));
+              const chosen = el('apps').querySelector('[aria-selected=true]');
+              return clear && hover !== 'none' && !el('apps').classList.contains('pointer') &&
+                getComputedStyle(chosen.firstChild).filter === hover && getComputedStyle(chosen).outlineStyle === 'none';
+            })()
+            """)
+        try check(feedback as? Bool == true, "hover and keyboard selection lighten the same artwork on a clear tile")
+        host.show()
+        _ = try await js("el('apps').firstElementChild.click();true")
+        for _ in 0..<100 where host.window.isVisible { try await Task.sleep(nanoseconds: 50_000_000) }
+        try check(!host.window.isVisible, "one click opens the fixture application through Launch Services")
+        host.show()
+        try await until("page==='launcher' && !working")
         _ = try await js("document.dispatchEvent(new KeyboardEvent('keydown',{key:'p',bubbles:true}));true")
         try await until(
             "el('apps').children.length===1 && el('apps').firstChild.getAttribute('aria-selected')==='true'")

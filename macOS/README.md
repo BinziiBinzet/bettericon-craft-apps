@@ -1,6 +1,6 @@
 # BetterIcon for Mac
 
-BetterIcon 1.26.3 is a Universal app for Apple silicon and Intel Macs running macOS 12.4 or later. Choose Bundled for all 32 packs and their previews offline, or OnDemand to download individual packs.
+BetterIcon 1.27.0 is a Universal app for Apple silicon and Intel Macs running macOS 12.4 or later. Choose Bundled for all 32 packs and their previews offline, or OnDemand to download individual packs.
 
 VimiummuimiV’s eight Modern Flat variants now appear as one 13-icon pack. BetterIcon remembers the selection separately for app and project file icons. If your downloaded artwork differs, it stays usable offline and shows **Update available** until you select the pack.
 
@@ -25,7 +25,7 @@ The icon change uses Finder metadata on the app. Its executable, signed resource
 
 ## Launcher and packs
 
-Type the beginning of an app name, use the arrow keys, and press Return to launch. Double-click also launches. Escape clears the filter and then hides the window. Control-scroll over the launcher to change icon size. The numeric size field, Reset, and Show app names affect both tabs. Drag the popup edges to resize.
+Type the beginning of an app name, use the arrow keys, and press Return to launch. A single click opens an app. Hovering or choosing it with the keyboard lightens the icon artwork. Escape clears the filter and then hides the window. Control-scroll over the launcher to change icon size. The numeric size field, Reset, and Show app names affect both tabs. Drag the popup edges to resize.
 
 Import folders or Windows BetterIcon ZIPs, create personal packs, or right-click an icon and choose **Choose icon…**. Editing a built-in creates a personal copy. Right-click the pack selector for **Customize**, **Edit pack**, **Export ZIP**, and **Restore built-in packs**. Exports preserve author credits and original SVG, ICO, or PNG artwork. Mac-only ICNS files become PNGs when shared with Windows. Packs can include a custom ArtCraft Launcher icon. Hover a pack name for up to three sample icons, starting with ArtCraft Launcher when available. An on-demand pack downloads when you click its name or press Return. The label changes to **Downloaded** once the pack is ready. Click the repeat-arrows button beside **App icon pack** to refresh the list. **Refresh available icon packs** is also in the menu bar icon’s right-click menu.
 
@@ -39,11 +39,11 @@ Preferences, personal packs, and verified originals live in `~/Library/Applicati
 
 ## Local builds and checks
 
-Build on a Mac with Xcode Command Line Tools and Go 1.25. The build uses the verified Windows 1.26.3 bundled artwork ZIP or a checkout containing the source images. Go and Python are build tools. The installed app includes its catalog helper.
+Build on a Mac with Xcode Command Line Tools and Go 1.25. The build uses the verified Windows 1.27.0 bundled artwork ZIP or a checkout containing the source images. Go and Python are build tools. The installed app includes its catalog helper.
 
 ~~~sh
-./build.sh "$HOME/Downloads/BetterIcon-Bundled" /path/to/Windows-1.26.3.zip Bundled
-./build.sh "$HOME/Downloads/BetterIcon-OnDemand" /path/to/Windows-1.26.3.zip OnDemand
+./build.sh "$HOME/Downloads/BetterIcon-Bundled" /path/to/Windows-1.27.0.zip Bundled
+./build.sh "$HOME/Downloads/BetterIcon-OnDemand" /path/to/Windows-1.27.0.zip OnDemand
 ./test.sh "$HOME/Downloads/BetterIcon-Bundled/BetterIcon.app"
 ./test.sh "$HOME/Downloads/BetterIcon-OnDemand/BetterIcon.app"
 ~~~

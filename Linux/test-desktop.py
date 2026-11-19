@@ -455,8 +455,16 @@ def gui():
     pop.hide()
     xdo("key","ctrl+alt+b")
     ready("launcher",(326,258))
-    js("el('apps').firstElementChild.dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));true")
-    check(wait(lambda: (home / "launched").exists() and not pop.win.get_visible()), "launch a fixture app through its actual desktop entry")
+    center = js("(() => {const r=el('apps').firstElementChild.getBoundingClientRect(); return [r.x+r.width/2,r.y+r.height/2]})()")
+    _, x, y = pop.web.get_window().get_origin()
+    xdo("mousemove", x + int(center[0]), y + int(center[1]))
+    check(wait(lambda: js("getComputedStyle(el('apps').firstElementChild.firstChild).filter !== 'none' && selected.apps === ''")),
+          "hover lightens the launcher's image without selecting or opening it")
+    xdo("key", "Right")
+    check(wait(lambda: js("!el('apps').classList.contains('pointer') && getComputedStyle(el('apps').querySelector('[aria-selected=true] img')).filter !== 'none'")),
+          "keyboard navigation takes over the artwork highlight")
+    xdo("click", 1)
+    check(wait(lambda: (home / "launched").exists() and not pop.win.get_visible()), "one click launches a fixture app through its actual desktop entry")
     click()
     ready("manage",(836,606))
     click()

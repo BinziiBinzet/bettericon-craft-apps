@@ -128,9 +128,20 @@ function tileMenu(item, x, y) {
     y,
   );
 }
+let hoveredApp = null;
+function highlightHoveredApp(tile) {
+  if (hoveredApp === tile) return;
+  hoveredApp?.classList.remove("hovered");
+  hoveredApp = tile;
+  tile?.classList.add("hovered");
+  el("apps").classList.toggle("pointer", Boolean(tile));
+}
+el("apps").onpointermove = e => highlightHoveredApp(working ? null : e.target.closest(".tile"));
+el("apps").onpointerleave = () => highlightHoveredApp(null);
 function grid(id, items) {
   const area = el(id),
     previous = area.scrollTop;
+  if (id === "apps") highlightHoveredApp(null);
   const nodes = items.map((item) => {
     const b = make("button");
     b.className = "tile";
@@ -153,10 +164,11 @@ function grid(id, items) {
       for (const sibling of area.children) sibling.setAttribute("aria-selected", String(sibling === b));
       area.focus({ preventScroll: true });
     };
-    b.onclick = select;
-    b.ondblclick = () => {
-      if (id === "apps" && !working) send("launch", { id: item.id });
-    };
+    b.onclick = id === "apps" ? e => {
+      if (working || e.button !== 0 || e.ctrlKey) return;
+      select();
+      if (e.detail <= 1) send("launch", { id: item.id });
+    } : select;
     b.oncontextmenu = (e) => {
       e.preventDefault();
       select();
@@ -413,6 +425,7 @@ document.addEventListener("keydown", (e) => {
     return;
   }
   const id = page === "launcher" ? "apps" : "preview";
+  if (id === "apps") highlightHoveredApp(null);
   if (page === "manage" && !el("preview").contains(document.activeElement)) return;
   const items = id === "apps" ? filtered() : model.preview;
   let i = items.findIndex((item) => item.id === selected[id]);

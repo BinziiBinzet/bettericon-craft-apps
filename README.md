@@ -11,7 +11,7 @@ BetterIcon puts your installed ArtCraft apps in one launcher, accessible from th
 
 ### Launch an app from the keyboard
 
-Press your launcher shortcut, type the first few letters of an app name, and press **Enter** or **Return**. In the Windows example below, typing `fil` selects FilmCraft from a grid of **HyGel** icons by OmegaDarling. Windows 1.27 opens an app with one click and lightens the icon under the pointer or keyboard selection. Earlier Windows versions, macOS and Linux use a double-click. To change the shortcut, click it in the lower-left corner.
+Press your launcher shortcut, type the first few letters of an app name, and press **Enter** or **Return**. In the Windows example below, typing `fil` selects FilmCraft from a grid of **HyGel** icons by OmegaDarling. BetterIcon 1.27 opens an app with one click and lightens the icon under the pointer or keyboard selection. To change the shortcut, click it in the lower-left corner.
 
 <img src="docs/screenshots/launcher-windows.webp" width="720" alt="Windows Launcher showing 12 ArtCraft apps in two rows with OmegaDarling’s HyGel icons and a Ctrl+Alt+A shortcut in the lower left.">
 

@@ -1,6 +1,6 @@
 # BetterIcon for Linux
 
-BetterIcon 1.26.3 launches installed ArtCraft desktop apps and manages their icons from the **Launcher** and **Manage Icons** tabs. The Bundled edition includes all 32 packs and small previews. The OnDemand edition downloads a pack when you click its name or press Enter. Both packages include catalog helpers for ARM64 and x86-64. Starting in the tray loads the window interface only when you first open it. The interface uses software rendering.
+BetterIcon 1.27.0 launches installed ArtCraft desktop apps and manages their icons from the **Launcher** and **Manage Icons** tabs. The Bundled edition includes all 32 packs and small previews. The OnDemand edition downloads a pack when you click its name or press Enter. Both packages include catalog helpers for ARM64 and x86-64. Starting in the tray loads the window interface only when you first open it. The interface uses software rendering.
 
 VimiummuimiV’s eight Modern Flat variants now appear as one 13-icon pack. BetterIcon remembers the selection separately for app and project file icons. If your downloaded artwork differs, it stays usable offline and shows **Update available** until you select the pack.
 
@@ -18,6 +18,7 @@ On some NVIDIA machines running Ubuntu 24.04, a headless GNOME Remote Login sess
 
 ## Launcher and icons
 
+- Click an app once to open it. Hovering or choosing it with the arrow keys lightens its icon. Press **Enter** to open the keyboard selection.
 - The default shortcut is **Ctrl+Alt+A**. It opens Launcher at the pointer. Click the shortcut text at the lower left to change or disable it. GNOME registers the binding with the compositor. Other X11 desktops use an X11 key grab. Other Wayland desktops can assign `bettericon --launcher` in the desktop shortcut settings.
 - Click the tray icon to open the larger tab by saved window area. Launcher opens on a tie. A second click hides the popup. Drag the diagonal grip just inside the lower-right corner, or drag an edge, to size each tab independently. Launcher can shrink to 300 × 240 and Manage Icons to 790 × 570 when the screen allows. Switching tabs keeps the divider at its screen position.
 - Pick a pack in **Manage Icons**, then choose **Apply icons…** to review the desktop entries that will change. System-wide launchers receive a per-user override. **Restore all defaults…** restores the original user files and removes overrides BetterIcon created. Externally edited entries are marked during review.
