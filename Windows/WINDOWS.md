@@ -1,15 +1,17 @@
 # BetterIcon-Craft Apps for Windows
 
-BetterIcon **1.26.2** for Windows lets you choose separate icon packs for app shortcuts and native ArtCraft project files.
+BetterIcon **1.26.3** for Windows lets you choose separate icon packs for app shortcuts and native ArtCraft project files.
 
 ## Start here
 
 Choose an installer for Windows 10/11 with .NET Framework 4.8 or later.
 
-- **Windows — Bundled** (`BetterIcon-1.26.2-Windows-Bundled.exe`) includes all 32 packs available at build time. Their artwork and hover previews work offline immediately.
-- **Windows — On-demand** (`BetterIcon-1.26.2-Windows-OnDemand.exe`) includes the catalog. Click a pack in the list, or highlight it and press Enter, to download and verify its artwork. Both pickers share each download and keep it for future launches.
+- **Windows — Bundled** (`BetterIcon-1.26.3-Windows-Bundled.exe`) includes all 32 packs available at build time. Their artwork and hover previews work offline immediately.
+- **Windows — On-demand** (`BetterIcon-1.26.3-Windows-OnDemand.exe`) includes the catalog. Click a pack in the list, or highlight it and press Enter, to download and verify its artwork. Both pickers share each download and keep it for future launches.
 
 Click the repeat-arrows button beside the App icon pack picker to **Refresh available icon packs**. The system tray menu offers the same command. Both editions remember the refreshed list offline. New packs are marked **Download**. Packs you already have can show **Update available**. Choose one to fetch its updated artwork. Refreshing the list preserves your current app and file icon selections.
+
+BetterIcon checks at launch and about every 30 minutes while running. A dot on the refresh button means there are new or updated packs to review. Click the button to refresh the list, then select the packs you want to download.
 
 Open **BetterIcon** from Start. Both editions install for your Windows account and offer an optional desktop shortcut. The setup is unsigned, so Windows may show an unknown-publisher or SmartScreen notice.
 
@@ -191,7 +193,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Test-Windows.ps1 -Test
 
 # Build a Setup EXE from a locally built Windows ZIP (Inno Setup on this machine).
 .\Build-AppInstaller.ps1 -OutputDirectory 'C:\path\to\setup-output' `
-  -PackagePath 'C:\path\to\BetterIcon-Craft-Apps-Windows-1.26.2.zip' `
+  -PackagePath 'C:\path\to\BetterIcon-Craft-Apps-Windows-1.26.3.zip' `
   -CompilerPath 'C:\path\to\Inno Setup\ISCC.exe'
 
 # Actual install, upgrade, and uninstall using a unique disposable installer identity.

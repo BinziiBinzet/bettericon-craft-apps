@@ -52,6 +52,10 @@ try {
             }
             $reply.CachedProjectIcons = $result
         }
+        'CheckPackUpdates' {
+            $previous = if ($request.PSObject.Properties['PreviousPackCheck']) { $request.PreviousPackCheck }
+            $reply.PackCheck = Get-BetterIconPackUpdates -Previous $previous
+        }
         { $_ -in 'Catalog','RefreshPackCatalog' } {
             if ($request.Action -eq 'RefreshPackCatalog') { Update-BetterIconPackCatalog }
             $themes = @(Get-BetterIconTheme | ForEach-Object {

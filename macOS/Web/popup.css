@@ -517,10 +517,23 @@ dialog p {
   display: grid;
   place-items: center;
   padding: 0;
+  position: relative;
 }
 #refreshPacks svg {
   width: 20px;
   height: 20px;
+}
+#refreshPacks.has-pack-updates::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 7px;
+  height: 7px;
+  box-sizing: border-box;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  background: var(--accent);
 }
 .project-pack {margin-top:14px}
 .project-pack .actions {margin-top:6px}

@@ -1,5 +1,9 @@
 # Windows installer changelog
 
+## 1.26.3 - 2026-11-19
+
+- BetterIcon checks for icon pack changes at startup and about every 30 minutes while running. A dot on the refresh button signals new or updated packs. Click Refresh to see the changes, then select any pack you want to download.
+
 ## 1.26.2 - 2026-11-19
 
 - Refresh available icon packs from the repeat-arrow button beside the pack picker in Manage Icons.

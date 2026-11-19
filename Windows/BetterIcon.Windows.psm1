@@ -1,6 +1,6 @@
 # BetterIcon-Craft Apps Windows support.
 Set-StrictMode -Version Latest
-$script:Version = '1.26.2'
+$script:Version = '1.26.3'
 $script:SvgArtworkType = $null
 $script:DownloadCatalog = $null
 $script:AvailableCatalog = $null
@@ -755,4 +755,4 @@ function Restore-BetterIcon {
     finally { $lock.Dispose() }
 }
 
-Export-ModuleMember -Function Get-BetterIconVersion,Get-BetterIconRepository,Get-BetterIconStateDirectory,Get-BetterIconTheme,Get-BetterIconThemeIcon,Get-BetterIconBytes,Get-BetterIconApplication,Get-BetterIconPlan,Install-BetterIconTheme,Restore-BetterIcon,Install-BetterIconDownloadedPack,Update-BetterIconPackCatalog,Get-BetterIconPackAliases
+Export-ModuleMember -Function Get-BetterIconVersion,Get-BetterIconRepository,Get-BetterIconStateDirectory,Get-BetterIconTheme,Get-BetterIconThemeIcon,Get-BetterIconBytes,Get-BetterIconApplication,Get-BetterIconPlan,Install-BetterIconTheme,Restore-BetterIcon,Install-BetterIconDownloadedPack,Update-BetterIconPackCatalog,Get-BetterIconPackUpdates,Get-BetterIconPackAliases

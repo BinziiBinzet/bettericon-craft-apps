@@ -1,6 +1,6 @@
 # BetterIcon for Linux
 
-BetterIcon 1.26.2 launches installed ArtCraft desktop apps and manages their icons from the **Launcher** and **Manage Icons** tabs. The Bundled edition includes all 32 packs and small previews. The OnDemand edition downloads a pack when you click its name or press Enter. Both packages include catalog helpers for ARM64 and x86-64. Starting in the tray loads the window interface only when you first open it. The interface uses software rendering.
+BetterIcon 1.26.3 launches installed ArtCraft desktop apps and manages their icons from the **Launcher** and **Manage Icons** tabs. The Bundled edition includes all 32 packs and small previews. The OnDemand edition downloads a pack when you click its name or press Enter. Both packages include catalog helpers for ARM64 and x86-64. Starting in the tray loads the window interface only when you first open it. The interface uses software rendering.
 
 VimiummuimiV’s eight Modern Flat variants now appear as one 13-icon pack. BetterIcon remembers the selection separately for app and project file icons. If your downloaded artwork differs, it stays usable offline and shows **Update available** until you select the pack.
 
@@ -23,6 +23,7 @@ On some NVIDIA machines running Ubuntu 24.04, a headless GNOME Remote Login sess
 - Pick a pack in **Manage Icons**, then choose **Apply icons…** to review the desktop entries that will change. System-wide launchers receive a per-user override. **Restore all defaults…** restores the original user files and removes overrides BetterIcon created. Externally edited entries are marked during review.
 - Right-click the tray icon to refresh installed apps, include an additional folder of desktop entries, or exit. The Launcher uses the distribution's desktop entry to start each installed app. An empty Launcher means there are no matching ArtCraft desktop entries in the scanned locations.
 - Hover an item in either pack menu to preview up to three icons. A pack with ArtCraft Launcher artwork shows it first. The menu shows whether a pack is included, downloaded, or available for download or update. Click **Refresh available icon packs** beside the App icon pack picker or choose the same action from the tray menu.
+- BetterIcon checks for new or updated packs at startup and about every 30 minutes. A dot appears on the refresh button when it finds changes. Refresh the list to see the changes, then select any pack you want to download or update.
 - Choose **Project file icon pack** separately and click **Apply project file icons…** to change icons for ArtCraft project types in your account. **Restore project file icons…** restores their original MIME registration. A custom pack can include dedicated files such as `FileTypes/pcraft.png`. Packs that only contain app artwork use the corresponding app icons.
 - Right-click the pack selector for editing, customizing, exporting, and restoring hidden built-in packs. Import a BetterIcon ZIP or an artwork folder to make a personal pack. The version text opens the GitHub project.
 
@@ -30,6 +31,6 @@ To uninstall the app, use `./uninstall.sh` from the extracted package. The insta
 
 ## Build from source
 
-With Go 1.25 on PATH, build each edition locally using Python 3.11 or newer. From a project-specific virtual environment run `python Linux/build-desktop.py /path/to/Windows-1.26.2.zip /path/to/output --edition Bundled` and repeat with `--edition OnDemand`. The build verifies artwork against the pack and preview manifests and emits an archive and SHA-256 checksum. In a source checkout, `Linux/install.sh` and `Linux/uninstall.sh` remain the legacy terminal icon installation and restore tools.
+With Go 1.25 on PATH, build each edition locally using Python 3.11 or newer. From a project-specific virtual environment run `python Linux/build-desktop.py /path/to/artwork.zip /path/to/output --edition Bundled` and repeat with `--edition OnDemand`. The build verifies artwork against the pack and preview manifests and emits an archive and SHA-256 checksum. In a source checkout, `Linux/install.sh` and `Linux/uninstall.sh` remain the legacy terminal icon installation and restore tools.
 
 Run `bash Linux/test-desktop.sh /path/to/extracted-package` for the X11 desktop suite. On a machine with Mutter and XWayland, add `--mutter-resize` to exercise pointer drags in GNOME’s compositor using a private virtual display. Both modes use a temporary user profile.

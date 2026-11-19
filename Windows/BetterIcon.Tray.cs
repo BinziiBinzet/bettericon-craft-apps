@@ -91,6 +91,12 @@ namespace BetterIcon.Tray
         public string OriginalHash { get; set; }
     }
     public sealed class ResultItem { public string Shortcut { get; set; } public string Status { get; set; } public string Message { get; set; } }
+    public sealed class PackUpdateCheck
+    {
+        public string Revision { get; set; }
+        public string Baseline { get; set; }
+        public int Count { get; set; }
+    }
     public sealed class WorkerRequest
     {
         public Dictionary<string, string> ProjectArtwork { get; set; }
@@ -103,6 +109,7 @@ namespace BetterIcon.Tray
         public PlanItem[] ExpectedPlan { get; set; }
         public string ExpectedStateHash { get; set; }
         public string PackDirectory { get; set; }
+        public PackUpdateCheck PreviousPackCheck { get; set; }
     }
     public sealed class WorkerReply
     {
@@ -115,10 +122,17 @@ namespace BetterIcon.Tray
         public PlanItem[] Plan { get; set; }
         public ResultItem[] Results { get; set; }
         public string StateHash { get; set; }
+        public PackUpdateCheck PackCheck { get; set; }
     }
     // Optional developer fixture configuration. Both fields are required so a
     // disposable test cannot accidentally fall back to the user's real folders.
-    public sealed class FixtureConfig { public string[] ShortcutDirectory { get; set; } public string StateDirectory { get; set; } public bool KeepOpenForAutomation { get; set; } }
+    public sealed class FixtureConfig
+    {
+        public string[] ShortcutDirectory { get; set; }
+        public string StateDirectory { get; set; }
+        public bool KeepOpenForAutomation { get; set; }
+        public bool AutomaticPackChecks { get; set; }
+    }
     public sealed class Preferences
     {
         public const int DefaultIconSize = 48, MinimumIconSize = 24, MaximumIconSize = 4096;
@@ -347,14 +361,20 @@ namespace BetterIcon.Tray
         readonly EventWaitHandle showEvent, stopEvent, installStopEvent;
         readonly System.Windows.Forms.Timer signalTimer = new System.Windows.Forms.Timer();
         readonly System.Windows.Forms.Timer dismissTimer = new System.Windows.Forms.Timer();
+        readonly System.Windows.Forms.Timer packCheckTimer = new System.Windows.Forms.Timer { Interval = 60000 };
         readonly string preferencesPath;
         readonly string fixtureLog;
         RunningTaskbarIcons runningTaskbarIcons;
         readonly bool startInTray;
+        readonly bool automaticPackChecks;
         Catalog catalog;
         Preferences preferences = new Preferences();
         GlobalHotkey hotkey;
         bool busy, exiting, notified;
+        bool checkingPackUpdates;
+        int packCheckGeneration;
+        DateTime nextPackCheck;
+        PackUpdateCheck packUpdateCheck;
         static readonly Size DefaultWindowSize = new Size(900, 818);
         static readonly Size LauncherMinimum = new Size(300, 240), ManageMinimum = new Size(790, 570);
         Size displayedPageSize;
@@ -369,6 +389,7 @@ namespace BetterIcon.Tray
         public LauncherForm(string source, FixtureConfig fixture, bool hidden, EventWaitHandle show, EventWaitHandle stop, EventWaitHandle installStop)
         {
             worker = new WorkerClient(source, fixture); startInTray = hidden; showEvent = show; stopEvent = stop; installStopEvent = installStop;
+            automaticPackChecks = fixture == null || fixture.AutomaticPackChecks;
             string state = fixture == null ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BetterIcon-Craft Apps") : fixture.StateDirectory;
             preferencesPath = Path.Combine(state, "tray-preferences.json");
             previewStore = new PackPreviewStore(source, state);
@@ -433,14 +454,23 @@ namespace BetterIcon.Tray
             string error;
             hotkey.TrySet(preferences.Hotkey, out error);
             UpdateHotkeyHint();
-            BeginInvoke(new Action(async delegate { if (!startInTray) ShowManager(); await RefreshCatalog(); }));
+            BeginInvoke(new Action(async delegate {
+                if (!startInTray) ShowManager();
+                await RefreshCatalog();
+                if (!automaticPackChecks || IsDisposed || Disposing) return;
+                packCheckTimer.Tick += async delegate {
+                    if (DateTime.UtcNow >= nextPackCheck) await CheckForPackUpdates();
+                };
+                packCheckTimer.Start();
+                await CheckForPackUpdates();
+            }));
         }
 
         protected override void Dispose(bool disposing)
         {
             if (disposing && trayHover != null) trayHover.Dispose();
             if (disposing && runningTaskbarIcons != null) runningTaskbarIcons.Dispose();
-            if (disposing) { DisposeRoundedWindow(); if (hotkey != null) hotkey.Dispose(); DisposeAppearance(); ClearAppArtwork(); ClearPackArtwork(); }
+            if (disposing) { packCheckTimer.Dispose(); DisposeRoundedWindow(); if (hotkey != null) hotkey.Dispose(); DisposeAppearance(); ClearAppArtwork(); ClearPackArtwork(); }
             base.Dispose(disposing);
         }
 
@@ -679,6 +709,30 @@ namespace BetterIcon.Tray
             catch (UnauthorizedAccessException) { }
         }
         Task RefreshCatalog() { return ReadCatalog(false); }
+        async Task CheckForPackUpdates()
+        {
+            if (busy || checkingPackUpdates || IsDisposed || Disposing) return;
+            checkingPackUpdates = true;
+            nextPackCheck = DateTime.UtcNow.AddMinutes(30);
+            int generation = packCheckGeneration;
+            try {
+                var request = new WorkerRequest { Action = "CheckPackUpdates", Scope = Scope, PreviousPackCheck = packUpdateCheck };
+                WorkerReply reply = await worker.Run(request, false);
+                // A manual refresh may have acknowledged the same changes while we were checking.
+                if (!IsDisposed && !Disposing && generation == packCheckGeneration) SetPackUpdateCheck(reply.PackCheck);
+            }
+            catch (Exception error) { Trace.WriteLine("BetterIcon pack update check: " + error.Message); }
+            finally { checkingPackUpdates = false; }
+        }
+        void SetPackUpdateCheck(PackUpdateCheck check)
+        {
+            packUpdateCheck = check;
+            int count = check == null ? 0 : check.Count;
+            refreshPacksButton.AccessibleDescription = count > 0
+                ? count + (count == 1 ? " new or updated icon pack available." : " new or updated icon packs available.")
+                : null;
+            refreshPacksButton.Invalidate();
+        }
         async Task ReadCatalog(bool online)
         {
             if (busy) return;
@@ -701,6 +755,8 @@ namespace BetterIcon.Tray
                 if (catalog.Apps.Length == 0) status.Text = "No ArtCraft shortcuts found. Install an app, then refresh from the tray menu.";
                 Text = "BetterIcon for ArtCraft  " + catalog.Version;
                 if (online) {
+                    packCheckGeneration++;
+                    SetPackUpdateCheck(null);
                     previewStore.Refresh();
                     if (filePicker != null && !filePicker.IsDisposed) await filePicker.RefreshChoices();
                     int added = bundledThemes.Count(t => !previous.Contains(t.Id));

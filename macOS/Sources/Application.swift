@@ -40,6 +40,11 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
     let library: PackLibrary, icons: AppIcons
     let published: PublishedPacks
     var builtins: [Pack]
+    private let checkPackUpdates: ((PackUpdateCheck?) throws -> PackUpdateCheck)?
+    private var packUpdateTimer: Timer?
+    private var checkingPackUpdates = false
+    private var packRefreshGeneration = 0
+    private var packUpdates: PackUpdateCheck?
     private lazy var trayPreview = TrayPackPreview(published)
     private let previewQueue: OperationQueue = {
         let queue = OperationQueue()
@@ -77,7 +82,8 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
     init(_ install: Installation, hidden: Bool = false, presentWindow: @escaping (NSWindow) -> Void = {
         NSApp.activate(ignoringOtherApps: true)
         $0.makeKeyAndOrderFront(nil)
-    }, openProjectURL: @escaping (URL) -> Bool = { NSWorkspace.shared.open($0) }) throws {
+    }, openProjectURL: @escaping (URL) -> Bool = { NSWorkspace.shared.open($0) },
+        checkPackUpdates: ((PackUpdateCheck?) throws -> PackUpdateCheck)? = nil) throws {
         self.install = install
         self.presentWindow = presentWindow
         self.openProjectURL = openProjectURL
@@ -96,11 +102,14 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
         icons = AppIcons(install.state.appendingPathComponent("App Icons"))
         published = try PublishedPacks(resources: install.resources, state: install.state)
         builtins = try published.list()
+        self.checkPackUpdates = checkPackUpdates ?? (install.fixture ? nil : published.checkUpdates)
         library.projectKeys = Set(published.formats.map(\.Key))
         library.projectApps = Set(published.formats.map(\.Application))
         super.init()
         migratePackSelections()
     }
+
+    deinit { packUpdateTimer?.invalidate() }
 
     private func migratePackSelections() {
         var changed = false
@@ -177,6 +186,12 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
         let html = install.resources.appendingPathComponent("Web/index.html")
         web.loadFileURL(html, allowingReadAccessTo: html.deletingLastPathComponent())
         if !startHidden { show() }
+        if checkPackUpdates != nil {
+            let timer = Timer(timeInterval: 30 * 60, repeats: true) { [weak self] _ in self?.checkForPackUpdates() }
+            packUpdateTimer = timer
+            RunLoop.main.add(timer, forMode: .common)
+            checkForPackUpdates()
+        }
     }
     @objc private func otherInstance(_ note: Notification) {
         if note.object as? String == "show" {
@@ -334,7 +349,7 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
         let order: [String: [String]] = [
             "update": ["next"], "reset": ["pageName"], "tab": ["name"], "busy": ["message"], "editor": ["info"],
             "assignment": ["craft", "name"], "hotkey": ["info"], "keyStatus": ["message", "shortcut"], "doneDialog": ["id"],
-            "showError": ["id", "message"], "packPreview": ["id", "token", "url"],
+            "showError": ["id", "message"], "packPreview": ["id", "token", "url"], "packUpdateCount": ["count"],
         ]
         guard let keys = order[fn] else { return }
         web.callAsyncJavaScript(
@@ -400,6 +415,7 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
             "pack": pack.model,
             "prefs": settings, "maxSize": maxSize, "dark": dark, "brands": brandURLs, "version": version,
             "status": status, "shortcut": shortcutText, "projectURL": Self.projectURL.absoluteString,
+            "packUpdateCount": packUpdates?.count ?? 0,
         ]
         call("update", ["next": state])
     }
@@ -501,9 +517,27 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
             self.savePrefs()
         })
     }
+    private func checkForPackUpdates() {
+        guard let checkPackUpdates, !checkingPackUpdates else { return }
+        checkingPackUpdates = true
+        let generation = packRefreshGeneration, previous = packUpdates
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let result = Result { try checkPackUpdates(previous) }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.checkingPackUpdates = false
+                // A manual refresh may have acknowledged the changes while this check was running.
+                guard generation == self.packRefreshGeneration, case .success(let updates) = result else { return }
+                self.packUpdates = updates
+                self.call("packUpdateCount", ["count": updates.count])
+            }
+        }
+    }
     private func refreshPacks(revealManage: Bool = true) {
         if revealManage { show(tab: .manage) }
         background("Refreshing available icon packs…", work: { try self.published.list("refresh") }) { rows in
+            self.packRefreshGeneration += 1
+            self.packUpdates = nil
             self.builtins = rows
             self.status = "Available icon packs refreshed."
             self.migratePackSelections()

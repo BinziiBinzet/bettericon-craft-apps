@@ -97,6 +97,11 @@ class Packs:
             raise ValueError(proc.stderr.strip() or "Could not read the icon pack catalog.")
         return json.loads(proc.stdout)
 
+    def check_updates(self, previous):
+        if previous is None:
+            return self.run("check-updates")
+        return self.run("check-updates", previous["revision"], previous["baseline"], str(previous["count"]))
+
     def use_catalog(self, rows):
         default = Pack(DEFAULT_ID, "ArtCraft default", "", status="Default", can_files=True)
         self.builtin = {DEFAULT_ID: default}

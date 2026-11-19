@@ -209,18 +209,7 @@ func openLibrary(resources, state string) (*library, error) {
 			l.latest = s
 		}
 	}
-	// Keep the seed intact: its original paths identify the bundled files.
-	flat, merged := l.latest.Packs[modernFlat]
-	if !merged {
-		flat, merged = l.seed.Packs[modernFlat]
-	}
-	if merged {
-		l.latest.Packs = maps.Clone(l.latest.Packs)
-		l.latest.Packs[modernFlat] = flat
-		for _, id := range modernFlatVariants {
-			delete(l.latest.Packs, id)
-		}
-	}
+	l.latest.Packs = l.visiblePacks(l.latest.Packs)
 	b, err = os.ReadFile(filepath.Join(folder, "previews.tsv"))
 	if err != nil {
 		return nil, err
@@ -242,6 +231,24 @@ func openLibrary(resources, state string) (*library, error) {
 	l.bundled = strings.TrimSpace(string(edition)) == "Bundled"
 	return l, nil
 }
+
+func (l *library) visiblePacks(packs map[string]pack) map[string]pack {
+	flat, merged := packs[modernFlat]
+	if !merged {
+		flat, merged = l.seed.Packs[modernFlat]
+	}
+	if !merged {
+		return packs
+	}
+	// Keep the seed intact: its original paths identify the bundled files.
+	visible := maps.Clone(packs)
+	visible[modernFlat] = flat
+	for _, id := range modernFlatVariants {
+		delete(visible, id)
+	}
+	return visible
+}
+
 func (p pack) signature() string {
 	keys := make([]string, 0, len(p.Assets))
 	for _, a := range p.Assets {

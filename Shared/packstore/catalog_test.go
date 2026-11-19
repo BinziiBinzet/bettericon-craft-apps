@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -145,6 +146,122 @@ func TestExplicitPackLifecycle(t *testing.T) {
 	}
 	if err := load().refresh(); err == nil || load().latest.Revision != next {
 		t.Fatal("offline refresh replaced catalog")
+	}
+}
+
+func TestPackUpdateCheck(t *testing.T) {
+	res := t.TempDir()
+	state := filepath.Join(t.TempDir(), "state")
+	catalog := filepath.Join(res, "Catalog")
+	write := func(name, contents string) {
+		t.Helper()
+		if err := atomic(filepath.Join(catalog, name), []byte(contents)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seed, updated, unrelated, removed := strings.Repeat("1", 40), strings.Repeat("2", 40), strings.Repeat("3", 40), strings.Repeat("4", 40)
+	oldPath := modernFlat + "/PhotoCraft.png"
+	newPath := "Craft-Icons-Artist/New/PhotoCraft.png"
+	unchangedPath := "Craft-Icons-Artist/Same/PhotoCraft.png"
+	row := func(path, body string) string {
+		return strings.Join([]string{blob(body), path, path, checksum([]byte(body))}, "\t")
+	}
+	write("ProjectFileTypes.json", `[{"Key":".pcraft","Application":"PhotoCraft"}]`)
+	write("edition", "OnDemand")
+	write("packs.tsv", strings.Join([]string{seed, row(oldPath, "old"), row(unchangedPath, "same")}, "\n"))
+	write("previews.tsv", fmt.Sprintf("%s\n%s\tthumb.webp\t%s\t12\tPhotoCraft", seed, modernFlat, checksum([]byte("RIFFxxxxWEBP"))))
+
+	// The background command may read the main ref and the pinned tree.
+	revision := updated
+	artwork := map[string]string{oldPath: "updated", unchangedPath: "same", newPath: "new", "README.md": "metadata"}
+	checkTrees, previewRefs := 0, 0
+	offline, truncated := false, false
+	transport := client.Transport
+	t.Cleanup(func() { client.Transport = transport })
+	client.Transport = serve(func(r *http.Request) (*http.Response, error) {
+		var b []byte
+		switch p := r.URL.Path; {
+		case strings.HasSuffix(p, "/heads/main"):
+			if offline {
+				return nil, fmt.Errorf("offline")
+			}
+			b = []byte(fmt.Sprintf(`{"object":{"sha":%q,"type":"commit"}}`, revision))
+		case strings.HasSuffix(p, "/trees/"+revision) && r.URL.RawQuery == "recursive=1":
+			checkTrees++
+			var entries []map[string]any
+			for path, contents := range artwork {
+				entries = append(entries, map[string]any{"type": "blob", "mode": "100644", "path": path, "sha": blob(contents), "size": len(contents)})
+			}
+			b, _ = json.Marshal(map[string]any{"truncated": truncated, "tree": entries})
+		case strings.HasSuffix(p, "/heads/artwork/pack-hover-previews-v1"):
+			previewRefs++
+			b = []byte(fmt.Sprintf(`{"object":{"sha":%q,"type":"commit"}}`, seed))
+		default:
+			t.Fatalf("unexpected request %s", r.URL)
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(string(b))), Header: make(http.Header)}, nil
+	})
+	check := func(previous *updateCheck, count, trees int) updateCheck {
+		t.Helper()
+		args := []string{res, state, "check-updates"}
+		if previous != nil {
+			args = append(args, previous.Revision, previous.Baseline, strconv.Itoa(previous.Count))
+		}
+		out, err := run(args)
+		result, ok := out.(updateCheck)
+		if err != nil || !ok || result.Count != count || result.Revision != revision || !hex64.MatchString(result.Baseline) || checkTrees != trees {
+			t.Fatalf("check returned %#v, %v, with %d tree requests; want count %d with %d tree requests", out, err, checkTrees, count, trees)
+		}
+		return result
+	}
+	observed := check(nil, 2, 1)
+	if repeated := check(&observed, 2, 1); repeated != observed {
+		t.Fatal("repeated comparison changed the result")
+	}
+	invalidPrior := observed
+	invalidPrior.Count = -1
+	check(&invalidPrior, 2, 2)
+	invalidPrior = observed
+	invalidPrior.Baseline = strings.Repeat("0", 64)
+	check(&invalidPrior, 2, 3)
+	if _, err := os.Stat(state); !os.IsNotExist(err) || previewRefs != 0 {
+		t.Fatalf("background check touched catalog or previews: stat %v, preview requests %d", err, previewRefs)
+	}
+
+	if _, err := run([]string{res, state, "refresh"}); err != nil {
+		t.Fatal(err)
+	}
+	acknowledged := check(&observed, 0, 4)
+	if acknowledged.Baseline == observed.Baseline || previewRefs != 1 {
+		t.Fatal("explicit refresh did not acknowledge the new pack list")
+	}
+	paths, err := os.ReadDir(state)
+	if err != nil || len(paths) != 1 || paths[0].Name() != "catalog-"+seed {
+		t.Fatalf("refresh acquired artwork or wrote unexpected state: %v %v", paths, err)
+	}
+
+	revision = unrelated
+	artwork["README.md"] = "new metadata"
+	checked := check(&acknowledged, 0, 5)
+	revision = removed
+	delete(artwork, newPath)
+	delete(artwork, oldPath)
+	artwork[modernFlatVariants[0]+"/PhotoCraft.png"] = "hidden legacy style"
+	check(&checked, 0, 6)
+	if previewRefs != 1 {
+		t.Fatal("background check refreshed previews")
+	}
+	last, err := openLibrary(res, state)
+	if err != nil || last.latest.Revision != updated || len(last.latest.Packs) != 3 {
+		t.Fatalf("background check applied a pack list: %+v %v", last, err)
+	}
+	offline = true
+	if _, err := run([]string{res, state, "check-updates"}); err == nil {
+		t.Fatal("offline check returned a badge result")
+	}
+	offline, truncated = false, true
+	if _, err := run([]string{res, state, "check-updates"}); err == nil {
+		t.Fatal("incomplete snapshot returned a badge result")
 	}
 }
 

@@ -1,5 +1,7 @@
 # The install snapshot and the last explicit online refresh share the same format.
 # Each row identifies a Git blob, its installed filename, its source, and an optional SHA-256.
+$script:PublishedPackApi = 'https://api.github.com/repos/BinziiBinzet/bettericon-craft-apps/git'
+
 function Get-BetterIconPackAliases {
     $flat = 'Craft-Icons-VimiummuimiV/Modern Flat'
     $aliases = [ordered]@{}
@@ -91,6 +93,18 @@ function Set-PackFileIcons($Pack) {
     }
 }
 
+function Read-RefreshedPackSnapshot([string]$Path, [string]$State, [string]$Seed, [string]$ExpectedRevision) {
+    if (![IO.File]::Exists($Path)) { return }
+    $lines = [IO.File]::ReadAllLines($Path)
+    if ($lines.Count -lt 2 -or $lines[0] -cnotmatch '^[a-f0-9]{40}\t[a-f0-9]{40}$') { return }
+    $revision, $savedSeed = $lines[0].Split([char]9)
+    if ($savedSeed -cne $Seed -or ($ExpectedRevision -and $revision -cne $ExpectedRevision)) { return }
+    try {
+        $packs = Read-PackSnapshot $lines $State
+        [pscustomobject]@{ Revision=$revision; Packs=$packs }
+    } catch { Write-Verbose $_.Exception.Message }
+}
+
 function Get-PackState {
     if ($env:BETTERICON_DOWNLOAD_STATE) { return Get-FullPath $env:BETTERICON_DOWNLOAD_STATE }
     Get-BetterIconStateDirectory
@@ -134,6 +148,56 @@ function Get-PublishedPackText([string]$Url) {
     } finally { $response.Dispose() }
 }
 
+function Get-PublishedPackRevision {
+    $ref = (Get-PublishedPackText ($script:PublishedPackApi + '/ref/heads/main') | ConvertFrom-Json).object
+    if ($ref.type -ne 'commit' -or $ref.sha -cnotmatch '^[a-f0-9]{40}$') { throw 'Invalid published artwork revision.' }
+    [string]$ref.sha
+}
+
+function Get-PublishedPackSnapshot([string]$Revision, [string]$Seed, [string]$State) {
+    $tree = Get-PublishedPackText ($script:PublishedPackApi + '/trees/' + $Revision + '?recursive=1') | ConvertFrom-Json
+    if ($tree.truncated -ne $false -or !$tree.tree) { throw 'The published pack list was incomplete. Try refreshing again.' }
+    $lines = [string[]](@($Revision + [char]9 + $Seed) + @(ConvertTo-PackCatalogRows $tree.tree))
+    $packs = Read-PackSnapshot $lines $State
+    [pscustomobject]@{ Lines=$lines; Packs=$packs }
+}
+
+function Get-BetterIconPackUpdates {
+    [CmdletBinding()]
+    param([object]$Previous)
+    $revision = Get-PublishedPackRevision
+    $state = Get-PackState
+    $seed = [IO.File]::ReadAllLines((Get-SeedCatalogPath))
+    $path = Join-Path $state 'pack-catalog/latest.tsv'
+    $baseline = Read-RefreshedPackSnapshot $path $state $seed[0]
+    if (!$baseline) {
+        $baseline = [pscustomobject]@{ Revision=$seed[0]; Packs=(Read-PackSnapshot $seed $state) }
+    }
+
+    $ids = [string[]]$baseline.Packs.Keys
+    [Array]::Sort($ids, [StringComparer]::OrdinalIgnoreCase)
+    $identity = ($ids | ForEach-Object { $_.ToUpperInvariant() + [char]9 + $baseline.Packs[$_].Signature }) -join [char]10
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { $fingerprint = [BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($identity))).Replace('-','').ToLowerInvariant() }
+    finally { $sha.Dispose() }
+    $result = [pscustomobject]@{ Revision=$revision; Baseline=$fingerprint; Count=0 }
+
+    # A successful manual refresh acknowledges this exact published revision.
+    if ($revision -ceq $baseline.Revision) { return $result }
+    if ($Previous -and $Previous.PSObject.Properties['Revision'] -and $Previous.PSObject.Properties['Baseline'] -and
+        $Previous.PSObject.Properties['Count'] -and $Previous.Revision -ceq $revision -and $Previous.Baseline -ceq $fingerprint -and
+        ($Previous.Count -is [int] -or $Previous.Count -is [long]) -and $Previous.Count -ge 0 -and $Previous.Count -lt 20000) {
+        $result.Count = [int]$Previous.Count
+        return $result
+    }
+    $published = Get-PublishedPackSnapshot $revision $seed[0] $state
+    foreach ($pack in $published.Packs.Values) {
+        $known = $baseline.Packs[$pack.Id]
+        if (!$known -or $known.Signature -cne $pack.Signature) { $result.Count++ }
+    }
+    return $result
+}
+
 function Update-PackPreviewIndex([string]$Api,[string]$Folder) {
     $ref = (Get-PublishedPackText ($Api + '/ref/heads/artwork/pack-hover-previews-v1') | ConvertFrom-Json).object
     if ($ref.type -ne 'commit' -or $ref.sha -cnotmatch '^[a-f0-9]{40}$') { throw 'Invalid preview revision.' }
@@ -165,27 +229,14 @@ function Update-BetterIconPackCatalog {
 }
 
 function Update-PackSnapshot([string]$State,[string]$Folder) {
-    $api = 'https://api.github.com/repos/BinziiBinzet/bettericon-craft-apps/git'
-    $ref = (Get-PublishedPackText ($api + '/ref/heads/main') | ConvertFrom-Json).object
-    if ($ref.type -ne 'commit' -or $ref.sha -cnotmatch '^[a-f0-9]{40}$') { throw 'Invalid published artwork revision.' }
+    $revision = Get-PublishedPackRevision
     $seed = [IO.File]::ReadAllLines((Get-SeedCatalogPath))[0]
     $path = Join-Path $folder 'latest.tsv'
-    $header = $ref.sha + [char]9 + $seed
-    $known = $false
-    if ([IO.File]::Exists($path)) {
-        $saved = [IO.File]::ReadAllLines($path)
-        if ($saved.Count -gt 1 -and $saved[0] -ceq $header) {
-            try { $null=Read-PackSnapshot $saved $state; $known=$true } catch { Write-Verbose $_.Exception.Message }
-        }
-    }
-    if (!$known) {
-        $tree = Get-PublishedPackText ($api + '/trees/' + $ref.sha + '?recursive=1') | ConvertFrom-Json
-        if ($tree.truncated -ne $false -or !$tree.tree) { throw 'The published pack list was incomplete. Try refreshing again.' }
-        $lines = [string[]](@($header) + @(ConvertTo-PackCatalogRows $tree.tree))
-        $null = Read-PackSnapshot $lines $state
-        Write-PackSnapshot $path $lines
+    if (!(Read-RefreshedPackSnapshot $path $State $seed $revision)) {
+        $published = Get-PublishedPackSnapshot $revision $seed $State
+        Write-PackSnapshot $path $published.Lines
     }
     $script:DownloadCatalog = $null; $script:AvailableCatalog = $null
     # Some authors publish thumbnails after publishing the pack. Its icons can already be selected.
-    try { Update-PackPreviewIndex $api $folder } catch { Write-Verbose $_.Exception.Message }
+    try { Update-PackPreviewIndex $script:PublishedPackApi $folder } catch { Write-Verbose $_.Exception.Message }
 }
