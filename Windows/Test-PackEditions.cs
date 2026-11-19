@@ -232,9 +232,12 @@ static partial class PackEditionTests
         for (int pass = 0; pass < 2; pass++) using (var form = new LauncherForm(windows, fixture, true, show, stop)) {
             form.Start(); form.ShowManager();
             Wait(() => !Field<bool>(form, "busy") && Field<Catalog>(form, "catalog") != null);
+            Field<TabControl>(form, "pages").SelectedIndex = 1;
             var tray = Field<NotifyIcon>(form, "tray").ContextMenuStrip;
             var combo = Field<ComboBox>(form, "themes");
-            Func<ToolStripMenuItem> command = () => tray.Items.OfType<ToolStripMenuItem>().Single(i => i.Text == "Refresh available icon packs");
+            var refresh = Field<Button>(form, "refreshPacksButton");
+            const string refreshLabel = "Refresh available icon packs";
+            Func<ToolStripMenuItem> command = () => tray.Items.OfType<ToolStripMenuItem>().Single(i => i.Text == refreshLabel);
             const string id = "Craft-Icons-Cryogenn/ArtCraft iconPackage - Dark";
             string snapshot = Path.Combine(state, "pack-catalog", "latest.tsv");
             int before = combo.Items.OfType<ThemeEntry>().Count(t => !t.IsDefault);
@@ -248,13 +251,20 @@ static partial class PackEditionTests
                     combo.Items.OfType<ThemeEntry>().Count(t => !t.IsDefault) == before, "An offline retry reports failure and retains the complete last-known list");
             } else {
                 Check(!File.Exists(snapshot), "Launching and opening the tray menu use the installer catalog offline");
+                Check(refresh.Visible && refresh.Enabled && refresh.Parent == combo.Parent && combo.Right < refresh.Left &&
+                    combo.Top == refresh.Top && Math.Abs(combo.Height - refresh.Height) <= 1 &&
+                    combo.Bottom <= combo.Parent.ClientSize.Height && combo.Width > refresh.Width,
+                    "The refresh button is visible directly to the right of the icon pack picker");
+                Check(refresh.AccessibleName == refreshLabel && Field<ToolTip>(form, "appearanceTips").GetToolTip(refresh) == refreshLabel,
+                    "The icon-only refresh button has a descriptive hover tooltip and accessible name");
                 tray.Show(form, new Point(15, 15)); Application.DoEvents();
                 Check(command().Enabled, "The real tray context menu offers Refresh available icon packs");
-                command().PerformClick(); tray.Close();
-                Check(Field<bool>(form, "busy") && !command().Enabled, "A refresh cannot be started twice while the status bar is checking");
+                tray.Close(); refresh.PerformClick();
+                Check(Field<bool>(form, "busy") && !refresh.Enabled && !command().Enabled, "Both refresh controls are disabled while the status bar is checking");
                 Wait(() => !Field<bool>(form, "busy"));
                 int after = combo.Items.OfType<ThemeEntry>().Count(t => !t.IsDefault);
-                Check(File.Exists(snapshot) && after >= 32 && Find(combo, id) != null, "The command reads the public catalog and refreshes the app dropdown (" + before + " to " + after + ")");
+                Check(refresh.Enabled && File.Exists(snapshot) && after >= 32 && Find(combo, id) != null,
+                    "The button reads the public catalog, refreshes the app dropdown (" + before + " to " + after + ") and is ready to use again");
                 Check(MenuLabel(form, Find(combo, id)) == Find(combo, id).ToString(), "The tray theme menu shows the refreshed entry and its availability");
                 var dialog = typeof(LauncherForm).GetNestedType("ProjectFileDialog", BindingFlags.NonPublic);
                 using (var files = (Form)Activator.CreateInstance(dialog, new object[] { form, null })) {

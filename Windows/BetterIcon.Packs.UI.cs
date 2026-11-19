@@ -133,6 +133,7 @@ namespace BetterIcon.Tray
         readonly Button resetIconSize = new Button();
         readonly CheckBox showAppNames = new CheckBox();
         readonly Button removePackButton = new Button();
+        readonly Button refreshPacksButton = new Button();
         readonly LinkLabel appVersion = new LinkLabel();
         bool arrangingManageIcons;
         readonly List<Button> packButtons = new List<Button>();
@@ -249,6 +250,27 @@ namespace BetterIcon.Tray
             button.MinimumSize = new Size(0, 32); button.Padding = new Padding(10, 3, 10, 3);
             button.Dock = DockStyle.Fill; button.Margin = new Padding(4, 0, 4, 0);
         }
+        void DrawRefreshPacksButton(object sender, PaintEventArgs e)
+        {
+            Button button = (Button)sender;
+            Color disabled = appearancePalette == null || appearancePalette.HighContrast ? SystemColors.GrayText : appearancePalette.Muted;
+            Color color = button.Enabled ? button.ForeColor : disabled;
+            float scale = Math.Min(button.ClientSize.Width, button.ClientSize.Height) / 32f;
+            Graphics canvas = e.Graphics;
+            GraphicsState saved = canvas.Save();
+            try {
+                canvas.SmoothingMode = SmoothingMode.AntiAlias;
+                canvas.TranslateTransform(button.ClientSize.Width / 2f - 12f * scale, button.ClientSize.Height / 2f - 12f * scale);
+                canvas.ScaleTransform(scale, scale);
+                using (Pen pen = new Pen(color, 2f) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round }) {
+                    canvas.DrawLines(pen, new[] { new PointF(4.3f, 10.1f), new PointF(4.3f, 8.8f), new PointF(5f, 7.1f), new PointF(6.8f, 6.4f), new PointF(19.7f, 6.4f) });
+                    canvas.DrawLines(pen, new[] { new PointF(15.8f, 3.3f), new PointF(19.7f, 6.4f), new PointF(15.8f, 9.5f) });
+                    canvas.DrawLines(pen, new[] { new PointF(19.7f, 13.9f), new PointF(19.7f, 15.2f), new PointF(19f, 16.9f), new PointF(17.2f, 17.6f), new PointF(4.3f, 17.6f) });
+                    canvas.DrawLines(pen, new[] { new PointF(8.2f, 14.5f), new PointF(4.3f, 17.6f), new PointF(8.2f, 20.7f) });
+                }
+            }
+            finally { canvas.Restore(saved); }
+        }
         void BuildSettingsPage(bool testing)
         {
             TableLayoutPanel root = SettingsTable(1); root.Dock = DockStyle.Fill; root.AutoSize = false;
@@ -267,10 +289,30 @@ namespace BetterIcon.Tray
 
             TableLayoutPanel packs = SettingsTable(1); packs.Name = "IconPackSection";
             SettingsRow(packs, new Label { Text = "App icon pack", AutoSize = true, Font = new Font(Font, FontStyle.Bold), Margin = new Padding(0, 0, 0, 8) });
-            themes.DropDownStyle = ComboBoxStyle.DropDownList; themes.Dock = DockStyle.Top; themes.Margin = new Padding(0, 0, 0, 5); themes.AccessibleName = "Icon pack";
+            TableLayoutPanel pickerRow = SettingsTable(2);
+            pickerRow.Margin = new Padding(0, 0, 0, 5);
+            pickerRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            pickerRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            themes.DropDownStyle = ComboBoxStyle.DropDownList; themes.Dock = DockStyle.Top; themes.Margin = Padding.Empty; themes.AccessibleName = "Icon pack";
             themes.AccessibleDescription = "Click a pack or press Enter to load it. Packs marked Download will be fetched. Right-click for pack actions.";
             themes.PackChosen += delegate { SelectPack(); };
-            SettingsRow(packs, themes);
+            refreshPacksButton.Name = "RefreshPacksButton";
+            refreshPacksButton.AccessibleName = "Refresh available icon packs";
+            refreshPacksButton.Size = new Size(28, themes.Height);
+            refreshPacksButton.MinimumSize = new Size(0, themes.Height);
+            refreshPacksButton.Dock = DockStyle.Fill; refreshPacksButton.Margin = new Padding(6, 0, 0, 0);
+            // The owner-drawn combo can grow when its native handle or font changes.
+            themes.SizeChanged += delegate {
+                if (refreshPacksButton.MinimumSize.Height != themes.Height)
+                    refreshPacksButton.MinimumSize = new Size(0, themes.Height);
+            };
+            refreshPacksButton.Paint += DrawRefreshPacksButton;
+            refreshPacksButton.Click += async delegate { await ReadCatalog(true); };
+            appearanceTips.SetToolTip(refreshPacksButton, refreshPacksButton.AccessibleName);
+            packButtons.Add(refreshPacksButton);
+            pickerRow.Controls.Add(themes, 0, 0);
+            pickerRow.Controls.Add(refreshPacksButton, 1, 0);
+            SettingsRow(packs, pickerRow);
             packDetails.AutoSize = true; packDetails.Dock = DockStyle.Top; packDetails.Margin = new Padding(0, 0, 0, 10);
             SettingsRow(packs, packDetails);
             TableLayoutPanel actions = SettingsTable(4); actions.Margin = new Padding(0, 0, 0, 10);
