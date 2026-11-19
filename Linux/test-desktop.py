@@ -274,17 +274,6 @@ def gui():
     slim = (payload / "Catalog/edition").read_text().strip() == "OnDemand"
     base = app.packs.cache / "acquired"
     prior = set(base.glob("*"))
-    app.menu(app.tray, 3, Gtk.get_current_event_time())
-    submenu = next(i for i in app.tray_menu.get_children() if i.get_label() == "Change icon theme").get_submenu()
-    check(sum(i.get_label().startswith("Modern Flat") for i in submenu.get_children()) == 1,
-          "one Modern Flat tray choice")
-    mast = next(i for i in submenu.get_children() if "Mascots" in i.get_label())
-    mast.emit("select")
-    check(wait(lambda: app.tray_preview is not None and app.tray_preview.get_visible(), 25), "native tray hover displays a preview")
-    mast.emit("deselect")
-    check(any(i.get_label() == "Refresh available icon packs" for i in app.tray_menu.get_children()),
-          "the native tray menu offers catalog refresh")
-    app.tray_menu.popdown()
     app.catalog.update(selected=personal_app, fileSelected=flat + " - Bolt - Sliders")
     check(js("""(() => {
         const button = el('refreshPacks'), picker = el('packs');
@@ -295,7 +284,7 @@ def gui():
             Math.abs(b.height - p.height) <= 1 && !button.disabled;
     })()"""), "the refresh button aligns with the App icon pack picker and exposes its tooltip")
     initial_bounds = pop.bounds()
-    js("""(() => {
+    center = js("""(() => {
         const button = el('refreshPacks');
         const observer = new MutationObserver(changes => {
             if (button.disabled || changes.some(change => change.oldValue !== null)) {
@@ -304,16 +293,33 @@ def gui():
             }
         });
         observer.observe(button, {attributes:true, attributeFilter:['disabled'], attributeOldValue:true});
-        button.click();
-        return true;
+        const rect = button.getBoundingClientRect();
+        return [rect.left + rect.width / 2, rect.top + rect.height / 2];
     })()""")
+    _, x, y = pop.web.get_window().get_origin()
+    xdo("mousemove", x + int(center[0]), y + int(center[1]), "click", 1)
     check(wait(lambda: js("model.status==='Available icon packs refreshed.' && !working"), 40) and
           set(base.glob("*")) == prior, "the inline refresh fetches metadata only")
-    check(js("window.refreshBusySeen === true && !el('refreshPacks').disabled") and pop.bounds() == initial_bounds,
+    check(js("window.refreshBusySeen === true && !el('refreshPacks').disabled") and
+          pop.win.get_visible() and pop.bounds() == initial_bounds,
           "the refresh button disables while working and keeps the popup in place")
     prefs = Catalog().prefs
     check(prefs["fileSelected"] == flat and prefs["selected"] == personal_app,
           "first refresh migrates the file selection and preserves the personal app pack")
+    app.menu(app.tray, 3, Gtk.get_current_event_time())
+    submenu = next(i for i in app.tray_menu.get_children() if i.get_label() == "Change icon theme").get_submenu()
+    check(sum(i.get_label().startswith("Modern Flat") for i in submenu.get_children()) == 1,
+          "one Modern Flat tray choice")
+    mast = next(i for i in submenu.get_children() if "Mascots" in i.get_label())
+    mast.emit("select")
+    check(wait(lambda: app.tray_preview is not None and app.tray_preview.get_visible(), 25), "native tray hover displays a preview")
+    mast.emit("deselect")
+    refresh_item = next(i for i in app.tray_menu.get_children() if i.get_label() == "Refresh available icon packs")
+    app.tray_menu.popdown()
+    refresh_item.activate()
+    check(wait(lambda: js("model.status==='Available icon packs refreshed.' && !working"), 40) and
+          set(base.glob("*")) == prior, "the tray refresh opens Manage Icons and fetches metadata")
+    ready("manage", (836,606))
     js("el('filePacks').click();true")
     js("""(()=>{const row=[...el('packOptions').children].find(r=>r.dataset.id==='Craft-Icons-4NovemberKilo/Mascots');
               row.scrollIntoView({block:'nearest'});const r=row.getBoundingClientRect();row.dispatchEvent(
