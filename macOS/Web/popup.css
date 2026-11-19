@@ -508,6 +508,20 @@ dialog p {
 
 .pack-choice {display:flex; align-items:center; justify-content:space-between; width:100%; min-height:32px; text-align:left; background:var(--input)}
 .pack-choice::after {content:"▾"; margin-left:8px}
+.pack-choice-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px;
+  gap: 6px;
+}
+#refreshPacks {
+  display: grid;
+  place-items: center;
+  padding: 0;
+}
+#refreshPacks svg {
+  width: 20px;
+  height: 20px;
+}
 .project-pack {margin-top:14px}
 .project-pack .actions {margin-top:6px}
 #packOptions {position:fixed; z-index:5; overflow:auto; padding:4px; border:1px solid var(--border); background:var(--surface); border-radius:7px; box-shadow:0 8px 24px #0004}

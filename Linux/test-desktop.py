@@ -282,12 +282,35 @@ def gui():
     mast.emit("select")
     check(wait(lambda: app.tray_preview is not None and app.tray_preview.get_visible(), 25), "native tray hover displays a preview")
     mast.emit("deselect")
-    refresh_item = next(i for i in app.tray_menu.get_children() if i.get_label() == "Refresh available icon packs")
+    check(any(i.get_label() == "Refresh available icon packs" for i in app.tray_menu.get_children()),
+          "the native tray menu offers catalog refresh")
     app.tray_menu.popdown()
     app.catalog.update(selected=personal_app, fileSelected=flat + " - Bolt - Sliders")
-    refresh_item.activate()
+    check(js("""(() => {
+        const button = el('refreshPacks'), picker = el('packs');
+        const b = button.getBoundingClientRect(), p = picker.getBoundingClientRect();
+        const label = 'Refresh available icon packs';
+        return button.title === label && button.getAttribute('aria-label') === label &&
+            b.width > 0 && b.left > p.right && Math.abs(b.top - p.top) <= 1 &&
+            Math.abs(b.height - p.height) <= 1 && !button.disabled;
+    })()"""), "the refresh button aligns with the App icon pack picker and exposes its tooltip")
+    initial_bounds = pop.bounds()
+    js("""(() => {
+        const button = el('refreshPacks');
+        const observer = new MutationObserver(changes => {
+            if (button.disabled || changes.some(change => change.oldValue !== null)) {
+                window.refreshBusySeen = true;
+                observer.disconnect();
+            }
+        });
+        observer.observe(button, {attributes:true, attributeFilter:['disabled'], attributeOldValue:true});
+        button.click();
+        return true;
+    })()""")
     check(wait(lambda: js("model.status==='Available icon packs refreshed.' && !working"), 40) and
-          set(base.glob("*")) == prior, "native tray refresh fetches metadata only")
+          set(base.glob("*")) == prior, "the inline refresh fetches metadata only")
+    check(js("window.refreshBusySeen === true && !el('refreshPacks').disabled") and pop.bounds() == initial_bounds,
+          "the refresh button disables while working and keeps the popup in place")
     prefs = Catalog().prefs
     check(prefs["fileSelected"] == flat and prefs["selected"] == personal_app,
           "first refresh migrates the file selection and preserves the personal app pack")

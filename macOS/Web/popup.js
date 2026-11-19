@@ -245,6 +245,7 @@ function update(next) {
 }
 function busy(message) {
   working = Boolean(message);
+  el("refreshPacks").disabled = working;
   el("busy").hidden = !working;
   el("busy").firstElementChild.textContent = message || "";
   for (const section of [el("launcher"), el("manage"), document.querySelector("nav")])
@@ -320,6 +321,7 @@ el("launcherTab").onclick = () => requestTab("launcher");
 el("manageTab").onclick = () => requestTab("manage");
 el("launcherShortcut").onclick = () => send("changeHotkey");
 el("packs").onclick = () => openPackPicker("apps");
+el("refreshPacks").onclick = () => send("refreshPacks");
 el("filePacks").onclick = () => openPackPicker("files");
 el("packs").onchange = () => send("select", { id: el("packs").value, group: "apps" });
 el("applyFiles").onclick = () => send("reviewFiles", { restore: false });

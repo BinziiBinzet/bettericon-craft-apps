@@ -2,7 +2,7 @@
 
 BetterIcon puts your installed ArtCraft apps in one launcher, accessible from the Windows or Linux system tray and the macOS menu bar. You can give the apps a new set of icons and choose different artwork for their project files.
 
-**[Download BetterIcon 1.26.1 for Windows, macOS, or Linux](https://github.com/BinziiBinzet/bettericon-craft-apps/releases/tag/v1.26.1)**. Each platform has two editions, with SHA-256 checksums on the release page.
+**[Download BetterIcon 1.26.2 for Windows, macOS, or Linux](https://github.com/BinziiBinzet/bettericon-craft-apps/releases/tag/v1.26.2)**. Each platform has two editions, with SHA-256 checksums on the release page.
 
 - **Bundled** includes all 32 icon packs and their previews, ready for offline use.
 - **On-demand** starts with the pack list and downloads the full artwork when you select a pack.
@@ -31,7 +31,7 @@ Hover over a pack name to see up to three sample icons. ArtCraft Launcher appear
 
 <img src="docs/screenshots/pack-preview-linux.webp" width="720" alt="Linux pack menu with Cardboard marked Downloaded and Chrome Glass marked Download. Three Chrome Glass animal icons appear beside the highlighted row.">
 
-The progress bar shows when artwork is downloading or loading from disk. To check for new packs and updates, right-click the tray or menu bar icon and choose **Refresh available icon packs**.
+The progress bar shows when artwork is downloading or loading from disk. To check for new packs and updates, click the repeat-arrows button beside **App icon pack** in **Manage Icons**. **Refresh available icon packs** is also in the tray or menu bar icon’s right-click menu.
 
 ## Community icon packs
 

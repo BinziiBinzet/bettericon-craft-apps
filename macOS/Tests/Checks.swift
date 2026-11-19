@@ -358,6 +358,38 @@ import WebKit
         try await until("model.status==='Available icon packs refreshed.' && !working")
         try check(!fm.fileExists(atPath: cache.appendingPathComponent("acquired").path), "native tray refresh fetches metadata only")
         try await until("page==='manage'")
+        let refreshLayout = try await js("""
+            (() => {
+                const picker = el('packs'), button = el('refreshPacks');
+                const a = picker.getBoundingClientRect(), b = button.getBoundingClientRect();
+                return picker.nextElementSibling === button && b.left > a.right &&
+                    Math.abs(a.top - b.top) < 1 && Math.abs(a.height - b.height) < 1 &&
+                    button.title === 'Refresh available icon packs' &&
+                    button.getAttribute('aria-label') === button.title &&
+                    button.querySelector('svg path') !== null;
+            })()
+            """)
+        try check(refreshLayout as? Bool == true, "inline repeat arrows align with the picker and expose the refresh tooltip")
+        let refreshFrame = host.window.frame
+        let selections = [host.prefs.selected, host.prefs.fileSelected]
+        _ = try await js("""
+            (() => {
+                const button = el('refreshPacks');
+                window.sawInlineRefresh = false;
+                const observer = new MutationObserver(() => {
+                    if (button.disabled) {
+                        window.sawInlineRefresh = true;
+                        observer.disconnect();
+                    }
+                });
+                observer.observe(button, {attributes: true, attributeFilter: ['disabled']});
+                button.click();
+            })()
+            """)
+        try await until("window.sawInlineRefresh && !working && !el('refreshPacks').disabled && model.status==='Available icon packs refreshed.'")
+        try check(!fm.fileExists(atPath: cache.appendingPathComponent("acquired").path) &&
+                  selections == [host.prefs.selected, host.prefs.fileSelected] && host.window.frame == refreshFrame,
+                  "inline refresh fetches metadata and preserves pack choices and window position")
         _ = try await js("el('filePacks').click();true")
         try await until("!el('packOptions').hidden")
         let mouse = """
