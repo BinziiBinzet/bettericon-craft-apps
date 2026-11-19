@@ -50,7 +50,8 @@ def main():
         if name != label:
             name += "-" + hashlib.sha256(label.encode()).hexdigest()[:10]
         name += ".webp"
-        strip.save(OUTPUT / name, format="WEBP", quality=72, method=6)
+        # The shipped Windows decoder can drop alpha from lossy WebP previews.
+        strip.save(OUTPUT / name, format="WEBP", lossless=True, method=6)
         data = (OUTPUT / name).read_bytes()
         group = "Zach" if author == "OmegaDarling" else author
         catalog.append((f"Craft-Icons-{group}/{theme}", name, hashlib.sha256(data).hexdigest(), str(len(data)), ",".join(apps)))
