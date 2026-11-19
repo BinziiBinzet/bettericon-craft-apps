@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 import os
 import sys
 from pathlib import Path
+from threading import Thread
 
 # Keep the launcher's rendering choices out of the creative apps it opens.
 _RENDER_ENV = {"GDK_BACKEND": "x11", "WEBKIT_DISABLE_DMABUF_RENDERER": "1", "LIBGL_ALWAYS_SOFTWARE": "1"}
@@ -27,6 +28,7 @@ from window import Popup
 RES = Path(__file__).resolve().parent.parent
 COLORS = ("clay", "copper", "mauve", "ochre", "sage", "slate", "stone", "teal")
 LAUNCH = Path(os.environ.get("BETTERICON_LAUNCHER", str(Path.home() / ".local/bin/bettericon")))
+PACK_CHECK_INTERVAL = 30 * 60
 
 
 class BetterIcon(Gtk.Application):
@@ -40,6 +42,10 @@ class BetterIcon(Gtk.Application):
         self.tray_menu = None
         self.catalog_busy = False
         self.worker = ThreadPoolExecutor(max_workers=1)
+        self.pack_check_timer = None
+        self.pack_check_active = False
+        self.pack_check = None
+        self.pack_refresh_generation = 0
         self.hover_worker = ThreadPoolExecutor(max_workers=1)
         self.hover_job = None
         self.tray_preview = None
@@ -71,6 +77,8 @@ class BetterIcon(Gtk.Application):
         self.appearance.connect("notify::gtk-theme-name", lambda *_: self.render())
         self.appearance.connect("notify::gtk-application-prefer-dark-theme", lambda *_: self.render())
         self.render()
+        self.pack_check_timer = GLib.timeout_add_seconds(PACK_CHECK_INTERVAL, self.check_pack_updates)
+        self.check_pack_updates()
 
     def do_command_line(self, command):
         args = list(command.get_arguments())[1:]
@@ -86,6 +94,9 @@ class BetterIcon(Gtk.Application):
         return 2
 
     def do_shutdown(self):
+        if self.pack_check_timer is not None:
+            GLib.source_remove(self.pack_check_timer)
+            self.pack_check_timer = None
         if self.popup:
             self.popup.flush_resize()
         if self.shortcut:
@@ -161,6 +172,7 @@ class BetterIcon(Gtk.Application):
         samples = [dict(name=k, image=self.art(v)) for k, v in sorted(file_art.items())]
         self.popup.js("update", dict(filePack=file_pack.model(), fileCount=len(file_art), fileSamples=samples,
                       fileAction="Apply project file icons…", prefs=p, pack=pack.model(), packs=[x.model() for x in choices], apps=apps,
+                      packUpdateCount=self.pack_check["count"] if self.pack_check else 0,
                       preview=preview, brands=brands, dark=dark, maxSize=4096, version=VERSION, projectURL=PROJECT,
                       status=self.status, shortcut=label(p["hotkey"]) + (" (unavailable)" if self.key_error else ""),
                       emptyMessage="No ArtCraft apps found. Right-click the tray icon to refresh or choose an applications folder."))
@@ -230,6 +242,35 @@ class BetterIcon(Gtk.Application):
             return False
         GLib.timeout_add(180, request)
 
+    def check_pack_updates(self):
+        if self.catalog_busy or self.pack_check_active:
+            return GLib.SOURCE_CONTINUE
+        self.pack_check_active = True
+        generation = self.pack_refresh_generation
+
+        def complete(result, error=None):
+            self.pack_check_active = False
+            if self.pack_check_timer is None or generation != self.pack_refresh_generation:
+                return GLib.SOURCE_REMOVE
+            if error is not None:
+                print("BetterIcon pack update check:", error, file=sys.stderr, flush=True)
+            else:
+                self.pack_check = result
+                self.popup.js("packUpdateCount", result["count"])
+            return GLib.SOURCE_REMOVE
+
+        def check(previous):
+            try:
+                result = self.packs.check_updates(previous)
+            except (OSError, ValueError) as exc:
+                GLib.idle_add(complete, None, str(exc))
+            else:
+                GLib.idle_add(complete, result)
+
+        # A metadata request can still be waiting for GitHub when the tray app quits.
+        Thread(target=check, args=(self.pack_check,), daemon=True).start()
+        return GLib.SOURCE_CONTINUE
+
     def refresh_packs(self, reveal_manage=True):
         if reveal_manage:
             self.popup.open("manage")
@@ -239,6 +280,8 @@ class BetterIcon(Gtk.Application):
     def finish_catalog(self, rows, message):
         self.packs.use_catalog(rows)
         self.migrate_pack_selections()
+        self.pack_refresh_generation += 1
+        self.pack_check = None
         self.status = message
 
     def migrate_pack_selections(self):

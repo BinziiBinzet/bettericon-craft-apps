@@ -6,6 +6,11 @@ struct ProjectFormat: Decodable {
     let Aliases: [String]?
 }
 
+struct PackUpdateCheck: Decodable {
+    let revision, baseline: String
+    let count: Int
+}
+
 struct PublishedPacks {
     let resources: URL
     let state: URL
@@ -46,6 +51,11 @@ struct PublishedPacks {
                  status: item.Status, canApps: item.CanApps, canFiles: item.CanFiles, hasPreview: item.HasPreview,
                  previousIDs: item.PreviousIDs ?? [])
         }
+    }
+    func checkUpdates(_ previous: PackUpdateCheck?) throws -> PackUpdateCheck {
+        var args = ["check-updates"]
+        if let previous { args += [previous.revision, previous.baseline, String(previous.count)] }
+        return try JSONDecoder().decode(PackUpdateCheck.self, from: run(args))
     }
     func preview(_ pack: Pack) throws -> URL? {
         if pack.hasPreview {

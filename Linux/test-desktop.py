@@ -8,6 +8,8 @@ import sys
 import time
 import zipfile
 from pathlib import Path
+from threading import Event
+from unittest.mock import patch
 
 # Runner sets HOME, all XDG state, and starts a private X server and tray host.
 home, payload = Path.home(), Path(sys.argv[1]).resolve()
@@ -214,8 +216,36 @@ def gui():
     personal_app = next(p.id for p in personal if p.can_apps)
     personal_file = next(p.id for p in personal if p.documents)
     cat.update(selected=flat + " - Spark - Knob", fileSelected=personal_file)
+    cache = cat.data / "pack-cache"
+    def cache_snapshot():
+        return {p.relative_to(cache): hashlib.sha256(p.read_bytes()).hexdigest()
+                for p in cache.rglob("*") if p.is_file()}
+
+    prior_cache = cache_snapshot()
+    native_run = Packs.run
+    probe_calls = []
+    probe_result = dict(revision="a" * 40, baseline="b" * 64, count=1)
+    held_probe = None
+    refresh_offline = False
+
+    def pack_fixture(packs, action, *args):
+        if action == "refresh" and refresh_offline:
+            raise ValueError("Offline refresh fixture.")
+        if action != "check-updates":
+            return native_run(packs, action, *args)
+        outcome = probe_result
+        probe_calls.append(args)
+        if held_probe is not None and not held_probe.wait(45):
+            raise ValueError("Timed out waiting to release the fixture update check.")
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
     app = BetterIcon()
-    app.register(None)
+    with patch.object(Packs, "run", pack_fixture):
+        app.register(None)
+        check(wait(lambda: app.pack_check == probe_result) and probe_calls == [()] and cache_snapshot() == prior_cache,
+              "tray startup checks for pack changes without modifying the catalog or downloading artwork")
     prefs = Catalog().prefs
     check(prefs["selected"] == flat and prefs["fileSelected"] == personal_file,
           "startup migrates the saved app selection and preserves the personal file pack")
@@ -280,9 +310,42 @@ def gui():
         const b = button.getBoundingClientRect(), p = picker.getBoundingClientRect();
         const label = 'Refresh available icon packs';
         return button.title === label && button.getAttribute('aria-label') === label &&
+            button.classList.contains('has-pack-updates') &&
+            el('packUpdateDescription').textContent === '1 new or updated icon pack available.' &&
             b.width > 0 && b.left > p.right && Math.abs(b.top - p.top) <= 1 &&
             Math.abs(b.height - p.height) <= 1 && !button.disabled;
-    })()"""), "the refresh button aligns with the App icon pack picker and exposes its tooltip")
+    })()"""), "first open shows the startup badge and accessible count without changing the refresh tooltip")
+    app.packs.run = lambda action, *args: pack_fixture(app.packs, action, *args)
+
+    def run_scheduled_check():
+        probe_count = len(probe_calls)
+        GLib.MainContext.default().find_source_by_id(app.pack_check_timer).set_ready_time(0)
+        check(wait(lambda: len(probe_calls) == probe_count + 1), "the periodic source starts a pack update check")
+
+    js("el('packs').focus(); window.beforePackCheck = model; true")
+    prior_prefs = Catalog().prefs
+    prior_cache = cache_snapshot()
+    probe_result = dict(revision="c" * 40, baseline="b" * 64, count=3)
+    run_scheduled_check()
+    check(wait(lambda: js("el('packUpdateDescription').textContent === '3 new or updated icon packs available.'")) and
+          probe_calls[-1] == ("a" * 40, "b" * 64, "1") and cache_snapshot() == prior_cache and
+          Catalog().prefs == prior_prefs and js("window.beforePackCheck === model && document.activeElement === el('packs')"),
+          "a periodic metadata check reuses its comparison and updates only the badge while the picker keeps focus")
+    probe_result = ValueError("Offline update-check fixture.")
+    run_scheduled_check()
+    check(wait(lambda: not app.pack_check_active) and
+          js("el('packUpdateDescription').textContent === '3 new or updated icon packs available.' && !working"),
+          "an offline background check keeps the last badge and leaves the picker usable")
+    refresh_offline = True
+    app.refresh_packs(reveal_manage=False)
+    check(wait(lambda: js("model.status === 'Offline refresh fixture.' && !working")) and
+          js("el('refreshPacks').classList.contains('has-pack-updates')"),
+          "an unsuccessful manual refresh keeps the badge")
+    refresh_offline = False
+
+    held_probe = Event()
+    probe_result = dict(revision="d" * 40, baseline="b" * 64, count=4)
+    run_scheduled_check()
     initial_bounds = pop.bounds()
     center = js("""(() => {
         const button = el('refreshPacks');
@@ -298,14 +361,24 @@ def gui():
     })()""")
     _, x, y = pop.web.get_window().get_origin()
     xdo("mousemove", x + int(center[0]), y + int(center[1]), "click", 1)
-    check(wait(lambda: js("model.status==='Available icon packs refreshed.' && !working"), 40) and
-          set(base.glob("*")) == prior, "the inline refresh fetches metadata only")
+    try:
+        check(wait(lambda: js("model.status==='Available icon packs refreshed.' && !working"), 40) and
+              set(base.glob("*")) == prior and not js("el('refreshPacks').classList.contains('has-pack-updates')"),
+              "a successful inline refresh fetches metadata only and clears the badge")
+    finally:
+        held_probe.set()
+    check(wait(lambda: not app.pack_check_active) and not js("el('refreshPacks').classList.contains('has-pack-updates')"),
+          "a stale background result cannot restore the badge after an explicit refresh")
+    held_probe = None
     check(js("window.refreshBusySeen === true && !el('refreshPacks').disabled") and
           pop.win.get_visible() and pop.bounds() == initial_bounds,
           "the refresh button disables while working and keeps the popup in place")
     prefs = Catalog().prefs
     check(prefs["fileSelected"] == flat and prefs["selected"] == personal_app,
           "first refresh migrates the file selection and preserves the personal app pack")
+    run_scheduled_check()
+    check(wait(lambda: js("el('refreshPacks').classList.contains('has-pack-updates')")) and not probe_calls[-1],
+          "the next background check establishes a new comparison after a successful refresh")
     app.menu(app.tray, 3, Gtk.get_current_event_time())
     submenu = next(i for i in app.tray_menu.get_children() if i.get_label() == "Change icon theme").get_submenu()
     check(sum(i.get_label().startswith("Modern Flat") for i in submenu.get_children()) == 1,
@@ -318,7 +391,8 @@ def gui():
     app.tray_menu.popdown()
     refresh_item.activate()
     check(wait(lambda: js("model.status==='Available icon packs refreshed.' && !working"), 40) and
-          set(base.glob("*")) == prior, "the tray refresh opens Manage Icons and fetches metadata")
+          set(base.glob("*")) == prior and not js("el('refreshPacks').classList.contains('has-pack-updates')"),
+          "the tray refresh opens Manage Icons, refreshes metadata and clears the badge")
     ready("manage", (836,606))
     js("el('filePacks').click();true")
     js("""(()=>{const row=[...el('packOptions').children].find(r=>r.dataset.id==='Craft-Icons-4NovemberKilo/Mascots');

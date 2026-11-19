@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -95,43 +96,88 @@ func (l *library) refreshPreviews() error {
 	}
 	return atomic(filepath.Join(l.state, "previews-"+l.seed.Revision), b)
 }
+func (l *library) fetchPublishedSnapshot(revision string) (snapshot, []byte, error) {
+	b, err := fetch(api+"/trees/"+revision+"?recursive=1", 16<<20)
+	if err != nil {
+		return snapshot{}, nil, err
+	}
+	var tree struct {
+		Truncated *bool
+		Tree      []struct {
+			Path, SHA, Type, Mode string
+			Size                  int64
+		}
+	}
+	if json.Unmarshal(b, &tree) != nil || tree.Truncated == nil || *tree.Truncated || len(tree.Tree) == 0 {
+		return snapshot{}, nil, errors.New("The published pack list was incomplete")
+	}
+	var rows []string
+	for _, row := range tree.Tree {
+		if row.Type != "blob" || (row.Mode != "100644" && row.Mode != "100755") {
+			continue
+		}
+		_, a, ok := l.identify(row.Path)
+		if !ok {
+			continue
+		}
+		if row.Size < 1 || row.Size > 16<<20 {
+			return snapshot{}, nil, errors.New("Invalid published artwork size")
+		}
+		rows = append(rows, strings.Join([]string{row.SHA, a.File, row.Path, "-"}, "\t"))
+	}
+	sort.Strings(rows)
+	data := []byte(revision + "\n" + strings.Join(rows, "\n") + "\n")
+	published, err := l.readSnapshot(data)
+	return published, data, err
+}
+
+type updateCheck struct {
+	Revision string `json:"revision"`
+	Baseline string `json:"baseline"`
+	Count    int    `json:"count"`
+}
+
+func (l *library) checkUpdates(previous updateCheck) (updateCheck, error) {
+	revision, err := head("main")
+	if err != nil {
+		return updateCheck{}, err
+	}
+	known := make(map[string]string, len(l.latest.Packs))
+	rows := make([]string, 0, len(l.latest.Packs))
+	for id, p := range l.latest.Packs {
+		signature := p.signature()
+		known[id] = signature
+		rows = append(rows, id+"\t"+signature)
+	}
+	sort.Strings(rows)
+	result := updateCheck{Revision: revision, Baseline: checksum([]byte(strings.Join(rows, "\n")))}
+	if revision == l.latest.Revision {
+		return result, nil
+	}
+	if previous.Revision == revision && previous.Baseline == result.Baseline && previous.Count >= 0 && previous.Count < 20000 {
+		return previous, nil
+	}
+	published, _, err := l.fetchPublishedSnapshot(revision)
+	if err != nil {
+		return updateCheck{}, err
+	}
+	for id, p := range l.visiblePacks(published.Packs) {
+		// The picker may retain a bundled Modern Flat when it is no longer published.
+		if _, present := published.Packs[id]; present && known[id] != p.signature() {
+			result.Count++
+		}
+	}
+	return result, nil
+}
+
 func (l *library) refresh() error {
 	rev, err := head("main")
 	if err != nil {
 		return err
 	}
 	if rev != l.latest.Revision {
-		b, e := fetch(api+"/trees/"+rev+"?recursive=1", 16<<20)
+		_, data, e := l.fetchPublishedSnapshot(rev)
 		if e != nil {
-			return e
-		}
-		var tree struct {
-			Truncated *bool
-			Tree      []struct {
-				Path, SHA, Type, Mode string
-				Size                  int64
-			}
-		}
-		if json.Unmarshal(b, &tree) != nil || tree.Truncated == nil || *tree.Truncated || len(tree.Tree) == 0 {
-			return errors.New("The published pack list was incomplete")
-		}
-		rows := []string{}
-		for _, row := range tree.Tree {
-			if row.Type != "blob" || (row.Mode != "100644" && row.Mode != "100755") {
-				continue
-			}
-			_, a, ok := l.identify(row.Path)
-			if !ok {
-				continue
-			}
-			if row.Size < 1 || row.Size > 16<<20 {
-				return errors.New("Invalid published artwork size")
-			}
-			rows = append(rows, strings.Join([]string{row.SHA, a.File, row.Path, "-"}, "\t"))
-		}
-		sort.Strings(rows)
-		data := []byte(rev + "\n" + strings.Join(rows, "\n") + "\n")
-		if _, e = l.readSnapshot(data); e != nil {
 			return e
 		}
 		if e = atomic(filepath.Join(l.state, "catalog-"+l.seed.Revision), data); e != nil {
@@ -234,6 +280,18 @@ func run(args []string) (any, error) {
 		return nil, err
 	}
 	switch args[2] {
+	case "check-updates":
+		var previous updateCheck
+		switch len(args) {
+		case 3:
+		case 6:
+			if count, e := strconv.Atoi(args[5]); e == nil {
+				previous = updateCheck{Revision: args[3], Baseline: args[4], Count: count}
+			}
+		default:
+			return nil, errors.New("Expected previous revision, baseline and count")
+		}
+		return l.checkUpdates(previous)
 	case "refresh":
 		err = l.refresh()
 		if err == nil {

@@ -1,6 +1,6 @@
 # BetterIcon for Mac
 
-BetterIcon 1.26.2 is a Universal app for Apple silicon and Intel Macs running macOS 12.4 or later. Choose Bundled for all 32 packs and their previews offline, or OnDemand to download individual packs.
+BetterIcon 1.26.3 is a Universal app for Apple silicon and Intel Macs running macOS 12.4 or later. Choose Bundled for all 32 packs and their previews offline, or OnDemand to download individual packs.
 
 VimiummuimiV’s eight Modern Flat variants now appear as one 13-icon pack. BetterIcon remembers the selection separately for app and project file icons. If your downloaded artwork differs, it stays usable offline and shows **Update available** until you select the pack.
 
@@ -29,6 +29,8 @@ Type the beginning of an app name, use the arrow keys, and press Return to launc
 
 Import folders or Windows BetterIcon ZIPs, create personal packs, or right-click an icon and choose **Choose icon…**. Editing a built-in creates a personal copy. Right-click the pack selector for **Customize**, **Edit pack**, **Export ZIP**, and **Restore built-in packs**. Exports preserve author credits and original SVG, ICO, or PNG artwork. Mac-only ICNS files become PNGs when shared with Windows. Packs can include a custom ArtCraft Launcher icon. Hover a pack name for up to three sample icons, starting with ArtCraft Launcher when available. An on-demand pack downloads when you click its name or press Return. The label changes to **Downloaded** once the pack is ready. Click the repeat-arrows button beside **App icon pack** to refresh the list. **Refresh available icon packs** is also in the menu bar icon’s right-click menu.
 
+BetterIcon checks for new or updated packs when it starts and about every 30 minutes while it runs. A blue dot on the refresh button signals changes. Refresh the list to see what’s available, then choose which packs to download.
+
 Choose **Project file icon pack** separately from **App icon pack**. Choose **Choose project files…** to apply Finder custom icons to one or more existing documents, such as .pcraft and .scraft. Use **Restore project file icons…** to pick documents and restore their saved Finder artwork. A pack can supply dedicated artwork through `FileTypes/pcraft.png` or `FileTypes/scraft.png` in its ZIP. A pack with only app artwork uses the corresponding app icons for its project files.
 
 Click the version text at the bottom of **Manage Icons** to open the BetterIcon GitHub project in your default browser. The adjacent buttons select BetterIcon’s own icon and cycle Dark, Light, and System appearance. All sixteen Windows color variants are included.
@@ -37,11 +39,11 @@ Preferences, personal packs, and verified originals live in `~/Library/Applicati
 
 ## Local builds and checks
 
-Build on a Mac with Xcode Command Line Tools and Go 1.25. The build uses the verified Windows 1.26.2 bundled artwork ZIP or a checkout containing the source images. Go and Python are build tools. The installed app includes its catalog helper.
+Build on a Mac with Xcode Command Line Tools and Go 1.25. The build uses the verified Windows 1.26.3 bundled artwork ZIP or a checkout containing the source images. Go and Python are build tools. The installed app includes its catalog helper.
 
 ~~~sh
-./build.sh "$HOME/Downloads/BetterIcon-Bundled" /path/to/Windows-1.26.2.zip Bundled
-./build.sh "$HOME/Downloads/BetterIcon-OnDemand" /path/to/Windows-1.26.2.zip OnDemand
+./build.sh "$HOME/Downloads/BetterIcon-Bundled" /path/to/Windows-1.26.3.zip Bundled
+./build.sh "$HOME/Downloads/BetterIcon-OnDemand" /path/to/Windows-1.26.3.zip OnDemand
 ./test.sh "$HOME/Downloads/BetterIcon-Bundled/BetterIcon.app"
 ./test.sh "$HOME/Downloads/BetterIcon-OnDemand/BetterIcon.app"
 ~~~

@@ -296,9 +296,15 @@ import WebKit
             $0.fileSelected = filePack.id
         }
         var openedURLs = [URL]()
+        let allowPackCheck = DispatchSemaphore(value: 0)
         let host = try Application(install, hidden: true, openProjectURL: { url in
             openedURLs.append(url)
             return true
+        }, checkPackUpdates: { previous in
+            guard previous == nil, allowPackCheck.wait(timeout: .now() + 60) == .success else {
+                throw Problem("Unexpected startup pack update check")
+            }
+            return PackUpdateCheck(revision: "published", baseline: "seed", count: 2)
         })
         let prefs = try saved(Preferences.self, at: install.state.appendingPathComponent("preferences.json"), fallback: Preferences())
         try check(prefs.selected == flat && prefs.fileSelected == filePack.id, "app selection migrates on disk and preserves personal file choice")
@@ -351,11 +357,34 @@ import WebKit
         let slim = (try String(contentsOf: install.resources.appendingPathComponent("Catalog/edition"), encoding: .utf8)).contains("OnDemand")
         let cache = install.state.appendingPathComponent("pack-cache")
         try check(!fm.fileExists(atPath: cache.appendingPathComponent("acquired").path), "opening never downloads a pack")
+        let packsBeforeCheck = try await js("JSON.stringify(model.packs)") as? String
+        let selectionsBeforeCheck = [host.prefs.selected, host.prefs.fileSelected]
+        allowPackCheck.signal()
+        try await until("model.packUpdateCount === 2 && el('refreshPacks').classList.contains('has-pack-updates')")
+        let packBadge = try await js("""
+            (() => {
+                const button = el('refreshPacks'), dot = getComputedStyle(button, '::after');
+                return page === 'launcher' && !working && !button.disabled && dot.width === '7px' &&
+                    button.title === 'Refresh available icon packs' &&
+                    button.getAttribute('aria-describedby') === 'packUpdateDescription' &&
+                    el('packUpdateDescription').textContent === '2 new or updated icon packs available.';
+            })()
+            """)
+        try check(packBadge as? Bool == true, "startup pack checks show an accessible badge without interrupting the launcher")
+        let packsAfterCheck = try await js("JSON.stringify(model.packs)") as? String
+        try check(packsBeforeCheck == packsAfterCheck && selectionsBeforeCheck == [host.prefs.selected, host.prefs.fileSelected] &&
+                  !fm.fileExists(atPath: cache.appendingPathComponent("acquired").path),
+                  "startup pack checks preserve the displayed catalog and pack choices without downloading artwork")
         host.statusMenu { menu, _ in
             let i = menu.indexOfItem(withTitle: "Refresh available icon packs")
             if i >= 0 { menu.performActionForItem(at: i) }
         }
         try await until("model.status==='Available icon packs refreshed.' && !working")
+        let badgeCleared = try await js("""
+            model.packUpdateCount === 0 && !el('refreshPacks').classList.contains('has-pack-updates') &&
+                !el('refreshPacks').hasAttribute('aria-describedby')
+            """)
+        try check(badgeCleared as? Bool == true, "successful manual refresh clears both the dot and its description")
         try check(!fm.fileExists(atPath: cache.appendingPathComponent("acquired").path), "native tray refresh fetches metadata only")
         try await until("page==='manage'")
         let refreshLayout = try await js("""

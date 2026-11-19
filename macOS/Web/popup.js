@@ -208,6 +208,7 @@ function update(next) {
   document.documentElement.dataset.dark = String(model.dark);
   document.body.classList.toggle("iconOnly", !p.names);
   setPackButtons(model);
+  packUpdateCount(model.packUpdateCount);
   const samples = el("fileSamples");
   samples.replaceChildren(...(model.fileSamples || []).map(file => {
     const item = make("span"), image = document.createElement("img");
@@ -242,6 +243,18 @@ function update(next) {
   el("appearance").title = p.theme + " appearance. Switch to " + nextTheme + ".";
   grids();
   if (gen === viewGeneration && model.status) text("status", model.status);
+}
+function packUpdateCount(count) {
+  const button = el("refreshPacks"), hasUpdates = count > 0;
+  if (model) model.packUpdateCount = count;
+  button.classList.toggle("has-pack-updates", hasUpdates);
+  if (hasUpdates) {
+    text("packUpdateDescription", `${count} new or updated icon pack${count === 1 ? "" : "s"} available.`);
+    button.setAttribute("aria-describedby", "packUpdateDescription");
+  } else {
+    button.removeAttribute("aria-describedby");
+    text("packUpdateDescription", "");
+  }
 }
 function busy(message) {
   working = Boolean(message);
@@ -460,6 +473,7 @@ el("launcher").addEventListener(
 );
 window.betterIcon = {
   update,
+  packUpdateCount,
   packPreview,
   reset,
   tab,
