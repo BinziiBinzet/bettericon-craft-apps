@@ -77,6 +77,40 @@ try {
     $module=Import-Module (Join-Path $win 'BetterIcon.Windows.psm1') -PassThru -Force
     $prior=Get-BetterIconTheme | Select-Object -First 1
     Check ($prior.Downloaded -and $prior.Path -eq $legacy) 'An existing 1.25 on-demand pack keeps its Downloaded status after upgrading'
+
+    $flat = 'Craft-Icons-VimiummuimiV/Modern Flat'
+    $env:BETTERICON_DOWNLOAD_STATE = Join-Path $root 'flat-upgrade'
+    $currentArt = Item "$flat/EffectCraft.png" 'wand'
+    $unrelated = Item 'Craft-Icons-Other/Modern Flat - Bolt - Knob/EffectCraft.png' 'other'
+    $rows = @(& $module { param($items) ConvertTo-PackCatalogRows $items } @($currentArt,$unrelated))
+    [IO.File]::WriteAllLines((Join-Path $win 'OnDemand.tsv'), [string[]](@($seed) + $rows))
+    function Add-OldDownload([string]$Variant, [string]$Content) {
+        $entry = Item "$flat - $Variant/EffectCraft.png" $Content
+        & $module {
+            param($item,$art,$rev)
+            $state = Get-PackState
+            $lines = [string[]](@($rev) + @(ConvertTo-PackCatalogRows @($item)))
+            $pack = (Read-PackSnapshot $lines $state).Values | Select-Object -First 1
+            [void][IO.Directory]::CreateDirectory($pack.Path)
+            [IO.File]::WriteAllText((Join-Path $pack.Path 'EffectCraft.png'),$art)
+            [IO.File]::WriteAllText((Join-Path $pack.Path '.complete'),$rev)
+            $name = (Get-PathId (Join-Path $state $pack.Id)) + '.tsv'
+            Write-PackSnapshot (Join-Path (Join-Path $state 'pack-catalog/installed') $name) $lines
+            $script:DownloadCatalog = $null
+        } $entry $Content $seed
+    }
+    Add-OldDownload 'Spark - Sliders' 'spark'
+    $choices = @(Get-BetterIconTheme)
+    $merged = $choices | Where-Object Id -eq $flat
+    Check ($choices.Count -eq 2 -and $merged.Downloaded -and $merged.UpdateAvailable -and
+           [IO.File]::ReadAllText((Join-Path $merged.Path 'EffectCraft.png')) -ceq 'spark') 'An earlier download stays usable under one Modern Flat entry until selected for update'
+    Check ($choices.Id -contains 'Craft-Icons-Other/Modern Flat - Bolt - Knob') 'Other artists can use the same variant titles'
+    Add-OldDownload 'Wand - Knob' 'wand'
+    $merged = @(Get-BetterIconTheme | Where-Object Pack -eq 'Craft-Icons-VimiummuimiV')
+    Check ($merged.Count -eq 1 -and $merged[0].Id -ceq $flat -and $merged[0].Downloaded -and !$merged[0].UpdateAvailable -and
+           [IO.File]::ReadAllText((Join-Path $merged[0].Path 'EffectCraft.png')) -ceq 'wand') 'A matching cached variant supplies the complete merged artwork offline'
+    $fromOldName = & $module { Resolve-Theme 'Modern Flat - Spark - Sliders' $script:RepositoryRoot }
+    Check ($fromOldName.Id -ceq $flat) 'A saved CLI variant name resolves to the same combined pack'
 } finally {
     if ($module) { Remove-Module $module -ErrorAction SilentlyContinue }
     $env:BETTERICON_DOWNLOAD_STATE=$priorState

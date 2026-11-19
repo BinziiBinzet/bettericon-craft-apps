@@ -95,6 +95,25 @@ function Get-DownloadCatalog {
         $target = $latest[$pack.Id]
         if (!$current -or !$target -or $current.Signature -ne $target.Signature) { $available[$pack.Id]=$pack }
     }
+    foreach ($alias in (Get-BetterIconPackAliases).GetEnumerator()) {
+        $id = $alias.Value
+        if (!$latest.Contains($id) -and $seed.Contains($id)) { $latest[$id] = $seed[$id] }
+        $target = $latest[$id]
+        if (!$target) { continue }
+        $latest.Remove($alias.Key)
+        $previous = $available[$alias.Key]
+        $available.Remove($alias.Key)
+        if (!$previous) { continue }
+        $current = $available[$id]
+        # An exact local copy can serve the merged pack offline. Older artwork
+        # stays usable under the same menu entry until the user accepts the update.
+        if (!$current -or ($current.Signature -ne $target.Signature -and $previous.Signature -eq $target.Signature)) {
+            $copy = $previous.PSObject.Copy()
+            $copy.Id = $id
+            $copy.Name = $target.Name
+            $available[$id] = $copy
+        }
+    }
     foreach ($pack in $available.Values) { $pack.Status='Available' }
     foreach ($target in $latest.Values) {
         $local = $available[$target.Id]
@@ -108,7 +127,12 @@ function Get-DownloadCatalog {
 function Install-BetterIconDownloadedPack {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Theme)
-    $pack = (Get-DownloadCatalog)[$Theme]
+    $catalog = Get-DownloadCatalog
+    if (!$catalog.Contains($Theme)) {
+        $replacement = (Get-BetterIconPackAliases)[$Theme]
+        if ($replacement) { $Theme = $replacement }
+    }
+    $pack = $catalog[$Theme]
     if (!$pack) { throw 'This pack is not in the installed catalog.' }
     $parent = Split-Path -Parent $pack.Path
     Assert-RegularPath $parent

@@ -1,5 +1,10 @@
 # Windows installer changelog
 
+## 1.26.1 - 2026-11-19
+
+- The eight Modern Flat variants are now one pack with 13 app icons, including the Wand for EffectCraft and the Knob for SoundCraft.
+- Saved pack selections move to Modern Flat on upgrade. A matching download works offline. An older cached design shows **Update available** until you select the pack.
+
 ## 1.26.0 - 2026-11-18
 
 - Choose **Refresh available icon packs** from the tray menu to find newly published packs and artwork updates. The app keeps the refreshed list available offline.

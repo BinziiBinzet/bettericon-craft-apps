@@ -66,7 +66,20 @@ namespace BetterIcon.Tray
             return IsDefault || Managed ? DisplayName : DisplayName + " (" + (UpdateAvailable ? "Update available" : NeedsDownload ? "Download" : Downloaded ? "Downloaded" : "Included") + ")";
         }
     }
-    public sealed class Catalog { public string Version { get; set; } public AppEntry[] Apps { get; set; } public ThemeEntry[] Themes { get; set; } }
+    public sealed class Catalog
+    {
+        public string Version { get; set; }
+        public AppEntry[] Apps { get; set; }
+        public ThemeEntry[] Themes { get; set; }
+        public Dictionary<string, string> PackAliases { get; set; }
+
+        public string CurrentPackId(string id)
+        {
+            string replacement;
+            return id != null && PackAliases != null && PackAliases.TryGetValue(id, out replacement) &&
+                Themes.Any(t => t.Id == replacement) ? replacement : id;
+        }
+    }
     public sealed class PlanItem
     {
         public string Application { get; set; }

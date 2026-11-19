@@ -1,5 +1,14 @@
 # The install snapshot and the last explicit online refresh share the same format.
 # Each row identifies a Git blob, its installed filename, its source, and an optional SHA-256.
+function Get-BetterIconPackAliases {
+    $flat = 'Craft-Icons-VimiummuimiV/Modern Flat'
+    $aliases = [ordered]@{}
+    foreach ($effect in 'Wand','Bolt','Spark','Sliders') {
+        foreach ($sound in 'Knob','Sliders') { $aliases["$flat - $effect - $sound"] = $flat }
+    }
+    return $aliases
+}
+
 function Test-PackPathPart([string]$Part) {
     $Part.Length -gt 0 -and $Part.Length -le 120 -and $Part -notmatch '[<>:"/\\|?*\x00-\x1f]|[. ]$|^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\.|$)'
 }

@@ -136,7 +136,8 @@ static partial class PackEditionTests
         Directory.CreateDirectory(state);
         var prefs = Path.Combine(state, "tray-preferences.json");
         var json = new JavaScriptSerializer();
-        File.WriteAllText(prefs, json.Serialize(new Preferences { Theme = ThemeEntry.DefaultThemeId, Hotkey = new HotkeySettings { Enabled = false } }));
+        const string flat = "Craft-Icons-VimiummuimiV/Modern Flat";
+        File.WriteAllText(prefs, json.Serialize(new Preferences { Theme = flat + " - Bolt - Knob", FileTheme = flat + " - Spark - Sliders", Hotkey = new HotkeySettings { Enabled = false } }));
         var fixture = new FixtureConfig { StateDirectory = state, ShortcutDirectory = new[] { args[1] }, KeepOpenForAutomation = true };
         bool lean = File.Exists(Path.Combine(args[0], "OnDemand.tsv"));
         if (args.Length > 2 && args[2] == "refresh") { CheckRefresh(args[0], state, fixture); return; }
@@ -161,12 +162,15 @@ static partial class PackEditionTests
                 }
                 var packs = combo.Items.OfType<ThemeEntry>().Where(t => !t.IsDefault).ToArray();
                 Check(packs.Length == 32 && packs.Sum(t => t.IconCount) == 452 && packs.All(t => t.NeedsDownload == lean), "First launch lists all 32 packs and 452 icons with the correct availability");
+                Check(packs.Single(t => t.Author == "VimiummuimiV").Id == flat && Find(combo, flat).IconCount == 13, "Modern Flat has one entry with all 13 app icons");
+                Check((lean || ((ThemeEntry)combo.SelectedItem).Id == flat) && json.Deserialize<Preferences>(File.ReadAllText(prefs)).FileTheme == flat, "Saved variant selections resolve to Modern Flat without downloading");
                 var cache = Path.Combine(state, "downloads");
                 Check(!Directory.Exists(cache), "Listing the catalog creates no download cache");
                 Check(packs.All(t => t.ToString().EndsWith(lean ? " (Download)" : " (Included)") && MenuLabel(form, t) == t.ToString()), "Picker and tray labels identify each pack's availability at installation");
                 if (lean) Browse(combo, Find(combo, third), cache);
                 Check(!Directory.Exists(Path.Combine(state, "pack-previews")), "Opening and quickly browsing the catalog fetched no previews");
                 HoverPack(combo, Find(combo, third), state, args[0], lean, true);
+                HoverPack(combo, Find(combo, flat), state, args[0], lean);
                 HoverRaces(form, Find(combo, third), Find(combo, second), state, args[0], lean);
                 PersonalHover(form, state);
                 TrayHover(form, Find(combo, third));

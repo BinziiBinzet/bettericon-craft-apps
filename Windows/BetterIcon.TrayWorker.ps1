@@ -60,13 +60,14 @@ try {
                     UpdateAvailable = ($_.PSObject.Properties['UpdateAvailable'] -and $_.UpdateAvailable);
                     Icons = @(if ($_.Status -ne 'Download') { Get-BetterIconThemeIcon -InputObject $_ }); FileIcons = $_.FileIcons }
             })
-            $reply.Catalog = @{ Version = Get-BetterIconVersion; Themes = $themes;
+            $reply.Catalog = @{ Version = Get-BetterIconVersion; Themes = $themes; PackAliases = Get-BetterIconPackAliases;
                 Apps = @(Get-BetterIconApplication -ShortcutDirectory $directories -StateDirectory $request.StateDirectory | Sort-Object Name,Scope,Shortcut) }
         }
         'DownloadPack' {
             if ($scope -ne 'CurrentUser') { throw 'Downloads are stored in the current user account.' }
             Install-BetterIconDownloadedPack -Theme $request.Theme
-            $pack = Get-BetterIconTheme | Where-Object Id -eq $request.Theme | Select-Object -First 1
+            $replacement = (Get-BetterIconPackAliases)[$request.Theme]
+            $pack = Get-BetterIconTheme | Where-Object { $_.Id -eq $request.Theme -or $_.Id -eq $replacement } | Select-Object -First 1
             $reply.DownloadedIcons = @(Get-BetterIconThemeIcon -InputObject $pack)
             if ($reply.DownloadedIcons.Count -ne $pack.IconCount) { throw 'Incomplete downloaded icon pack.' }
             $reply.DownloadedFileIcons = $pack.FileIcons
