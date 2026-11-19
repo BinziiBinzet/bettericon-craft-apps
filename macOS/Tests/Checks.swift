@@ -128,7 +128,7 @@ import WebKit
         let published = try PublishedPacks(resources: resources, state: root.appendingPathComponent("test-pack-cache"))
         var packs = try published.list()
         let slim = packs.allSatisfy { $0.status == "Download" }
-        try check(packs.count == 39 && packs.reduce(0) { $0 + $1.icons.count } == (slim ? 0 : 543), "edition artwork inventory")
+        try check(packs.count == 32 && packs.reduce(0) { $0 + $1.icons.count } == (slim ? 0 : 452), "edition artwork inventory")
         if slim {
             _ = try published.list("acquire", id: "Craft-Icons-Zach/Cardboard")
             packs = try published.list("acquire", id: "Craft-Icons-Zach/Edgework")

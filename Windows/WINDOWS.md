@@ -128,7 +128,7 @@ Use reasonably short folder paths. This version requires shortcut and installed 
 
 ## Themes and matching
 
-A source checkout contains **39 themes** and **543 app icons**: the 15 existing themes plus 24 selected community styles. The circleb Origami Animals pack is a separate import ZIP in the existing circleb folder. [Creator credits and sources](../README.md#community-icon-packs) accompany the artwork. Existing installed releases do not automatically acquire these additions. Oil Slick is retired.
+A source checkout contains **32 themes** and **452 app icons**. Modern Flat combines the eight former variants into one 13-icon pack. The circleb Origami Animals pack is a separate import ZIP in the existing circleb folder. [Creator credits and sources](../README.md#community-icon-packs)
 
 OmegaDarling's themes use the `Craft-Icons-OmegaDarling` artwork folder while retaining legacy `Craft-Icons-Zach` IDs so saved selections, applied icons, and restore records remain compatible. Their public author credit is **OmegaDarling** in the app and command-line theme listing.
 

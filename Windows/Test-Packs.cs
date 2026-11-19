@@ -18,7 +18,7 @@ static class PackTests
         PackLibrary library = new PackLibrary(Path.Combine(state, "packs"));
         ThemeEntry[] omega = catalog.Themes.Where(t => t.Pack == "Craft-Icons-Zach").ToArray();
         check(omega.Length == 9 && omega.All(t => t.Author == "OmegaDarling" && t.ToString().Contains("OmegaDarling") && t.Id.StartsWith("Craft-Icons-Zach/")), "OmegaDarling credits are public while existing pack IDs stay stable");
-        check(catalog.Themes.Length == 39 && catalog.Themes.Sum(t => t.IconCount) == 543 && !catalog.Themes.Any(t => t.Name == "OilSlick"), "Nine OmegaDarling packs are present in the 39-theme, 543-icon catalog");
+        check(catalog.Themes.Length == 32 && catalog.Themes.Sum(t => t.IconCount) == 452 && !catalog.Themes.Any(t => t.Name == "OilSlick"), "Nine OmegaDarling packs are present in the 32-theme, 452-icon catalog");
         check(catalog.Themes.SelectMany(t => t.Icons).All(icon => !String.IsNullOrEmpty(icon.PreviewPath) && Path.GetExtension(icon.PreviewPath).Equals(".png", StringComparison.OrdinalIgnoreCase) && File.Exists(icon.PreviewPath))
             && catalog.Themes.All(theme => { using (Image image = Image.FromFile(theme.Icons[0].PreviewPath)) return Math.Max(image.Width, image.Height) >= 120; }),
             "The catalog retains source-sized PNG previews alongside native shortcut artwork");

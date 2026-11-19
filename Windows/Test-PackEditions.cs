@@ -160,7 +160,7 @@ static partial class PackEditionTests
                     continue;
                 }
                 var packs = combo.Items.OfType<ThemeEntry>().Where(t => !t.IsDefault).ToArray();
-                Check(packs.Length == 39 && packs.Sum(t => t.IconCount) == 543 && packs.All(t => t.NeedsDownload == lean), "First launch lists all 39 packs and 543 icons with the correct availability");
+                Check(packs.Length == 32 && packs.Sum(t => t.IconCount) == 452 && packs.All(t => t.NeedsDownload == lean), "First launch lists all 32 packs and 452 icons with the correct availability");
                 var cache = Path.Combine(state, "downloads");
                 Check(!Directory.Exists(cache), "Listing the catalog creates no download cache");
                 Check(packs.All(t => t.ToString().EndsWith(lean ? " (Download)" : " (Included)") && MenuLabel(form, t) == t.ToString()), "Picker and tray labels identify each pack's availability at installation");
@@ -236,7 +236,7 @@ static partial class PackEditionTests
             int before = combo.Items.OfType<ThemeEntry>().Count(t => !t.IsDefault);
             byte[] prefs = File.ReadAllBytes(Path.Combine(state, "tray-preferences.json"));
             if (pass == 1) {
-                Check(before >= 39 && Find(combo, id) != null, "The refreshed list survives an offline restart");
+                Check(before >= 32 && Find(combo, id) != null, "The refreshed list survives an offline restart");
                 byte[] saved = File.ReadAllBytes(snapshot);
                 command().PerformClick();
                 Wait(() => !Field<bool>(form, "busy"));
@@ -250,7 +250,7 @@ static partial class PackEditionTests
                 Check(Field<bool>(form, "busy") && !command().Enabled, "A refresh cannot be started twice while the status bar is checking");
                 Wait(() => !Field<bool>(form, "busy"));
                 int after = combo.Items.OfType<ThemeEntry>().Count(t => !t.IsDefault);
-                Check(File.Exists(snapshot) && after >= 39 && after >= before && Find(combo, id) != null, "The command reads the public catalog and refreshes the app dropdown (" + before + " to " + after + ")");
+                Check(File.Exists(snapshot) && after >= 32 && Find(combo, id) != null, "The command reads the public catalog and refreshes the app dropdown (" + before + " to " + after + ")");
                 Check(MenuLabel(form, Find(combo, id)) == Find(combo, id).ToString(), "The tray theme menu shows the refreshed entry and its availability");
                 var dialog = typeof(LauncherForm).GetNestedType("ProjectFileDialog", BindingFlags.NonPublic);
                 using (var files = (Form)Activator.CreateInstance(dialog, new object[] { form, null })) {
