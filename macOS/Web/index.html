@@ -31,7 +31,16 @@
           <div class="settings">
             <div class="pack">
               <label for="packs"><strong>App icon pack</strong></label>
-              <button type="button" id="packs" class="pack-choice" aria-haspopup="listbox" aria-expanded="false" aria-controls="packOptions"></button>
+              <div class="pack-choice-row">
+                <button type="button" id="packs" class="pack-choice" aria-haspopup="listbox" aria-expanded="false" aria-controls="packOptions"></button>
+                <button type="button" id="refreshPacks" title="Refresh available icon packs" aria-label="Refresh available icon packs">
+                  <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M4.3 10.1V8.8L5 7.1l1.8-.7H19.7M15.8 3.3l3.9 3.1-3.9 3.1
+                      M19.7 13.9v1.3l-.7 1.7-1.8.7H4.3m3.9-3.1-3.9 3.1 3.9 3.1"/>
+                  </svg>
+                </button>
+              </div>
               <div id="detail"></div>
               <div class="actions">
                 <button id="import">Import…</button><button id="new">New pack…</button

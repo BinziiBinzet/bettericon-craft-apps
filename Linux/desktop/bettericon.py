@@ -230,8 +230,9 @@ class BetterIcon(Gtk.Application):
             return False
         GLib.timeout_add(180, request)
 
-    def refresh_packs(self):
-        self.popup.open("manage")
+    def refresh_packs(self, reveal_manage=True):
+        if reveal_manage:
+            self.popup.open("manage")
         self.catalog_operation("Refreshing available icon packs…", lambda: self.packs.run("refresh"),
                                lambda rows: self.finish_catalog(rows, "Available icon packs refreshed."))
 
@@ -440,6 +441,9 @@ class BetterIcon(Gtk.Application):
             self.load_preview(v.get("id"), lambda path: pop.js("packPreview", v.get("id"), v.get("token"), self.art(path)))
             return
         if self.catalog_busy:
+            return
+        if name == "refreshPacks":
+            self.refresh_packs(reveal_manage=False)
             return
         if name == "select":
             self.select_pack(v.get("id"), v.get("group", "apps"))

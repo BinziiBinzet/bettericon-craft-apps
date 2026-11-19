@@ -501,8 +501,8 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
             self.savePrefs()
         })
     }
-    private func refreshPacks() {
-        show(tab: .manage)
+    private func refreshPacks(revealManage: Bool = true) {
+        if revealManage { show(tab: .manage) }
         background("Refreshing available icon packs…", work: { try self.published.list("refresh") }) { rows in
             self.builtins = rows
             self.status = "Available icon packs refreshed."
@@ -742,6 +742,7 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
         case "changeHotkey": openHotkey()
         case "launch": if let app = apps.first(where: { $0.url.path == data["id"] as? String }) { launch(app) }
         case "select": changeSelection(data["id"] as? String ?? "", group: data["group"] as? String ?? "apps")
+        case "refreshPacks": if !modal { refreshPacks(revealManage: false) }
         case "previewPack": preview(data["id"] as? String ?? "", token: data["token"] as? Int ?? 0)
         case "reviewFiles": reviewFiles(restore: data["restore"] as? Bool ?? false)
         case "names":
