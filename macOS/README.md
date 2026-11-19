@@ -1,12 +1,16 @@
 # BetterIcon for Mac
 
-The source build includes the Windows launcher, 15 icon packs, and 265 original pack images for the Mac. The Universal app targets Apple silicon and Intel Macs running macOS 12.4 or later. Everything needed to use it is in the app bundle.
+BetterIcon 1.26.0 is a Universal app for Apple silicon and Intel Macs running macOS 12.4 or later. Choose Bundled for all 39 packs and their previews offline, or OnDemand to download individual packs.
 
 ## Install and use
 
-Open the disk image, drag **BetterIcon** into Applications, then open it. Press **Control–Option–A (⌃⌥A)** to open the launcher at the pointer. You can also click the BetterIcon menu bar icon. Right-click it and choose **Change hotkey…** to set your own shortcut. Upgrades keep your saved choice.
+Open the disk image, drag **BetterIcon** into Applications, then open it. Press **Control–Option–A (⌃⌥A)** to open the launcher at the pointer. You can also click the BetterIcon menu bar icon. The lower-left corner of **Launcher** shows your current shortcut. Click it to change or disable the shortcut, or choose **Change hotkey…** from the menu bar icon. Upgrades keep your saved choice.
 
 While VoiceOver is on, BetterIcon releases ⌃⌥A so VoiceOver can use it for **Read All**. BetterIcon registers the shortcut again when VoiceOver turns off and the keys are available. [Apple’s VoiceOver reading commands](https://support.apple.com/guide/voiceover/read-text-vo2706/mac)
+
+Drag the diagonal grip just inside the lower-right corner, or drag a window edge. **Launcher** and **Manage Icons** each remember their dimensions across restarts. Launcher can shrink to 300 × 240 points. Manage Icons needs 790 × 570 points when the screen allows. Switching tabs keeps their divider at the same screen position. Clicking the menu bar icon opens the tab with the larger saved window area, with Launcher winning a tie. The keyboard shortcut always opens Launcher.
+
+Choose **Exit BetterIcon** in the menu bar icon's right-click menu to quit the app and release its shortcut.
 
 1. Open **Manage Icons** and choose a pack. The launcher and preview show your choice immediately.
 2. Click **Apply icons…**. Choose **All users** for apps in the main Applications folder or **Current user** for apps in your home Applications folder and Desktop. The review shows each app or Finder alias, its full path, and the proposed change. A missing assignment leaves that app’s icon in place.
@@ -21,19 +25,23 @@ The icon change uses Finder metadata on the app. Its executable, signed resource
 
 Type the beginning of an app name, use the arrow keys, and press Return to launch. Double-click also launches. Escape clears the filter and then hides the window. Control-scroll over the launcher to change icon size. The numeric size field, Reset, and Show app names affect both tabs. Drag the popup edges to resize.
 
-Import folders or Windows BetterIcon ZIPs, create personal packs, or right-click an icon and choose **Choose icon…**. Editing a built-in creates a personal copy. Right-click the pack selector for **Customize**, **Edit pack**, **Export ZIP**, and **Restore built-in packs**. Exports preserve author credits and original SVG, ICO, or PNG artwork. Mac-only ICNS files become PNGs when shared with Windows. The OmegaDarling packs include ArtCraft Launcher artwork, and personal packs can provide their own.
+Import folders or Windows BetterIcon ZIPs, create personal packs, or right-click an icon and choose **Choose icon…**. Editing a built-in creates a personal copy. Right-click the pack selector for **Customize**, **Edit pack**, **Export ZIP**, and **Restore built-in packs**. Exports preserve author credits and original SVG, ICO, or PNG artwork. Mac-only ICNS files become PNGs when shared with Windows. Packs can include a custom ArtCraft Launcher icon. Hover a pack name for up to three sample icons, starting with ArtCraft Launcher when available. An on-demand pack downloads when you click its name or press Return. The label changes to **Downloaded** once the pack is ready. Choose **Refresh available icon packs** in the menu bar icon’s right-click menu to check for additions and updates.
 
-The two footer buttons select BetterIcon’s own icon and cycle Dark, Light, and System appearance. All sixteen Windows color variants are included.
+Choose **Project file icon pack** separately from **App icon pack**. Choose **Choose project files…** to apply Finder custom icons to one or more existing documents, such as .pcraft and .scraft. Use **Restore project file icons…** to pick documents and restore their saved Finder artwork. A pack can supply dedicated artwork through `FileTypes/pcraft.png` or `FileTypes/scraft.png` in its ZIP. A pack with only app artwork uses the corresponding app icons for its project files.
+
+Click the version text at the bottom of **Manage Icons** to open the BetterIcon GitHub project in your default browser. The adjacent buttons select BetterIcon’s own icon and cycle Dark, Light, and System appearance. All sixteen Windows color variants are included.
 
 Preferences, personal packs, and verified originals live in `~/Library/Application Support/BetterIcon`. Keep this folder while using customized icons. You can move or remove BetterIcon itself independently.
 
 ## Local builds and checks
 
-With Xcode and a macOS SDK installed, run the scripts from this directory. The builder accepts the Windows 1.21.0 release ZIP or an artwork checkout as the second argument. It uses the ZIP for matching images, checks the checkout for current artwork, and fetches older missing images from pinned source commits. Every image is checked against its manifest hash.
+Build on a Mac with Xcode Command Line Tools and Go 1.25. The build uses the verified Windows 1.26.0 bundled artwork ZIP or a checkout containing the source images. Go and Python are build tools. The installed app includes its catalog helper.
 
 ~~~sh
-./build.sh "$HOME/Downloads/BetterIcon-build"
-./test.sh "$HOME/Downloads/BetterIcon-build/BetterIcon.app"
+./build.sh "$HOME/Downloads/BetterIcon-Bundled" /path/to/Windows-1.26.0.zip Bundled
+./build.sh "$HOME/Downloads/BetterIcon-OnDemand" /path/to/Windows-1.26.0.zip OnDemand
+./test.sh "$HOME/Downloads/BetterIcon-Bundled/BetterIcon.app"
+./test.sh "$HOME/Downloads/BetterIcon-OnDemand/BetterIcon.app"
 ~~~
 
 The build produces a locally signed Universal app and a drag-to-install disk image. The local build has no Apple notarization ticket. The test script uses disposable bundles, real Finder metadata, a private pack library, and an offscreen copy of the app interface.

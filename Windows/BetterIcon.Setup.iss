@@ -31,7 +31,13 @@
 ; Section parameters and Pascal literals have different quote escaping rules.
 #define FixtureSectionArgs StringChange(FixtureArgs, '"', '""')
 #define FixtureCodeArgs StringChange(FixtureArgs, "'", "''")
-#define PayloadDir "{app}\versions\" + AppVersion
+#ifdef OnDemand
+  #define PayloadDir "{app}\versions\" + AppVersion + "-OnDemand"
+  #define EditionSuffix "-OnDemand"
+#else
+  #define PayloadDir "{app}\versions\" + AppVersion
+  #define EditionSuffix ""
+#endif
 #define AppExe PayloadDir + "\Windows\BetterIcon-Tray.exe"
 
 [Setup]
@@ -47,7 +53,7 @@ DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 MinVersion=10.0
 OutputDir={#OutputDir}
-OutputBaseFilename={#OutputName}
+OutputBaseFilename={#OutputName}{#EditionSuffix}
 #ifdef SetupIcon
 SetupIconFile={#SetupIcon}
 #endif

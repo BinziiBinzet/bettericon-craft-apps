@@ -20,6 +20,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 if ([string]::IsNullOrWhiteSpace($InstallerScript)) { $InstallerScript = Join-Path $PSScriptRoot 'BetterIcon.Setup.iss' }
 $payload = [IO.Path]::GetFullPath($PayloadRoot).TrimEnd('\')
+$editionSuffix = if (Test-Path -LiteralPath (Join-Path $payload 'Windows\OnDemand.tsv')) { '-OnDemand' } else { '' }
 $compiler = [IO.Path]::GetFullPath($CompilerPath)
 $scriptPath = [IO.Path]::GetFullPath($InstallerScript)
 $runtime = Join-Path $payload 'Windows\BetterIcon-Tray.exe'
@@ -149,9 +150,10 @@ function Compile-TestSetup([string]$TestVersion) {
     $null = [IO.Directory]::CreateDirectory($output)
     $arguments = @('/Qp', ('/DPayloadRoot=' + $payload), ('/DAppVersion=' + $TestVersion), ('/DOutputDir=' + $output),
         ('/DTestAppId=' + $testAppId), ('/DTestInstallDir=' + $install), ('/DTestShortcutName=' + $shortcutName), ('/DTestFixturePath=' + $config), $scriptPath)
+    if ($editionSuffix) { $arguments = @('/DOnDemand=1') + $arguments }
     & $compiler @arguments 2>&1 | Out-File -LiteralPath (Join-Path $output 'compile.log') -Encoding UTF8
     if ($LASTEXITCODE -ne 0) { throw "Inno Setup test compilation failed; see $output\compile.log" }
-    $setup = Join-Path $output ('BetterIcon-TEST-Setup-' + $TestVersion + '.exe')
+    $setup = Join-Path $output ('BetterIcon-TEST-Setup-' + $TestVersion + $editionSuffix + '.exe')
     Assert-Check (Test-Path -LiteralPath $setup -PathType Leaf) "Compiled the isolated $TestVersion installer"
     $compiledSetups.Add([pscustomobject]@{ Version = $TestVersion; Path = $setup; SHA256 = Get-Digest $setup; CompileLog = (Join-Path $output 'compile.log') })
     return $setup
@@ -162,7 +164,7 @@ function Install-TestSetup([string]$Setup, [string]$Phase) {
     Assert-UserUnchanged $Phase
 }
 function Assert-Installed([string]$TestVersion) {
-    $versionRoot = Join-Path $install ('versions\' + $TestVersion)
+    $versionRoot = Join-Path $install ('versions\' + $TestVersion + $editionSuffix)
     $exe = Join-Path $versionRoot 'Windows\BetterIcon-Tray.exe'
     $matches = $true
     foreach ($entry in $payloadFiles) {
@@ -194,11 +196,15 @@ function Assert-Installed([string]$TestVersion) {
     $catalog = Get-Content -LiteralPath $response -Raw | ConvertFrom-Json
     Assert-Check ($catalog.Success -and $catalog.Catalog.Version -eq $version -and @($catalog.Catalog.Apps).Count -eq 1 -and $catalog.Catalog.Apps[0].Shortcut -eq (Join-Path $links 'PhotoCraft.lnk')) 'Installed bridge discovers only the disposable application shortcut'
     $icons = @($catalog.Catalog.Themes | ForEach-Object { $_.Icons })
-    Assert-Check ($icons.Count -gt 0 -and @($icons | Where-Object { -not $_.Path.StartsWith($versionRoot + '\', [StringComparison]::OrdinalIgnoreCase) }).Count -eq 0) 'Installed catalog resolves bundled artwork without using the source checkout'
+    if ($editionSuffix) {
+        Assert-Check ($icons.Count -eq 0 -and @($catalog.Catalog.Themes | Where-Object NeedsDownload).Count -eq 39 -and -not (Test-Path -LiteralPath (Join-Path $state 'downloads'))) 'Installed on-demand catalog lists all packs without fetching artwork'
+    } else {
+        Assert-Check ($icons.Count -gt 0 -and @($icons | Where-Object { -not $_.Path.StartsWith($versionRoot + '\', [StringComparison]::OrdinalIgnoreCase) }).Count -eq 0) 'Installed catalog resolves bundled artwork without using the source checkout'
+    }
 }
 function Start-InstalledLink([string]$TestVersion) {
     Start-Process -FilePath $shortcutPath -WindowStyle Hidden
-    $expected = Join-Path $install ('versions\' + $TestVersion + '\Windows\BetterIcon-Tray.exe')
+    $expected = Join-Path $install ('versions\' + $TestVersion + $editionSuffix + '\Windows\BetterIcon-Tray.exe')
     # RefreshCatalog assigns this title after loading the library and artwork;
     # its finally block clears busy before the stop timer can run. A merely shown
     # window can still be loading and must correctly refuse an installer stop.
@@ -318,7 +324,7 @@ try {
     Assert-Check (Wait-Until { $null -eq (Get-UninstallRecord) -and @(Get-TestProcesses).Count -eq 0 }) 'Uninstall removes its registration and closes the fixture instance'
     Assert-Check (-not (Test-Path -LiteralPath $shortcutPath)) 'Uninstall removes its Start-menu shortcut'
     foreach ($installedVersion in $installedVersions) {
-        $remaining = @($payloadFiles | Where-Object { Test-Path -LiteralPath (Join-Path $install ('versions\' + $installedVersion + '\' + $_.RelativePath)) })
+        $remaining = @($payloadFiles | Where-Object { Test-Path -LiteralPath (Join-Path $install ('versions\' + $installedVersion + $editionSuffix + '\' + $_.RelativePath)) })
         Assert-Check ($remaining.Count -eq 0) "Uninstall removes owned payload files from version $installedVersion"
     }
     Assert-StateUnchanged $expectedState 'Uninstall'

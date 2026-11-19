@@ -8,6 +8,8 @@ $reply = @{ Success = $false; Error = ''; Catalog = $null; Plan = @(); Results =
 try {
     Import-Module (Join-Path $PSScriptRoot 'BetterIcon.Windows.psm1') -Force
     $request = Get-Content -LiteralPath $RequestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($request.StateDirectory) { $env:BETTERICON_DOWNLOAD_STATE = [string]$request.StateDirectory }
+    elseif ($request.PSObject.Properties['PackDirectory'] -and $request.PackDirectory) { $env:BETTERICON_DOWNLOAD_STATE = Split-Path -Parent ([string]$request.PackDirectory) }
     $scope = if ($request.Scope -eq 'AllUsers') { 'AllUsers' } elseif (-not $request.Scope -or $request.Scope -eq 'CurrentUser') { 'CurrentUser' } else { throw 'Unknown shortcut scope.' }
     $options = @{ Scope = $scope }
     if ($request.StateDirectory) { $options.StateDirectory = [string]$request.StateDirectory }
@@ -20,13 +22,54 @@ try {
         $request.Theme = ([string]$request.Theme).Substring(5)
     }
     switch ($request.Action) {
-        'Catalog' {
+        'PrepareProjectIcons' {
+            if ($scope -ne 'CurrentUser') { throw 'Project file artwork belongs to the current user.' }
+            $state = if ($request.StateDirectory) { $options.StateDirectory } else { Get-BetterIconStateDirectory }
+            $cache = Join-Path $state 'project-file-icons\images'
+            $null = [IO.Directory]::CreateDirectory($cache)
+            $known = @(Get-Content -LiteralPath (Join-Path $PSScriptRoot 'ProjectFileTypes.json') -Raw | ConvertFrom-Json | ForEach-Object { $_.Key })
+            $result = @{}
+            foreach ($item in $request.ProjectArtwork.PSObject.Properties) {
+                if ($item.Name -cnotin $known) { throw 'Unknown ArtCraft project file type.' }
+                $source = Get-Item -LiteralPath ([string]$item.Value)
+                if ($source.Length -gt 16MB) { throw 'Each project icon must be smaller than 16 MB.' }
+                $bytes = Get-BetterIconBytes -Path $source.FullName
+                $sha = [Security.Cryptography.SHA256]::Create()
+                try { $hash = [BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-','').ToLowerInvariant() } finally { $sha.Dispose() }
+                $dest = Join-Path $cache ($hash + '.ico')
+                if (![IO.File]::Exists($dest)) {
+                    $temp = Join-Path $cache ([guid]::NewGuid().ToString('N') + '.tmp')
+                    try {
+                        [IO.File]::WriteAllBytes($temp,$bytes)
+                        try { [IO.File]::Move($temp,$dest) } catch [IO.IOException] { if (![IO.File]::Exists($dest)) { throw } }
+                    } finally { if ([IO.File]::Exists($temp)) { [IO.File]::Delete($temp) } }
+                }
+                $sha = [Security.Cryptography.SHA256]::Create()
+                $stream = [IO.File]::OpenRead($dest)
+                try { $actual = [BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-','').ToLowerInvariant() } finally { $sha.Dispose(); $stream.Dispose() }
+                if ($actual -cne $hash) { throw 'Cached project artwork was modified.' }
+                $result[$item.Name] = '"' + $dest + '",0'
+            }
+            $reply.CachedProjectIcons = $result
+        }
+        { $_ -in 'Catalog','RefreshPackCatalog' } {
+            if ($request.Action -eq 'RefreshPackCatalog') { Update-BetterIconPackCatalog }
             $themes = @(Get-BetterIconTheme | ForEach-Object {
                 [pscustomobject]@{ Id = $_.Id; Name = $_.Name; Pack = $_.Pack; Author = $_.Author; IconCount = $_.IconCount;
-                    Icons = @(Get-BetterIconThemeIcon -Theme $_.Id) }
+                    NeedsDownload = ($_.Status -eq 'Download'); Downloaded = ($_.PSObject.Properties['Downloaded'] -and $_.Downloaded);
+                    UpdateAvailable = ($_.PSObject.Properties['UpdateAvailable'] -and $_.UpdateAvailable);
+                    Icons = @(if ($_.Status -ne 'Download') { Get-BetterIconThemeIcon -InputObject $_ }); FileIcons = $_.FileIcons }
             })
             $reply.Catalog = @{ Version = Get-BetterIconVersion; Themes = $themes;
                 Apps = @(Get-BetterIconApplication -ShortcutDirectory $directories -StateDirectory $request.StateDirectory | Sort-Object Name,Scope,Shortcut) }
+        }
+        'DownloadPack' {
+            if ($scope -ne 'CurrentUser') { throw 'Downloads are stored in the current user account.' }
+            Install-BetterIconDownloadedPack -Theme $request.Theme
+            $pack = Get-BetterIconTheme | Where-Object Id -eq $request.Theme | Select-Object -First 1
+            $reply.DownloadedIcons = @(Get-BetterIconThemeIcon -InputObject $pack)
+            if ($reply.DownloadedIcons.Count -ne $pack.IconCount) { throw 'Incomplete downloaded icon pack.' }
+            $reply.DownloadedFileIcons = $pack.FileIcons
         }
         'Preview' {
             $reply.Plan = @(Get-BetterIconPlan -Theme $request.Theme -Scope $scope -ShortcutDirectory $directories @themeOptions)

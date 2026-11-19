@@ -16,7 +16,7 @@ namespace BetterIcon.Tray
         const int MaxBytes = 16 * 1024 * 1024;
         static readonly object Gate = new object();
         static bool initialized;
-        static void Initialize()
+        internal static void RegisterEmbeddedAssemblies()
         {
             lock (Gate) {
                 if (initialized) return;
@@ -36,7 +36,7 @@ namespace BetterIcon.Tray
         {
             if (bytes == null || bytes.Length == 0 || bytes.Length > MaxBytes) throw new IOException("Each SVG must be between 1 byte and 16 MB.");
             if (size < 1 || size > 4096) throw new ArgumentOutOfRangeException("size");
-            Initialize();
+            RegisterEmbeddedAssemblies();
             try { return SvgRenderer.Render(ReadDocument(bytes), size); }
             catch (IOException) { throw; }
             catch (Exception error) { throw new IOException("The selected SVG could not be rendered. " + error.Message, error); }

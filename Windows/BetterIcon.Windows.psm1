@@ -1,8 +1,12 @@
-# BetterIcon-Craft Apps Windows support, version 1.21.0.
-# Packaged runtime uses no network, executable patching, registry changes, or Explorer restart.
+# BetterIcon-Craft Apps Windows support.
 Set-StrictMode -Version Latest
-$script:Version = '1.21.0'
+$script:Version = '1.26.0'
 $script:SvgArtworkType = $null
+$script:DownloadCatalog = $null
+$script:AvailableCatalog = $null
+$script:ProjectExtensions = @((Get-Content -LiteralPath (Join-Path $PSScriptRoot 'ProjectFileTypes.json') -Raw | ConvertFrom-Json).Key)
+. (Join-Path $PSScriptRoot 'BetterIcon.Catalog.ps1')
+. (Join-Path $PSScriptRoot 'BetterIcon.OnDemand.ps1')
 $script:RepositoryRoot = Split-Path -Parent $PSScriptRoot
 $script:Applications = @('PhotoCraft','VectorCraft','FilmCraft','LightCraft','PdfCraft',
     'EffectCraft','AniCraft','DesignCraft','FigCraft','TextureCraft','MaterialCraft',
@@ -87,7 +91,7 @@ function Test-CommonShortcut([string]$Path) {
     return $false
 }
 
-function Get-RegularFiles([string]$Root, [string]$Extension) {
+function Get-RegularFiles([string]$Root, [string]$Extension, [switch]$AppArtwork) {
     if (-not (Test-Path -LiteralPath $Root -PathType Container)) { return }
     Assert-RegularPath $Root
     $pending = New-Object 'Collections.Generic.Stack[string]'
@@ -95,7 +99,7 @@ function Get-RegularFiles([string]$Root, [string]$Extension) {
     while ($pending.Count -gt 0) {
         foreach ($item in @(Get-ChildItem -LiteralPath $pending.Pop() -Force -ErrorAction Stop)) {
             if (Test-RedirectedItem $item) { continue }
-            if ($item.PSIsContainer) { $pending.Push($item.FullName) }
+            if ($item.PSIsContainer) { if (!$AppArtwork -or $item.Name -ine 'FileTypes') { $pending.Push($item.FullName) } }
             elseif ($item.Extension -ieq $Extension) { $item }
         }
     }
@@ -170,28 +174,50 @@ function Get-TaskbarCandidates([string]$Directory) {
     }
 }
 
+function Get-ProjectFileArtwork([string]$ThemeRoot) {
+    $map = @{}
+    $folder = Join-Path $ThemeRoot 'FileTypes'
+    if (!(Test-Path -LiteralPath $folder -PathType Container)) { return $map }
+    Assert-RegularPath $folder
+    $known = @(Get-Content -LiteralPath (Join-Path $PSScriptRoot 'ProjectFileTypes.json') -Raw | ConvertFrom-Json | ForEach-Object { $_.Key })
+    foreach ($ext in '.png','.ico','.svg') {
+        foreach ($asset in @(Get-ChildItem -LiteralPath $folder -File -Filter ('*'+$ext))) {
+            $id = '.' + $asset.BaseName.TrimStart('.').ToLowerInvariant()
+            if ($id -in $known -and !(Test-RedirectedItem $asset)) { $map[$id] = $asset.FullName }
+        }
+    }
+    return $map
+}
+
 function Get-BetterIconTheme {
     [CmdletBinding()]
-    param([string]$Repository = $script:RepositoryRoot)
+    param([string]$Repository = $script:RepositoryRoot, [switch]$LocalArtworkOnly)
     $repositoryPath = Get-FullPath $Repository
+    if (!$LocalArtworkOnly -and $repositoryPath.TrimEnd('\') -ieq $script:RepositoryRoot.TrimEnd('\') -and
+        ([IO.File]::Exists((Join-Path $PSScriptRoot 'OnDemand.tsv')) -or [IO.File]::Exists((Join-Path $PSScriptRoot 'Included.tsv')) -or [IO.File]::Exists((Join-Path (Get-PackState) 'pack-catalog/latest.tsv')))) {
+        $null = Get-DownloadCatalog
+        $script:AvailableCatalog.Values
+        return
+    }
     foreach ($pack in @(Get-ChildItem -LiteralPath $repositoryPath -Directory -ErrorAction Stop | Where-Object { $_.Name -notlike '.*' })) {
         if (Test-RedirectedItem $pack) { continue }
         $children = @(Get-ChildItem -LiteralPath $pack.FullName -Directory -ErrorAction Stop | Where-Object { $_.Name -notlike '.*' })
-        $themes = @($children)
-        if (@(Get-ChildItem -LiteralPath $pack.FullName -File | Where-Object { $_.Extension -in '.ico','.png','.icns','.svg' -and (Get-AppName $_.BaseName -Icon) }).Count) { $themes = @($pack) + $themes }
+        $themes = @($children | Where-Object Name -ne 'FileTypes')
+        if ((Test-Path -LiteralPath (Join-Path $pack.FullName 'FileTypes') -PathType Container) -or @(Get-ChildItem -LiteralPath $pack.FullName -File | Where-Object { $_.Extension -in '.ico','.png','.icns','.svg' -and (Get-AppName $_.BaseName -Icon) }).Count) { $themes = @($pack) + $themes }
         foreach ($theme in $themes) {
             if (Test-RedirectedItem $theme) { continue }
-            $icons = @(Get-RegularFiles $theme.FullName '.svg') + @(Get-RegularFiles $theme.FullName '.ico') + @(Get-RegularFiles $theme.FullName '.png')
+            $icons = @(Get-RegularFiles $theme.FullName '.svg' -AppArtwork) + @(Get-RegularFiles $theme.FullName '.ico' -AppArtwork) + @(Get-RegularFiles $theme.FullName '.png' -AppArtwork)
             $icons = @($icons | Where-Object { Get-AppName $_.BaseName -Icon })
+            $documents = Get-ProjectFileArtwork $theme.FullName
             # Ignore non-artwork folders, including future tests or documentation.
-            if (-not $icons.Count) { continue }
+            if (-not $icons.Count -and !$documents.Count) { continue }
             $name = if ($theme.FullName -eq $pack.FullName) { 'Root' } else { $theme.Name }
             # IDs persist in preferences and reviewed plans. Keep them stable when
             # the public artwork directory changes its author name.
             $packId = if ($pack.Name -eq 'Craft-Icons-OmegaDarling') { 'Craft-Icons-Zach' } else { $pack.Name }
             $author = if ($packId -eq 'Craft-Icons-Zach') { 'OmegaDarling' } else { $pack.Name -replace '^Craft-Icons-','' }
             [pscustomobject]@{ Id = "$packId/$name"; Pack = $packId; Author = $author; Name = $name; Path = $theme.FullName;
-                IconCount = @($icons | ForEach-Object { Get-AppName $_.BaseName -Icon } | Sort-Object -Unique).Count; Status = 'Available' }
+                IconCount = @($icons | ForEach-Object { Get-AppName $_.BaseName -Icon } | Sort-Object -Unique).Count; Status = 'Available'; FileIcons = $documents }
         }
     }
 }
@@ -205,7 +231,8 @@ function Resolve-Theme([string]$Theme, [string]$Repository) {
 
 function Get-IconMap($Theme) {
     $map = @{}
-    $files = @(Get-RegularFiles $Theme.Path '.svg') + @(Get-RegularFiles $Theme.Path '.ico') + @(Get-RegularFiles $Theme.Path '.png')
+    if ($Theme.Status -eq 'Download') { throw 'This pack has not been downloaded yet. Select it in BetterIcon first.' }
+    $files = @(Get-RegularFiles $Theme.Path '.svg' -AppArtwork) + @(Get-RegularFiles $Theme.Path '.ico' -AppArtwork) + @(Get-RegularFiles $Theme.Path '.png' -AppArtwork)
     foreach ($icon in @($files | Sort-Object FullName)) {
         $app = Get-AppName $icon.BaseName -Icon
         if ($app) {
@@ -223,11 +250,12 @@ function Get-IconMap($Theme) {
 }
 
 function Get-BetterIconThemeIcon {
-    [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$Theme, [string]$Repository = $script:RepositoryRoot)
-    $selected = Resolve-Theme $Theme $Repository
+    [CmdletBinding(DefaultParameterSetName='ById')]
+    param([Parameter(Mandatory,ParameterSetName='ById')][string]$Theme, [Parameter(ParameterSetName='ById')][string]$Repository = $script:RepositoryRoot,
+        [Parameter(Mandatory,ParameterSetName='Entry')]$InputObject)
+    $selected = if ($PSCmdlet.ParameterSetName -eq 'Entry') { $InputObject } else { Resolve-Theme $Theme $Repository }
     $map = Get-IconMap $selected
-    $previews = @(Get-RegularFiles $selected.Path '.png')
+    $previews = @(Get-RegularFiles $selected.Path '.png' -AppArtwork)
     foreach ($app in @($map.Keys | Sort-Object)) {
         if (@($map[$app]).Count -eq 1) {
             $png = @($previews | Where-Object { (Get-AppName $_.BaseName -Icon) -eq $app })
@@ -720,4 +748,4 @@ function Restore-BetterIcon {
     finally { $lock.Dispose() }
 }
 
-Export-ModuleMember -Function Get-BetterIconVersion,Get-BetterIconRepository,Get-BetterIconStateDirectory,Get-BetterIconTheme,Get-BetterIconThemeIcon,Get-BetterIconBytes,Get-BetterIconApplication,Get-BetterIconPlan,Install-BetterIconTheme,Restore-BetterIcon
+Export-ModuleMember -Function Get-BetterIconVersion,Get-BetterIconRepository,Get-BetterIconStateDirectory,Get-BetterIconTheme,Get-BetterIconThemeIcon,Get-BetterIconBytes,Get-BetterIconApplication,Get-BetterIconPlan,Install-BetterIconTheme,Restore-BetterIcon,Install-BetterIconDownloadedPack,Update-BetterIconPackCatalog

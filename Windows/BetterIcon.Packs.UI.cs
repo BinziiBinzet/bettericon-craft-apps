@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Globalization;
@@ -32,17 +33,22 @@ namespace BetterIcon.Tray
             authorRow.Controls.Add(new Label { Text = "Author", Width = 79, Margin = new Padding(0, 6, 12, 0) });
             packAuthor.Width = 450; packAuthor.MaxLength = 64; packAuthor.AccessibleName = "Pack author"; packAuthor.Text = basis == null ? "" : basis.Author;
             authorRow.Controls.Add(packAuthor); layout.Controls.Add(authorRow, 0, 1);
-            layout.Controls.Add(new Label { Text = "Choose an SVG, PNG or ICO for each app. Unassigned apps keep their existing shortcut icons. Saving adds the pack; Apply icons changes shortcuts.", Dock = DockStyle.Fill }, 0, 2);
+            layout.Controls.Add(new Label { Text = "Choose artwork for apps and ArtCraft project files. You can apply each separately in Manage Icons.", Dock = DockStyle.Fill }, 0, 2);
             grid.Dock = DockStyle.Fill; grid.AllowUserToAddRows = grid.AllowUserToDeleteRows = grid.AllowUserToResizeRows = false; grid.RowHeadersVisible = false; grid.AutoGenerateColumns = false; grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect; grid.MultiSelect = false;
-            grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "App", HeaderText = "App", Width = 145, ReadOnly = true });
+            grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "App", HeaderText = "App or file type", Width = 165, ReadOnly = true });
             grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Artwork", HeaderText = "Artwork", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, ReadOnly = true });
             grid.Columns.Add(new DataGridViewButtonColumn { Name = "Choose", HeaderText = "", Text = "Choose...", UseColumnTextForButtonValue = true, Width = 90 });
             grid.Columns.Add(new DataGridViewButtonColumn { Name = "Clear", HeaderText = "", Text = "Clear", UseColumnTextForButtonValue = true, Width = 65 });
             if (basis != null) foreach (ThemeIcon icon in basis.Icons) files[icon.Application] = String.IsNullOrEmpty(icon.PreviewPath) ? icon.Path : icon.PreviewPath;
+            if (basis != null && basis.FileIcons != null) foreach (var icon in basis.FileIcons) files[icon.Key] = icon.Value;
             foreach (string app in PackLibrary.Applications.OrderBy(a => a)) grid.Rows.Add(app, files.ContainsKey(app) ? Path.GetFileName(files[app]) : "Not assigned");
+            foreach (var type in ProjectFormat.All) {
+                int row = grid.Rows.Add(type.Key + " (" + type.Application + ")", files.ContainsKey(type.Key) ? Path.GetFileName(files[type.Key]) : "Not assigned");
+                grid.Rows[row].Tag = type.Key;
+            }
             grid.CellContentClick += delegate(object sender, DataGridViewCellEventArgs e) {
                 if (e.RowIndex < 0) return;
-                string app = (string)grid.Rows[e.RowIndex].Cells[0].Value;
+                string app = (string)(grid.Rows[e.RowIndex].Tag ?? grid.Rows[e.RowIndex].Cells[0].Value);
                 if (e.ColumnIndex == 2) using (OpenFileDialog picker = new OpenFileDialog { Title = "Icon for " + app, Filter = "Icon artwork (*.svg;*.png;*.ico)|*.svg;*.png;*.ico", CheckFileExists = true }) {
                     if (picker.ShowDialog(this) == DialogResult.OK) { files[app] = picker.FileName; grid.Rows[e.RowIndex].Cells[1].Value = Path.GetFileName(picker.FileName); }
                 }
@@ -127,7 +133,7 @@ namespace BetterIcon.Tray
         readonly Button resetIconSize = new Button();
         readonly CheckBox showAppNames = new CheckBox();
         readonly Button removePackButton = new Button();
-        readonly Label appVersion = new Label();
+        readonly LinkLabel appVersion = new LinkLabel();
         bool arrangingManageIcons;
         readonly List<Button> packButtons = new List<Button>();
         int iconWheelDelta;
@@ -260,15 +266,15 @@ namespace BetterIcon.Tray
             settingsScroll.Controls.Add(settingsContent); root.Controls.Add(settingsScroll, 0, 0);
 
             TableLayoutPanel packs = SettingsTable(1); packs.Name = "IconPackSection";
-            SettingsRow(packs, new Label { Text = "Icon pack", AutoSize = true, Font = new Font(Font, FontStyle.Bold), Margin = new Padding(0, 0, 0, 8) });
+            SettingsRow(packs, new Label { Text = "App icon pack", AutoSize = true, Font = new Font(Font, FontStyle.Bold), Margin = new Padding(0, 0, 0, 8) });
             themes.DropDownStyle = ComboBoxStyle.DropDownList; themes.Dock = DockStyle.Top; themes.Margin = new Padding(0, 0, 0, 5); themes.AccessibleName = "Icon pack";
-            themes.AccessibleDescription = "Select an icon pack. Right-click for pack editing and ZIP export, also available in the tray Pack actions menu.";
-            themes.SelectedIndexChanged += delegate { SelectPack(); };
+            themes.AccessibleDescription = "Click a pack or press Enter to load it. Packs marked Download will be fetched. Right-click for pack actions.";
+            themes.PackChosen += delegate { SelectPack(); };
             SettingsRow(packs, themes);
             packDetails.AutoSize = true; packDetails.Dock = DockStyle.Top; packDetails.Margin = new Padding(0, 0, 0, 10);
             SettingsRow(packs, packDetails);
-            TableLayoutPanel actions = SettingsTable(3); actions.Margin = new Padding(0, 0, 0, 10);
-            for (int i = 0; i < 3; i++) actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F / 3));
+            TableLayoutPanel actions = SettingsTable(4); actions.Margin = new Padding(0, 0, 0, 10);
+            for (int i = 0; i < 4; i++) actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
             Button import = PackButton("Import...", 120, delegate { });
             importPackMenu.Items.Add("From ZIP...", null, delegate { ImportPack(true); });
             importPackMenu.Items.Add("From folder...", null, delegate { ImportPack(false); });
@@ -283,7 +289,8 @@ namespace BetterIcon.Tray
             themes.ContextMenuStrip = managePackMenu;
             removePackButton.Text = "Remove pack"; removePackButton.AccessibleName = "Remove pack";
             removePackButton.Click += delegate { RemovePack(); };
-            int column = 0; foreach (Button button in new[] { import, create, removePackButton }) { SettingsButton(button); actions.Controls.Add(button, column++, 0); }
+            Button documents = PackButton("File icons...", 115, delegate { OpenProjectIcons(null); });
+            int column = 0; foreach (Button button in new[] { import, create, removePackButton, documents }) { SettingsButton(button); actions.Controls.Add(button, column++, 0); }
             SettingsRow(packs, actions);
             settingsContent.Controls.Add(packs, 0, 0);
             packPreview.Dock = DockStyle.Fill; packPreview.Margin = new Padding(0, 0, 0, 16);
@@ -343,8 +350,17 @@ namespace BetterIcon.Tray
             TableLayoutPanel footer = SettingsTable(3); footer.Name = "ManageIconsFooter"; footer.Padding = new Padding(24, 6, 24, 12);
             footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             appVersion.Text = "Better Icon for ArtCraft version " + typeof(LauncherForm).Assembly.GetName().Version.ToString(3);
-            appVersion.AutoSize = true; appVersion.Dock = DockStyle.Fill; appVersion.TextAlign = ContentAlignment.MiddleRight;
-            appVersion.Margin = new Padding(0, 0, 10, 0); appVersion.Tag = "SecondaryText";
+            ConfigureFooterLink(appVersion, "Open the BetterIcon project on GitHub.");
+            appVersion.Anchor = AnchorStyles.Right; appVersion.Margin = new Padding(0, 0, 10, 0);
+            appVersion.Links[0].LinkData = "https://github.com/BinziiBinzet/bettericon-craft-apps";
+            appVersion.LinkClicked += delegate(object sender, LinkLabelLinkClickedEventArgs e) {
+                try {
+                    ProcessStartInfo projectPage = new ProcessStartInfo((string)e.Link.LinkData) { UseShellExecute = true };
+                    Process browser = Process.Start(projectPage);
+                    if (browser != null) browser.Dispose();
+                }
+                catch (System.ComponentModel.Win32Exception error) { Report(error); }
+            };
             footer.Controls.Add(appVersion, 0, 0); footer.Controls.Add(appIconButton, 1, 0); footer.Controls.Add(appearanceModeButton, 2, 0);
             root.Controls.Add(footer, 0, 1);
             settingsScroll.ClientSizeChanged += delegate { LayoutManageIcons(); };
@@ -373,9 +389,9 @@ namespace BetterIcon.Tray
             if (catalog == null) return;
             string chosen = selectId ?? (SelectedTheme == null ? preferences.Theme : SelectedTheme.Id);
             ThemeEntry defaults = new ThemeEntry { Id = ThemeEntry.DefaultThemeId, Name = "ArtCraft default", IsDefault = true, Icons = new ThemeIcon[0], IconCount = catalog.Apps.Select(a => a.Application).Distinct().Count() };
-            catalog.Themes = new[] { defaults }.Concat(library.VisibleThemes(bundledThemes).Where(t => !t.IsDefault)).ToArray();
+            catalog.Themes = new[] { defaults }.Concat(library.VisibleThemes(bundledThemes).Where(t => !t.IsDefault && t.IconCount > 0)).ToArray();
             fillingThemes = true;
-            try { themes.Items.Clear(); themes.Items.AddRange(catalog.Themes); themes.SelectedItem = catalog.Themes.FirstOrDefault(t => t.Id == chosen) ?? catalog.Themes.FirstOrDefault(t => t.Name == "Cardboard") ?? catalog.Themes.FirstOrDefault(); }
+            try { themes.Items.Clear(); themes.Items.AddRange(catalog.Themes); themes.SelectedItem = catalog.Themes.FirstOrDefault(t => t.Id == chosen && !t.NeedsDownload) ?? catalog.Themes.FirstOrDefault(t => t.Name == "Cardboard" && !t.NeedsDownload) ?? defaults; }
             finally { fillingThemes = false; }
             RenderSelection(); SavePreferences(); BuildTrayMenu();
         }
@@ -461,7 +477,7 @@ namespace BetterIcon.Tray
             else using (FolderBrowserDialog picker = new FolderBrowserDialog { Description = "Choose one theme folder containing app-named SVG, PNG or ICO files.", ShowNewFolderButton = false }) { if (picker.ShowDialog(this) == DialogResult.OK) source = picker.SelectedPath; }
             if (source == null) return;
             SetBusy(true, "Importing icon pack...");
-            try { ThemeEntry added = await Task.Run(() => library.Import(source)); ReloadLibrary(added.Id); status.Text = "Imported " + added.Name + ". Choose Apply icons to change shortcuts."; }
+            try { ThemeEntry added = await Task.Run(() => library.Import(source)); ShowSavedPack(added); }
             catch (Exception error) { Report(error); }
             finally { SetBusy(false, null); }
         }
@@ -482,7 +498,7 @@ namespace BetterIcon.Tray
         {
             if (busy || (useSelected && (SelectedTheme == null || SelectedTheme.IsDefault)) || (edit && !SelectedTheme.Managed)) return;
             SetBusy(true, "Editing icon pack...");
-            try { using (PackEditor editor = new PackEditor(library, useSelected ? SelectedTheme : null, edit)) { ApplyDialogAppearance(editor); if (editor.ShowDialog(this) == DialogResult.OK) { ReloadLibrary(editor.Saved.Id); status.Text = "Saved " + editor.Saved.Name + ". Choose Apply icons to change shortcuts."; } } }
+            try { using (PackEditor editor = new PackEditor(library, useSelected ? SelectedTheme : null, edit)) { ApplyDialogAppearance(editor); if (editor.ShowDialog(this) == DialogResult.OK) ShowSavedPack(editor.Saved); } }
             finally { SetBusy(false, null); }
         }
         void RemovePack()

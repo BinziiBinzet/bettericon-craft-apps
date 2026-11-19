@@ -7,7 +7,8 @@ Install Inno Setup locally first, or supply its ISCC.exe with -CompilerPath.
 param(
     [Parameter(Mandatory)][string]$OutputDirectory,
     [string]$PackagePath,
-    [string]$CompilerPath
+    [string]$CompilerPath,
+    [switch]$OnDemand
 )
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'BetterIcon.Windows.psm1') -Force
@@ -15,7 +16,8 @@ Add-Type -AssemblyName System.IO.Compression,System.IO.Compression.FileSystem
 $version = Get-BetterIconVersion
 $output = [IO.Path]::GetFullPath($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputDirectory))
 $null = [IO.Directory]::CreateDirectory($output)
-$destination = Join-Path $output ('BetterIcon-Setup-' + $version + '.exe')
+$edition = if ($OnDemand) { '-OnDemand' } else { '' }
+$destination = Join-Path $output ('BetterIcon-Setup-' + $version + $edition + '.exe')
 if (Test-Path -LiteralPath $destination) { throw "Installer already exists: $destination. Choose another output directory." }
 if (-not $CompilerPath) {
     $command = Get-Command ISCC.exe -ErrorAction SilentlyContinue
@@ -36,7 +38,7 @@ if (-not $CompilerPath -or -not (Test-Path -LiteralPath $CompilerPath -PathType 
 }
 $CompilerPath = (Resolve-Path -LiteralPath $CompilerPath).ProviderPath
 if (-not $PackagePath) {
-    $package = & (Join-Path $PSScriptRoot 'Build-WindowsPackage.ps1') -OutputDirectory $output
+    $package = & (Join-Path $PSScriptRoot 'Build-WindowsPackage.ps1') -OutputDirectory $output -OnDemand:$OnDemand
     $PackagePath = $package.Package
 }
 $PackagePath = (Resolve-Path -LiteralPath $PackagePath).ProviderPath
@@ -62,6 +64,7 @@ try {
 }
 finally { $archive.Dispose() }
 $exe = Join-Path $payload 'Windows\BetterIcon-Tray.exe'
+if ((Test-Path -LiteralPath (Join-Path $payload 'Windows\OnDemand.tsv')) -ne [bool]$OnDemand) { throw 'The package and installer editions differ.' }
 foreach ($relative in @('LICENSE','Windows\BetterIcon-Tray.exe','Windows\BetterIcon.TrayWorker.ps1','Windows\BetterIcon.Windows.psm1','Windows\BetterIcon.ShellLink.cs')) {
     if (-not (Test-Path -LiteralPath (Join-Path $payload $relative) -PathType Leaf)) { throw "Package is missing $relative" }
 }
@@ -79,6 +82,7 @@ $setupIcon = Join-Path $stage 'BetterIcon-Setup.ico'
     -SmallPath (Join-Path $payload 'Windows\Assets\AppIcons\32px\betterIcon_icon_sage_dark.png')))
 $compilerArgs = @('/Qp', ('/DPayloadRoot=' + $payload), ('/DAppVersion=' + $version),
     ('/DOutputDir=' + $output), ('/DSetupIcon=' + $setupIcon), (Join-Path $PSScriptRoot 'BetterIcon.Setup.iss'))
+if ($OnDemand) { $compilerArgs = @('/DOnDemand=1') + $compilerArgs }
 & $CompilerPath @compilerArgs | Out-Host
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $destination)) { throw 'Inno Setup compilation failed.' }
 $hash = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()

@@ -1,0 +1,15 @@
+[
+  {"Key":".anicraft","Application":"AniCraft","ProgId":"Anicraft.Document"},
+  {"Key":".deckcraft","Application":"DeckCraft","ProgId":"DeckCraft.Presentation"},
+  {"Key":".designcraft","Application":"DesignCraft","ProgId":"Designcraft.Document"},
+  {"Key":".ecproj","Application":"EffectCraft","ProgId":"EffectCraft.Project"},
+  {"Key":".fcproj","Application":"FilmCraft","ProgId":"FilmCraft.Project"},
+  {"Key":".figcraft","Application":"FigCraft","ProgId":"Figcraft.Document"},
+  {"Key":".mailcraft","Application":"MailCraft","ProgId":"MailCraft.Mailbox"},
+  {"Key":".mcraft","Application":"MaterialCraft","ProgId":"MaterialCraft.Package"},
+  {"Key":".pcraft","Application":"PhotoCraft","ProgId":"Photocraft.Document"},
+  {"Key":".scraft","Application":"SoundCraft","ProgId":"SoundCraft.Session"},
+  {"Key":".solidcraft","Application":"SolidCraft","ProgId":"Solidcraft.Design","Aliases":[".solvecraft",".sc"]},
+  {"Key":".tcraft","Application":"TextureCraft","ProgId":"TextureCraft.Project"},
+  {"Key":".vectorcraft","Application":"VectorCraft","ProgId":"VectorCraft.Document"}
+]

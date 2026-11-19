@@ -9,25 +9,29 @@
     />
     <title>BetterIcon for ArtCraft</title>
     <link rel="stylesheet" href="popup.css" />
+    <script defer src="pack-picker.js"></script>
     <script defer src="popup.js"></script>
   </head>
   <body>
+    <div id="resizeGrip" aria-hidden="true"></div>
     <main id="popup">
       <nav role="tablist" aria-label="BetterIcon">
         <button id="launcherTab" role="tab" aria-controls="launcher">Launcher</button
         ><button id="manageTab" role="tab" aria-controls="manage">Manage Icons</button>
       </nav>
-      <div id="busy" role="status" hidden><span></span><progress></progress></div>
       <section id="launcher" role="tabpanel" aria-labelledby="launcherTab">
         <p id="empty" hidden></p>
         <div id="apps" class="grid" role="listbox" aria-label="Installed ArtCraft apps" tabindex="0"></div>
+        <footer>
+          <button type="button" id="launcherShortcut" class="footer-link" aria-haspopup="dialog" aria-controls="hotkey" title="Change the keyboard shortcut that opens the launcher."></button>
+        </footer>
       </section>
       <section id="manage" role="tabpanel" aria-labelledby="manageTab" hidden>
         <div class="scroll">
           <div class="settings">
             <div class="pack">
-              <label for="packs"><strong>Icon pack</strong></label
-              ><select id="packs"></select>
+              <label for="packs"><strong>App icon pack</strong></label>
+              <button type="button" id="packs" class="pack-choice" aria-haspopup="listbox" aria-expanded="false" aria-controls="packOptions"></button>
               <div id="detail"></div>
               <div class="actions">
                 <button id="import">Import…</button><button id="new">New pack…</button
@@ -50,16 +54,27 @@
                 <button id="apply" class="primary">Apply icons…</button
                 ><button id="restore">Restore all defaults…</button>
               </div>
+              <div class="pack project-pack">
+                <label for="filePacks"><strong>Project file icon pack</strong></label>
+                <button type="button" id="filePacks" class="pack-choice" aria-haspopup="listbox" aria-expanded="false" aria-controls="packOptions"></button>
+                <div id="fileSamples" aria-label="Project file icons" hidden></div>
+                <div class="actions">
+                  <button id="applyFiles">Apply project file icons…</button><button id="restoreFiles">Restore project file icons…</button>
+                </div>
+              </div>
               <p id="status" role="status">Changes are reviewed before they are applied.</p>
             </div>
           </div>
         </div>
         <footer>
-          <span id="version"></span><button id="brand" aria-label="BetterIcon app icon"><img alt="" /></button
+          <a id="version" class="footer-link" title="Open the BetterIcon project on GitHub."></a><button id="brand" aria-label="BetterIcon app icon"><img alt="" /></button
           ><button id="appearance" aria-label="Appearance"></button>
         </footer>
       </section>
+      <div id="busy" role="status" hidden><span></span><progress></progress></div>
     </main>
+    <div id="packOptions" role="listbox" tabindex="-1" hidden></div>
+    <img id="hoverPreview" alt="Icon pack preview" hidden />
     <div id="menu" role="menu" hidden></div>
     <dialog id="editor">
       <form method="dialog">

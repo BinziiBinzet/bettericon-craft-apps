@@ -1,8 +1,13 @@
 # BetterIcon-Craft Apps
 
-Icon installers for [Artcraft](https://getartcraft.com/) applications. The Linux installer supports all Linux desktop environments; the Windows tray launcher opens installed apps and applies icon themes to Desktop and Start-menu shortcuts with backup and restore.
+BetterIcon launches installed ArtCraft apps and manages their icons on Windows, Mac and Linux. The Linux desktop app applies themes to desktop entries for the current user. The original Linux terminal icon installer is also included.
 
-> BetterIcon is available for macOS, Windows, and Linux. The Mac app can apply and restore artwork on the installed ArtCraft application bundles. See the [Mac guide](macOS/README.md) and [Windows guide](Windows/WINDOWS.md).
+Get the Windows, macOS, or Linux installer and its SHA-256 checksum from the [BetterIcon 1.26.0 release](https://github.com/BinziiBinzet/bettericon-craft-apps/releases/tag/v1.26.0).
+
+- **Bundled** includes all 39 icon packs and their previews for offline use.
+- **On-demand** starts with the pack list. Hover over a pack for a small preview, then click it or press Enter to download its artwork.
+
+Resize **Launcher** and **Manage Icons** independently. Switching tabs keeps their divider in place. The tray or menu bar icon opens the larger saved tab, with Launcher winning a tie. The keyboard shortcut always opens Launcher. Click the shortcut in its lower-left corner to change it.
 
 ## Key Features
 
@@ -15,7 +20,7 @@ The nine themes in [Craft-Icons-OmegaDarling](Craft-Icons-OmegaDarling/) are by 
 
 ## Community icon packs
 
-The selected ArtCraft Discord artwork is organized by the posting creator. Each style folder contains app-named PNGs and a BetterIcon pack description. The folders can be imported individually in Manage Icons. Existing installed releases do not automatically download new repository artwork.
+The selected ArtCraft Discord artwork is organized by the posting creator. Each style folder contains app-named PNGs and a BetterIcon pack description. The folders can be imported individually in Manage Icons. Choose **Refresh available icon packs** from the tray or menu bar to check for new packs and updates.
 
 | Creator | Collection |
 | --- | --- |
@@ -30,9 +35,9 @@ The selected ArtCraft Discord artwork is organized by the posting creator. Each 
 | Cryogenn | [ArtCraft iconPackage](Craft-Icons-Cryogenn/) |
 | Mike22 | [CraftApps AIO November](Craft-Icons-Mike22/) |
 
-The circleb Origami Animals set is a separate import ZIP in the existing circleb folder. VimiummuimiV and Mike22 also supplied file-type artwork, which is preserved in their source archives. The current BetterIcon app does not install file-type associations.
+The circleb Origami Animals set is a separate import ZIP in the existing circleb folder. VimiummuimiV and Mike22 also supplied file-type artwork, which is preserved in their source archives. BetterIcon lets you choose separate packs for apps and ArtCraft project files.
 
-The new style folders are discovered by a Windows source checkout and the Linux installer. The current Linux installer does not list MailCraft or ArtCraft Launcher. The current macOS build has a fixed bundled artwork inventory; import a downloaded style folder or ZIP to use these additions there. Credits, source links, inferred app assignments, and artwork notes appear in each creator folder.
+Credits, source links, inferred app assignments, and artwork notes appear in each creator folder.
 
 ## Supported Applications
 
@@ -42,26 +47,22 @@ Supports all official Artcraft Crafting Apps.
 
 ### Linux
 
-- Make the scripts executable (run this first):
-   ```bash
-   chmod +x install.sh uninstall.sh
-   ```
-- Run the installer with `./install.sh` and select your preferred theme.
-- Restore original icons or uninstall with `./uninstall.sh`.
+- Extract the graphical Linux package and run `./install.sh` to add **BetterIcon for ArtCraft** to Applications and the system tray. Press **Ctrl+Alt+A** to open Launcher. [Linux guide](Linux/README.md)
+- The terminal icon installer and restore scripts in a source checkout are `Linux/install.sh` and `Linux/uninstall.sh`.
 
 ### Windows
 
-- Open `Windows/Start-Tray.cmd` in a source checkout, or `Windows/BetterIcon-Tray.exe` in a locally built Windows ZIP.
-- Click the tray icon to open the launcher above the system tray; click it again to close the popup. The **Launcher** tab shows app icons and names; type to narrow the list, then press Enter or double-click to launch. The **Settings** tab manages icon packs, custom artwork, apply/restore, and the configurable global hotkey.
+- Run either Windows installer to add BetterIcon and its Start menu shortcut. A source checkout also includes `Windows/Start-Tray.cmd`.
+- On **Launcher**, type to narrow the list, then press Enter or double-click an app. Open **Manage Icons** to preview packs and review artwork changes. Click the tray icon again to close the popup.
 - **Restore original icons** restores the saved shortcuts. Shared shortcuts request administrator access only when applying or restoring.
-- Share personal packs with **Settings > Export ZIP**; recipients use **Import ZIP**. Names, author credits, and artwork are preserved.
+- Share personal packs with **Manage Icons → Export ZIP**. Recipients use **Import ZIP** to load the artwork and its credits.
 - The command-line installers remain available as `Windows/Install-Windows.cmd` and `Windows/Restore-Windows.cmd`.
 - Windows PowerShell and .NET Framework are included with supported Windows installations; no Python or downloaded modules are required.
 - For supported themes, backups, and taskbar limitations, read [WINDOWS.md](Windows/WINDOWS.md).
 
 ### macOS
 
-- Open the BetterIcon disk image and drag **BetterIcon** into Applications. Click its menu bar icon to open the launcher.
+- Open the BetterIcon disk image and drag **BetterIcon** into Applications. Open it once to add the menu bar icon.
 - In **Manage Icons**, choose a pack and click **Apply icons…**. Review the application paths before applying. **Restore all defaults…** restores their original icons. [Mac guide](macOS/README.md)
 
 ## Contributing & Forking

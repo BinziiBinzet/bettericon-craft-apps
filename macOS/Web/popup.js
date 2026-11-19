@@ -20,6 +20,7 @@ function make(tag, content) {
   return node;
 }
 function tab(name, focus = true) {
+  closePackPicker();
   page = name;
   for (const id of ["launcher", "manage"]) {
     el(id).hidden = id !== name;
@@ -27,6 +28,9 @@ function tab(name, focus = true) {
   }
   closeMenu();
   if (focus) (name === "launcher" ? el("apps") : el("packs")).focus();
+}
+function requestTab(name) {
+  if (name !== page) send("tab", { name });
 }
 function reset(pageName) {
   if (activeDialog()) return;
@@ -39,12 +43,13 @@ function reset(pageName) {
 function iconURL(base, size) {
   return base + "?size=" + Math.min(4096, Math.round(size * window.devicePixelRatio));
 }
-function packActions() {
-  const p = model.pack;
+function packActions(group = "apps") {
+  const p = group === "files" ? model.filePack : model.pack;
   return [
-    ["Customize…", () => send("editor", { mode: "customize" }), !p.default],
-    ["Edit pack…", () => send("editor", { mode: "edit" }), p.personal],
-    ["Export ZIP…", () => send("export"), p.personal],
+    ["Customize…", () => send("editor", { mode: "customize", group }), !p.default],
+    ["Edit pack…", () => send("editor", { mode: "edit", group }), p.personal],
+    ["Export ZIP…", () => send("export", { group }), p.personal],
+    ["Remove pack", () => send("remove", { group }), !p.default],
     ["Restore built-in packs", () => send("unhide"), true],
   ];
 }
@@ -174,7 +179,7 @@ function grids() {
     "empty",
     prefix
       ? "No apps match ‘" + prefix + "’. Backspace edits the filter. Escape clears it."
-      : "No ArtCraft apps found. Right-click the menu bar icon to refresh or choose an apps folder.",
+      : model.emptyMessage || "No ArtCraft apps found. Right-click the menu bar icon to refresh or choose an apps folder.",
   );
 }
 function size(value) {
@@ -202,9 +207,19 @@ function update(next) {
     pack = model.pack;
   document.documentElement.dataset.dark = String(model.dark);
   document.body.classList.toggle("iconOnly", !p.names);
-  const options = model.packs.map((item) => new Option(item.title, item.id));
-  el("packs").replaceChildren(...options);
-  el("packs").value = pack.id;
+  setPackButtons(model);
+  const samples = el("fileSamples");
+  samples.replaceChildren(...(model.fileSamples || []).map(file => {
+    const item = make("span"), image = document.createElement("img");
+    image.alt = "";
+    image.src = file.image;
+    item.append(image, document.createTextNode(file.name));
+    return item;
+  }));
+  samples.hidden = !samples.childElementCount;
+  text("applyFiles", model.fileAction || "Apply project file icons…");
+  el("applyFiles").disabled = !model.fileCount;
+  el("apply").disabled = !pack.default && !model.preview.length;
   text(
     "detail",
     pack.default
@@ -217,6 +232,8 @@ function update(next) {
   size(p.size);
   text("apply", pack.default ? "Restore ArtCraft defaults…" : "Apply icons…");
   text("version", "Better Icon for ArtCraft version " + model.version);
+  el("version").href = model.projectURL;
+  showShortcut(model.shortcut);
   const variant = p.variant === "auto" ? (model.dark ? "dark" : "light") : p.variant;
   el("brand").firstElementChild.src = model.brands[p.color + "_" + variant];
   el("brand").title = "BetterIcon app icon";
@@ -234,7 +251,7 @@ function busy(message) {
     section.inert = working;
   for (const dialog of document.querySelectorAll("dialog[open]")) dialog.inert = working;
   if (!working) for (const dialog of document.querySelectorAll("dialog")) dialog.inert = false;
-  if (working) closeMenu();
+  if (working) { closeMenu(); closePackPicker(); }
 }
 function editor(info) {
   editorFiles = { ...info.files };
@@ -267,6 +284,9 @@ function editor(info) {
 function assignment(craft, name) {
   text("file-" + craft, name || "Unassigned");
 }
+function showShortcut(shortcut) {
+  text("launcherShortcut", "Launcher shortcut · " + shortcut);
+}
 function hotkey(info) {
   const k = model.prefs.hotkey;
   el("keyEnabled").checked = k.enabled;
@@ -278,7 +298,7 @@ function hotkey(info) {
       i.type = "checkbox";
       i.id = "mod-" + label;
       i.checked = k[label.toLowerCase()];
-      l.append(i, document.createTextNode(label));
+      l.append(i, document.createTextNode(info.labels?.[label] || label));
       return l;
     }),
   );
@@ -292,13 +312,23 @@ function doneDialog(id) {
   if (el(id).open) el(id).close();
 }
 for (const id of ["editor", "hotkey"]) el(id).addEventListener("close", () => send("dialogClosed", { id }));
-el("launcherTab").onclick = () => tab("launcher");
-el("manageTab").onclick = () => tab("manage");
-el("packs").onchange = () => send("select", { id: el("packs").value });
+// Match AppKit's whole-point divider using the tab bar's measured width.
+new ResizeObserver(([bar]) => {
+  el("launcherTab").style.flexBasis = Math.floor(bar.contentRect.width / 2) + "px";
+}).observe(el("launcherTab").parentElement);
+el("launcherTab").onclick = () => requestTab("launcher");
+el("manageTab").onclick = () => requestTab("manage");
+el("launcherShortcut").onclick = () => send("changeHotkey");
+el("packs").onclick = () => openPackPicker("apps");
+el("filePacks").onclick = () => openPackPicker("files");
+el("packs").onchange = () => send("select", { id: el("packs").value, group: "apps" });
+el("applyFiles").onclick = () => send("reviewFiles", { restore: false });
+el("restoreFiles").onclick = () => send("reviewFiles", { restore: true });
 el("packs").oncontextmenu = (e) => {
   e.preventDefault();
   menu(packActions(), e.clientX, e.clientY);
 };
+el("filePacks").oncontextmenu = e => { e.preventDefault(); menu(packActions("files"), e.clientX, e.clientY); };
 el("new").onclick = () => send("editor", { mode: "new" });
 el("remove").onclick = () => send("remove");
 el("import").onclick = () =>
@@ -345,7 +375,7 @@ document.addEventListener("pointerdown", (e) => {
 });
 document.addEventListener("contextmenu", (e) => e.preventDefault());
 document.addEventListener("keydown", (e) => {
-  if (activeDialog() || working || !model) return;
+  if (activeDialog() || working || !model || !el("packOptions").hidden) return;
   if (!el("menu").hidden) {
     if (e.key === "Escape") {
       closeMenu();
@@ -360,8 +390,10 @@ document.addEventListener("keydown", (e) => {
     return;
   }
   if (["INPUT", "SELECT"].includes(e.target.tagName) && e.key !== "Escape") return;
+  if ((e.target === el("launcherShortcut") || e.target.getAttribute?.("role") === "tab") &&
+      (e.key === "Enter" || e.key === " ")) return;
   if (page === "manage" && e.key === "Escape") {
-    tab("launcher");
+    requestTab("launcher");
     e.preventDefault();
     return;
   }
@@ -426,12 +458,17 @@ el("launcher").addEventListener(
 );
 window.betterIcon = {
   update,
+  packPreview,
   reset,
+  tab,
   busy,
   editor,
   assignment,
   hotkey,
-  keyStatus: (message) => text("keyStatus", message),
+  keyStatus: (message, shortcut) => {
+    text("keyStatus", message);
+    showShortcut(shortcut);
+  },
   doneDialog,
   showError: (id, message) => text(id, message),
 };

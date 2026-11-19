@@ -12,7 +12,7 @@ namespace BetterIcon.Tray
 {
     // ComboBox's Framework preferred size omits owner-drawn item height.
     // TableLayoutPanel must reserve the same height that the native control uses.
-    public sealed class AppearanceComboBox : ComboBox
+    public class AppearanceComboBox : ComboBox
     {
         public AppearanceComboBox() { DrawMode = DrawMode.OwnerDrawFixed; FlatStyle = FlatStyle.Flat; ItemHeight = 24; }
         protected override void OnFontChanged(EventArgs e) { base.OnFontChanged(e); ItemHeight = Math.Max(24, Font.Height + 6); }
@@ -121,6 +121,12 @@ namespace BetterIcon.Tray
             // rectangular inner panel otherwise appears to cut through its curves.
             control.BackColor = control is LauncherForm && !palette.HighContrast ? palette.Surface : control is Form ? palette.Background : control is TabPage || control is ListView || control.Name.EndsWith("Section", StringComparison.Ordinal) ? palette.Surface : parent;
             control.ForeColor = role == "ErrorText" ? palette.Error : role == "SecondaryText" ? palette.Muted : palette.Text;
+            LinkLabel link = control as LinkLabel;
+            if (link != null) {
+                link.LinkColor = link.VisitedLinkColor = control.ForeColor;
+                link.ActiveLinkColor = palette.Text;
+                link.DisabledLinkColor = palette.HighContrast ? SystemColors.GrayText : palette.Muted;
+            }
             Button button = control as Button;
             if (button != null) {
                 button.FlatStyle = FlatStyle.Flat; button.UseVisualStyleBackColor = false;

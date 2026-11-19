@@ -19,6 +19,8 @@ private struct LibraryIndex: Codable {
 
 final class PackLibrary {
     let root: URL
+    var projectKeys = Set<String>()
+    var projectApps = Set<String>()
     private var index: LibraryIndex
     init(_ root: URL) throws {
         self.root = root
@@ -37,7 +39,9 @@ final class PackLibrary {
                 return dir.appendingPathComponent(file)
             }
             return Pack(
-                id: "User/" + p.uuid.uuidString, name: p.name, author: p.author, icons: urls, personal: true)
+                id: "User/" + p.uuid.uuidString, name: p.name, author: p.author, icons: urls.filter { !$0.key.hasPrefix(".") }, personal: true,
+                documents: urls.filter { $0.key.hasPrefix(".") }, canApps: urls.keys.contains { !$0.hasPrefix(".") },
+                canFiles: urls.keys.contains { projectKeys.contains($0) || projectApps.contains($0) })
         }
         return [.defaults]
             + (builtins.filter { !index.hidden.contains($0.id) } + personal).sorted {
@@ -107,9 +111,9 @@ final class PackLibrary {
         defer { if !published { try? fm.removeItem(at: dir) } }
         var files = [String: String]()
         for (craft, (ext, bytes)) in items {
-            guard Craft.names.contains(craft) else { throw Problem("Unknown ArtCraft app.") }
+            guard Craft.names.contains(craft) || projectKeys.contains(craft) else { throw Problem("Unknown ArtCraft app.") }
             try Artwork.validate(bytes, ext: ext)
-            let file = craft + "." + ext
+            let file = (craft.hasPrefix(".") ? "project-" + String(craft.dropFirst()) : craft) + "." + ext
             try bytes.write(to: dir.appendingPathComponent(file), options: .atomic)
             files[craft] = file
         }
@@ -146,8 +150,10 @@ final class PackLibrary {
                 return
             }
             let ext = (base as NSString).pathExtension.lowercased()
-            guard Artwork.formats.contains(ext),
-                let craft = Craft.canonical((base as NSString).deletingPathExtension)
+            let stem = (base as NSString).deletingPathExtension
+            let key = "." + stem.trimmingCharacters(in: CharacterSet(charactersIn: ".")).lowercased()
+            let doc = parts.dropLast().contains { $0.lowercased() == "filetypes" }
+            guard Artwork.formats.contains(ext), let craft = doc ? (projectKeys.contains(key) ? key : nil) : Craft.canonical(stem)
             else { return }
             guard length <= Artwork.maxBytes else { throw Problem("One of the icons exceeds 16 MB.") }
             choices[craft, default: []].append((ext, try read()))
@@ -249,10 +255,13 @@ final class PackLibrary {
         try save(SharedPack(Name: pack.name, Author: pack.author), at: dir.appendingPathComponent(meta))
         var names = [meta]
         var byteCount = try Data(contentsOf: dir.appendingPathComponent(meta)).count
-        for (craft, file) in pack.icons.sorted(by: { $0.key < $1.key }) {
+        for (craft, file) in pack.icons.merging(pack.documents, uniquingKeysWith: { _, doc in doc }).sorted(by: { $0.key < $1.key }) {
             // Windows accepts PNG, ICO and SVG. Convert Mac-only sources on export.
             let icns = file.pathExtension == "icns"
-            let name = craft + "." + (icns ? "png" : file.pathExtension)
+            let name = (craft.hasPrefix(".") ? "FileTypes/" + String(craft.dropFirst()) : craft) + "." + (icns ? "png" : file.pathExtension)
+            if craft.hasPrefix(".") {
+                try fm.createDirectory(at: dir.appendingPathComponent("FileTypes"), withIntermediateDirectories: true)
+            }
             if icns {
                 guard let image = NSImage(contentsOf: file) else { throw Problem("Unreadable ICNS.") }
                 let png = try Artwork.png(image, pixels: max(256, Artwork.dimension(file)))

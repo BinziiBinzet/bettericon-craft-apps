@@ -7,7 +7,7 @@ copyright Jordan Russell and Martijn Laan. Its original notices are retained in
 the generated installer. Inno Setup is a build-machine tool, not a separate
 runtime prerequisite. See its [license](https://github.com/jrsoftware/issrc/blob/main/license.txt).
 
-## SVG renderer
+## SVG and WebP renderers
 
 The Windows executable embeds the following unmodified NuGet assemblies. They are
 restored only when building locally, from the exact versions and SHA-512 package
@@ -20,7 +20,11 @@ hashes in `SvgDependencies.json`. No separate SVG software is required at runtim
 | System.Memory | 4.5.5 | MIT | https://github.com/dotnet/corefx |
 | System.Buffers | 4.5.1 | MIT | https://github.com/dotnet/corefx |
 | System.Numerics.Vectors | 4.5.0 | MIT | https://github.com/dotnet/corefx |
-| System.Runtime.CompilerServices.Unsafe | 4.5.3 | MIT | https://github.com/dotnet/corefx |
+| System.Runtime.CompilerServices.Unsafe | 5.0.0 | MIT | https://github.com/dotnet/runtime |
+| System.Text.Encoding.CodePages | 5.0.0 | MIT | https://github.com/dotnet/runtime |
+| SixLabors.ImageSharp | 2.1.13 | Apache-2.0 | https://github.com/SixLabors/ImageSharp |
+
+ImageSharp's license and attribution notices accompany the installers in `Licenses/ImageSharp.txt` and `Licenses/ImageSharp-NOTICES.txt`.
 
 SVG.NET copyright 2009 Microsoft, 2011 vvvv Group, 2021 SVG.NET Contributors.
 ExCSS copyright 2024 Tyler Brinks. System libraries copyright Microsoft

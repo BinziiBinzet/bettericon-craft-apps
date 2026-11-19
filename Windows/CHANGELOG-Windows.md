@@ -1,5 +1,37 @@
 # Windows installer changelog
 
+## 1.26.0 - 2026-11-18
+
+- Choose **Refresh available icon packs** from the tray menu to find newly published packs and artwork updates. The app keeps the refreshed list available offline.
+- Both editions start with 39 packs covering 543 app icons. Select a pack to download its artwork or update an existing copy.
+
+## 1.25.0 - 2026-11-18
+
+- Hover over a pack in either dropdown or the tray pack menu to preview up to three icons. ArtCraft Launcher appears first when the pack includes it.
+- The on-demand edition fetches the hovered pack's small WebP and caches it for offline use. The preview appears after decoding and disappears when the pointer leaves. Selecting a pack remains a separate click or Enter action.
+
+## 1.24.0 - 2026-11-18
+
+- Choose between a full installer with all 15 packs and a smaller on-demand installer. Download a pack once to reuse it offline in either picker.
+- Click a pack or highlight it and press Enter to start its download. Both pickers and the tray menu label packs **Download**, **Downloaded**, or **Included**.
+- The bottom progress bar names the pack and shows when BetterIcon is downloading its artwork or loading local previews.
+- Choose separate packs for app shortcuts and ArtCraft project files. Preview and restore Explorer icons for native formats such as `.pcraft` and `.scraft`.
+- Import, edit, and share packs containing app icons, project-file icons, or both.
+
+## 1.23.1 - 2026-11-18
+
+- Clicking the tray icon opens the tab with the larger saved window area. The global keyboard shortcut always opens Launcher. Equal sizes open Launcher.
+
+## 1.23.0 - 2026-11-18
+
+- Resize Launcher and Manage Icons independently. Each tab remembers its window size after restarting. Launcher can shrink to 300 × 240 pixels.
+- Switching tabs expands or shrinks the window around the divider between the two tabs.
+
+## 1.22.0 - 2026-11-18
+
+- Show the current launcher shortcut at the lower left of the Launcher tab. Click it to change or disable the shortcut.
+- Open the BetterIcon GitHub project from the version text on Manage Icons.
+
 ## 1.21.0 - 2026-11-17
 
 - Include matching personal taskbar shortcuts in the Current user Apply and Restore review. Changing a pack updates those pins in place and preserves their original backups.

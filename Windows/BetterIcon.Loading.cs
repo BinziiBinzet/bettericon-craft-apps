@@ -1,12 +1,171 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace BetterIcon.Tray
 {
+    // A native combo changes its selected index while browsing, including on arrow keys.
+    // Only activating a list row or confirming it with Enter may initiate a download.
+    sealed class PackPicker : AppearanceComboBox
+    {
+        [StructLayout(LayoutKind.Sequential)]
+        struct Rect { public int Left, Top, Right, Bottom; }
+        [StructLayout(LayoutKind.Sequential)]
+        struct ComboInfo { public int Size; public Rect Item, Button; public int ButtonState; public IntPtr Combo, Edit, List; }
+        [StructLayout(LayoutKind.Sequential)]
+        struct MouseTracking { public int Size, Flags; public IntPtr Window; public int HoverTime; }
+        [DllImport("user32.dll")] static extern bool GetComboBoxInfo(IntPtr combo, ref ComboInfo info);
+        [DllImport("user32.dll")] static extern bool TrackMouseEvent(ref MouseTracking tracking);
+        [DllImport("user32.dll")] static extern bool ClientToScreen(IntPtr window, ref Point point);
+        [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr hwnd, int msg, IntPtr w, IntPtr l);
+        [DllImport("user32.dll", EntryPoint = "SendMessageW")] static extern IntPtr GetItemRect(IntPtr hwnd, int msg, IntPtr index, ref Rect rect);
+        readonly Rows rows;
+        PackHoverPreview hover;
+        bool browsing, updating;
+        object accepted;
+        public event EventHandler PackChosen;
+        public PackPicker() { rows = new Rows(this); }
+        public void EnablePreviews(PackPreviewStore store) { hover = new PackHoverPreview(store, this); }
+        sealed class Rows : NativeWindow
+        {
+            readonly PackPicker picker;
+            IntPtr? pointer;
+            public Rows(PackPicker owner) { picker = owner; }
+            object Hit(IntPtr point, out Rectangle screen)
+            {
+                screen = Rectangle.Empty;
+                int xy = unchecked((int)point.ToInt64()), x = (short)xy, y = (short)(xy >> 16);
+                int hit = SendMessage(Handle, 0x01A9, IntPtr.Zero, point).ToInt32(); // LB_ITEMFROMPOINT
+                int index = hit & 0xffff;
+                var rect = new Rect();
+                if ((hit >> 16) != 0 || index >= picker.Items.Count || GetItemRect(Handle, 0x0198, (IntPtr)index, ref rect).ToInt64() == -1 ||
+                    x < rect.Left || x >= rect.Right || y < rect.Top || y >= rect.Bottom) return null;
+                var top = new Point(rect.Left, rect.Top);
+                if (!ClientToScreen(Handle, ref top)) return null;
+                screen = new Rectangle(top.X, top.Y, rect.Right - rect.Left, rect.Bottom - rect.Top);
+                return picker.Items[index];
+            }
+            public void ResetHover()
+            {
+                pointer = null;
+                if (picker.hover != null) picker.hover.Clear();
+            }
+            public void RefreshHover()
+            {
+                if (!pointer.HasValue || !picker.browsing || picker.hover == null) return;
+                Rectangle bounds;
+                var theme = Hit(pointer.Value, out bounds) as ThemeEntry;
+                picker.hover.Hover(theme, bounds);
+            }
+            protected override void WndProc(ref Message m)
+            {
+                object clicked = null;
+                Rectangle bounds;
+                if (m.Msg == 0x0202 && picker.browsing) clicked = Hit(m.LParam, out bounds);
+                base.WndProc(ref m);
+                if (clicked != null && !picker.IsDisposed) picker.ChooseItem(clicked);
+                if (!picker.browsing || picker.hover == null) return;
+                switch (m.Msg) {
+                    case 0x0200: // WM_MOUSEMOVE
+                        if (!pointer.HasValue) {
+                            var track = new MouseTracking { Size = Marshal.SizeOf(typeof(MouseTracking)), Flags = 2, Window = Handle };
+                            TrackMouseEvent(ref track);
+                        }
+                        pointer = m.LParam; RefreshHover(); break;
+                    case 0x02A3: case 0x00A0: // WM_MOUSELEAVE, WM_NCMOUSEMOVE (scrollbar)
+                        ResetHover(); break;
+                    case 0x0115: case 0x020A: case 0x0197: // WM_VSCROLL, WM_MOUSEWHEEL, LB_SETTOPINDEX
+                        RefreshHover(); break;
+                }
+            }
+        }
+        protected override void OnDropDown(EventArgs e)
+        {
+            browsing = true;
+            var info = new ComboInfo { Size = Marshal.SizeOf(typeof(ComboInfo)) };
+            if (GetComboBoxInfo(Handle, ref info) && info.List != rows.Handle) {
+                if (rows.Handle != IntPtr.Zero) rows.ReleaseHandle();
+                if (info.List != IntPtr.Zero) rows.AssignHandle(info.List);
+            }
+            base.OnDropDown(e);
+        }
+        protected override void OnDropDownClosed(EventArgs e)
+        {
+            browsing = false;
+            rows.ResetHover();
+            if (!updating) SetSilently(accepted);
+            base.OnDropDownClosed(e);
+        }
+        void SetSilently(object item)
+        {
+            updating = true;
+            try { SelectedItem = item; } finally { updating = false; }
+        }
+        public void ChooseItem(object item)
+        {
+            if (!Enabled || item == null || !Items.Contains(item)) return;
+            bool changed = !Object.Equals(accepted, item);
+            var pack = item as ThemeEntry;
+            accepted = item;
+            if (DroppedDown) DroppedDown = false;
+            SetSilently(item);
+            if (changed || (pack != null && pack.UpdateAvailable)) NotifyChoice();
+        }
+        protected override void OnSelectedIndexChanged(EventArgs e)
+        {
+            base.OnSelectedIndexChanged(e);
+            if (browsing || updating) return;
+            var pack = SelectedItem as ThemeEntry;
+            if (pack != null && pack.NeedsDownload) { SetSilently(accepted); return; }
+            if (Object.Equals(accepted, SelectedItem)) return;
+            accepted = SelectedItem;
+            // Restoring an installed pack can reveal an update. Only an explicit
+            // row click, Enter or tray selection should start that update.
+            if (pack == null || !pack.UpdateAvailable) NotifyChoice();
+        }
+        void NotifyChoice() { var chosen = PackChosen; if (chosen != null) chosen(this, EventArgs.Empty); }
+        void ConfirmRow()
+        {
+            int index = rows.Handle == IntPtr.Zero ? -1 : SendMessage(rows.Handle, 0x0188, IntPtr.Zero, IntPtr.Zero).ToInt32(); // LB_GETCURSEL
+            if (index >= 0 && index < Items.Count) ChooseItem(Items[index]);
+        }
+        protected override bool ProcessCmdKey(ref Message msg, Keys key)
+        {
+            if (browsing && key == Keys.Enter) { ConfirmRow(); return true; }
+            if (!DroppedDown && (key == Keys.Up || key == Keys.Down || key == Keys.Home || key == Keys.End || key == Keys.PageUp || key == Keys.PageDown)) DroppedDown = true;
+            return base.ProcessCmdKey(ref msg, key);
+        }
+        protected override void WndProc(ref Message m)
+        {
+            if (browsing && m.Msg == 0x0100 && m.WParam.ToInt32() == (int)Keys.Enter) { ConfirmRow(); return; }
+            base.WndProc(ref m);
+            if (browsing && (m.Msg == 0x020A || m.Msg == 0x0100 || m.Msg == 0x0115)) rows.RefreshHover();
+        }
+        public void RefreshLabels()
+        {
+            object selected = SelectedItem;
+            updating = true;
+            try { RefreshItems(); SelectedItem = selected; } finally { updating = false; }
+            Invalidate();
+        }
+        protected override void OnHandleDestroyed(EventArgs e)
+        {
+            if (rows != null) rows.ResetHover();
+            if (rows != null && rows.Handle != IntPtr.Zero) rows.ReleaseHandle();
+            base.OnHandleDestroyed(e);
+        }
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && hover != null) { hover.Dispose(); hover = null; }
+            base.Dispose(disposing);
+        }
+    }
+
     public sealed partial class LauncherForm
     {
         readonly TableLayoutPanel loadingPanel = new TableLayoutPanel();
@@ -18,26 +177,38 @@ namespace BetterIcon.Tray
 
         void BuildLoadingIndicator()
         {
-            loadingPanel.Name = "LoadingIndicator"; loadingPanel.Dock = DockStyle.Bottom;
-            loadingPanel.Height = 52; loadingPanel.Padding = new Padding(16, 6, 16, 8);
-            loadingPanel.ColumnCount = 1; loadingPanel.RowCount = 2;
-            loadingPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
-            loadingPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            loadingMessage.Dock = DockStyle.Fill; loadingMessage.Margin = Padding.Empty;
-            loadingMessage.AutoEllipsis = true; loadingMessage.TextAlign = ContentAlignment.MiddleLeft;
-            loadingMessage.AccessibleName = "Loading status";
-            loadingProgress.Dock = DockStyle.Fill; loadingProgress.Margin = Padding.Empty;
-            loadingProgress.Style = ProgressBarStyle.Marquee; loadingProgress.MarqueeAnimationSpeed = 0;
-            loadingProgress.AccessibleName = "BetterIcon is working";
-            loadingPanel.Controls.Add(loadingMessage, 0, 0); loadingPanel.Controls.Add(loadingProgress, 0, 1);
-            loadingPanel.Visible = false; Controls.Add(loadingPanel);
+            ConfigureIndicator(loadingPanel, loadingMessage, loadingProgress);
+            Controls.Add(loadingPanel);
+        }
+        static void ConfigureIndicator(TableLayoutPanel panel, Label label, ProgressBar bar)
+        {
+            panel.Name = "LoadingIndicator"; panel.Dock = DockStyle.Bottom;
+            panel.Height = 52; panel.Padding = new Padding(16, 6, 16, 8);
+            panel.ColumnCount = 1; panel.RowCount = 2;
+            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
+            panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            label.Dock = DockStyle.Fill; label.Margin = Padding.Empty;
+            label.AutoEllipsis = true; label.TextAlign = ContentAlignment.MiddleLeft;
+            bar.Dock = DockStyle.Fill; bar.Margin = Padding.Empty;
+            bar.Style = ProgressBarStyle.Marquee; bar.MarqueeAnimationSpeed = 0;
+            panel.Controls.Add(label, 0, 0); panel.Controls.Add(bar, 0, 1);
+            panel.Visible = false;
+        }
+        static void UpdateIndicator(TableLayoutPanel panel, Label label, ProgressBar bar, bool visible, string message)
+        {
+            if (!String.IsNullOrEmpty(message)) label.Text = label.AccessibleName = bar.AccessibleName = message;
+            bar.MarqueeAnimationSpeed = visible ? 30 : 0;
+            panel.Visible = visible;
+            if (visible) panel.Update();
         }
         void ShowLoading(bool value, string message)
         {
-            if (!String.IsNullOrEmpty(message)) { loadingMessage.Text = message; loadingMessage.AccessibleName = message; }
-            loadingProgress.MarqueeAnimationSpeed = value ? 30 : 0;
-            loadingPanel.Visible = value;
-            if (value) loadingPanel.Update();
+            UpdateIndicator(loadingPanel, loadingMessage, loadingProgress, value, message);
+        }
+        static string PackActivity(ThemeEntry theme)
+        {
+            if (theme == null) return "Loading original file icons...";
+            return (theme.HasDownload ? "Downloading " : "Loading ") + theme.DisplayName + "...";
         }
         void SelectPack()
         {
@@ -118,6 +289,15 @@ namespace BetterIcon.Tray
             }
             finally { packPreview.EndUpdate(); apps.EndUpdate(); }
         }
+        async Task DownloadTheme(ThemeEntry theme)
+        {
+            var reply = await worker.Run(new WorkerRequest { Action = "DownloadPack", Theme = theme.Id }, false);
+            if (reply.DownloadedIcons == null || reply.DownloadedFileIcons == null) throw new IOException("Incomplete downloaded icon pack.");
+            theme.Icons = reply.DownloadedIcons;
+            theme.IconCount = theme.Icons.Length; theme.FileIcons = reply.DownloadedFileIcons;
+            theme.NeedsDownload = false; theme.UpdateAvailable = false; theme.Downloaded = true;
+            themes.RefreshLabels(); BuildTrayMenu();
+        }
         async Task LoadSelectedPack()
         {
             ThemeEntry selected = SelectedTheme;
@@ -126,12 +306,18 @@ namespace BetterIcon.Tray
             AppEntry[] installed = catalog.Apps.ToArray();
             string[] defaults = (preferences.DefaultShortcuts ?? new string[0]).ToArray();
             int size = preferences.IconSize;
-            loadingTheme = selected; SetBusy(true, "Loading " + selected + "...");
+            loadingTheme = selected; SetBusy(true, PackActivity(selected));
             PreparedPack prepared = null;
             try {
                 // Show feedback immediately, then keep file I/O and decoding off the
                 // window thread so painting and the progress animation can continue.
                 await Task.Yield();
+                if (selected.HasDownload) {
+                    await DownloadTheme(selected);
+                    if (IsDisposed || Disposing) return;
+                    status.Text = PackActivity(selected);
+                    ShowLoading(true, status.Text);
+                }
                 using (Icon fallback = (Icon)Icon.Clone())
                     prepared = await Task.Run(() => PreparePack(selected, installed, defaults, size, fallback));
                 if (IsDisposed || Disposing) return;
@@ -143,7 +329,7 @@ namespace BetterIcon.Tray
                     fillingThemes = true;
                     try { themes.SelectedItem = catalog.Themes.FirstOrDefault(theme => theme.Id == previous); }
                     finally { fillingThemes = false; }
-                    Report(error);
+                    ShowLoading(false, null); Report(error);
                 }
             }
             finally {

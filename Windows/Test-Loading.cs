@@ -48,7 +48,7 @@ static class LoadingTests
             try {
                 form.ShowManager(); pages.SelectedIndex = 1; heartbeat.Start();
                 themes.SelectedItem = target;
-                check((bool)Field(form, "busy") && indicator.Visible && progress.Visible && progress.Style == ProgressBarStyle.Marquee && progress.MarqueeAnimationSpeed > 0 && message.Text.Contains(target.ToString()),
+                check((bool)Field(form, "busy") && indicator.Visible && progress.Visible && progress.Style == ProgressBarStyle.Marquee && progress.MarqueeAnimationSpeed > 0 && message.Text == "Loading " + target.DisplayName + "...",
                     "Selecting a pack immediately shows its name and an animated loading indication");
                 check(!themes.Enabled && apps.Enabled && preview.Enabled && ((IconGridView)apps).InputBlocked && ((IconGridView)preview).InputBlocked && !((Control)Field(form, "apply")).Enabled && !((Control)Field(form, "iconSizeSlider")).Enabled,
                     "Loading disables conflicting pack, launch, apply and zoom actions");

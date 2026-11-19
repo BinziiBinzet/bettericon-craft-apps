@@ -4,13 +4,14 @@ Build the tray launcher and a Windows ZIP locally. Convert PNG assets into ICOs
 in the package; leave shared repository artwork unchanged.
 #>
 [CmdletBinding()]
-param([Parameter(Mandatory)][string]$OutputDirectory)
+param([Parameter(Mandatory)][string]$OutputDirectory, [switch]$OnDemand)
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'BetterIcon.Windows.psm1') -Force
 Add-Type -AssemblyName System.IO.Compression,System.IO.Compression.FileSystem
 $output = [IO.Path]::GetFullPath($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputDirectory))
 $null = [IO.Directory]::CreateDirectory($output)
-$name = 'BetterIcon-Craft-Apps-Windows-' + (Get-BetterIconVersion) + '.zip'
+$edition = if ($OnDemand) { '-OnDemand' } else { '' }
+$name = 'BetterIcon-Craft-Apps-Windows-' + (Get-BetterIconVersion) + $edition + '.zip'
 $destination = Join-Path $output $name
 if (Test-Path -LiteralPath $destination) { throw "Package already exists: $destination. Choose another output directory." }
 $files = @('install.ps1','uninstall.ps1','BetterIcon.Windows.psm1','BetterIcon.ShellLink.cs',
@@ -21,6 +22,9 @@ $files = @('install.ps1','uninstall.ps1','BetterIcon.Windows.psm1','BetterIcon.S
     'Start-Tray.cmd','Stop-Tray.cmd','Create-StartMenuShortcut.cmd','Test-Tray.ps1','Test-TrayUI.ps1','Test-TrayUI.cs','BetterIcon.Hotkey.cs','BetterIcon.Packs.cs','BetterIcon.Packs.UI.cs','BetterIcon.Shortcuts.UI.cs','Test-Shortcuts.cs','Test-Packs.cs',
     'BetterIcon.Appearance.cs','Test-Appearance.cs','BetterIcon.Loading.cs','BetterIcon.Window.cs','BetterIcon.Svg.cs','BetterIcon.NativeArtwork.cs','Test-Svg.cs','Test-IconRendering.cs','Restore-SvgDependencies.ps1','SvgDependencies.json','THIRD-PARTY-NOTICES.md','Licenses/SVG.NET.txt','Licenses/ExCSS.txt','Licenses/NET-Foundation.txt','Test-Loading.cs','Build-AppIcon.ps1','Assets/AppIcons/README.md')
 $repository = Get-BetterIconRepository
+$files += @('BetterIcon.ProjectFiles.cs','BetterIcon.ProjectFiles.UI.cs','ProjectFileTypes.json','BetterIcon.OnDemand.ps1','BetterIcon.Catalog.ps1','ArtworkRevision.txt',
+    'Test-ProjectFileIcons.ps1','Test-PackEditions.ps1','Test-PackEditions.cs','BetterIcon.PackPreviews.cs',
+    'PreviewArtworkRevision.txt','Licenses/ImageSharp.txt','Licenses/ImageSharp-NOTICES.txt','Test-HoverPreviews.cs','Test-PackCatalog.ps1')
 $buildDirectory = Join-Path $output ('build-' + [guid]::NewGuid().ToString('N'))
 $build = & (Join-Path $PSScriptRoot 'Build-Tray.ps1') -OutputDirectory $buildDirectory
 $fileCount = 0; $iconCount = 0; $previewCount = 0; $appIconCount = 0
@@ -31,6 +35,19 @@ try {
         foreach ($relative in @($files | Sort-Object -Unique)) {
             $path = Join-Path $PSScriptRoot $relative
             $null = [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $path, 'Windows/' + $relative, [IO.Compression.CompressionLevel]::Optimal)
+            $fileCount++
+        }
+        $previewDir = Join-Path $repository 'PackPreviews'
+        $previewCatalog = Join-Path $previewDir 'catalog.tsv'
+        $previewFiles = @('catalog.tsv')
+        foreach ($row in [IO.File]::ReadAllLines($previewCatalog)) {
+            $parts = $row.Split([char]9)
+            if ($parts.Count -ne 5 -or $parts[1] -cnotmatch '^[A-Za-z0-9-]+\.webp$' -or
+                (Get-FileHash -LiteralPath (Join-Path $previewDir $parts[1])).Hash -ine $parts[2]) { throw 'Invalid hover preview artwork.' }
+            if (!$OnDemand) { $previewFiles += $parts[1] }
+        }
+        foreach ($file in $previewFiles) {
+            [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive,(Join-Path $previewDir $file),('PackPreviews/'+$file))
             $fileCount++
         }
         foreach ($relative in @('README.md','LICENSE')) {
@@ -45,8 +62,24 @@ try {
             $null = [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $path.FullName, 'Windows/Assets/AppIcons/' + $relative, [IO.Compression.CompressionLevel]::Optimal)
             $fileCount++; $appIconCount++
         }
-        foreach ($theme in @(Get-BetterIconTheme)) {
-            foreach ($icon in @(Get-BetterIconThemeIcon -Theme $theme.Id)) {
+        $catalog = Join-Path $PSScriptRoot 'PackCatalog.tsv'
+        $rows = [IO.File]::ReadAllLines($catalog)
+        if ($rows[0] -cne ([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'ArtworkRevision.txt'))).Trim()) { throw 'Incorrect seed artwork revision.' }
+        foreach ($row in $rows[1..($rows.Count-1)]) {
+            $parts = $row.Split([char]9)
+            if ($parts.Count -ne 4 -or (Get-FileHash -LiteralPath (Join-Path $repository $parts[2]) -Algorithm SHA256).Hash -ine $parts[3]) { throw "Artwork mismatch: $row" }
+        }
+        $catalogName = if ($OnDemand) { 'OnDemand.tsv' } else { 'Included.tsv' }
+        [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive,$catalog,('Windows/' + $catalogName))
+        $fileCount++
+        foreach ($theme in @(if (!$OnDemand) { Get-BetterIconTheme -LocalArtworkOnly })) {
+            $folder = $theme.Path.Substring($repository.TrimEnd('\','/').Length).TrimStart('\','/').Replace('\','/')
+            foreach ($project in $theme.FileIcons.GetEnumerator()) {
+                $file = $folder + '/FileTypes/' + $project.Key.Substring(1) + [IO.Path]::GetExtension($project.Value)
+                [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $project.Value, $file)
+                $fileCount++
+            }
+            foreach ($icon in @(Get-BetterIconThemeIcon -InputObject $theme)) {
                 # Preserve the repository's public directory names independently
                 # of stable Windows preference IDs.
                 $folder = $theme.Path.Substring($repository.TrimEnd('\','/').Length).TrimStart('\','/').Replace('\','/')
