@@ -1,26 +1,43 @@
-# BetterIcon-Craft Apps
+# BetterIcon for ArtCraft
 
-BetterIcon launches installed ArtCraft apps and manages their icons on Windows, Mac and Linux. The Linux desktop app applies themes to desktop entries for the current user. The original Linux terminal icon installer is also included.
+BetterIcon puts your installed ArtCraft apps in one launcher, accessible from the Windows or Linux system tray and the macOS menu bar. You can give the apps a new set of icons and choose different artwork for their project files.
 
-Get the Windows, macOS, or Linux installer and its SHA-256 checksum from the [BetterIcon 1.26.0 release](https://github.com/BinziiBinzet/bettericon-craft-apps/releases/tag/v1.26.0).
+**[Download BetterIcon 1.26.0 for Windows, macOS, or Linux](https://github.com/BinziiBinzet/bettericon-craft-apps/releases/tag/v1.26.0)**. Each platform has two editions, with SHA-256 checksums on the release page.
 
 - **Bundled** includes all 39 icon packs and their previews for offline use.
-- **On-demand** starts with the pack list. Hover over a pack for a small preview, then click it or press Enter to download its artwork.
+- **On-demand** starts with the pack list and downloads the full artwork when you select a pack.
 
-Resize **Launcher** and **Manage Icons** independently. Switching tabs keeps their divider in place. The tray or menu bar icon opens the larger saved tab, with Launcher winning a tie. The keyboard shortcut always opens Launcher. Click the shortcut in its lower-left corner to change it.
+## BetterIcon in action
 
-## Key Features
+### Launch an app from the keyboard
 
-- **Universal DE Support:** Works on KDE Plasma, GNOME, Cinnamon, XFCE, i3, Hyprland, and more.
-- **Safe Rollback:** Automatic backup and one-command restore via `uninstall.sh`.
-- **Clear Status Log:** Visual table showing which apps are ready, missing icons, or not installed.
-- **Windows Support:** A tray popup for installed apps, PNG/ICO theme previews, separate current-user/all-users scopes, and original-shortcut restoration.
+Press your launcher shortcut, type the first few letters of an app name, and press **Enter** or **Return**. In the Windows example below, typing `fil` selects FilmCraft from a grid of **HyGel** icons by OmegaDarling. You can also double-click a tile. To change the shortcut, click it in the lower-left corner.
 
-The nine themes in [Craft-Icons-OmegaDarling](Craft-Icons-OmegaDarling/) are by **OmegaDarling**. Each contains 20 icons, including ArtCraft Launcher. Existing `Craft-Icons-Zach` theme IDs remain compatible.
+<img src="docs/screenshots/launcher-windows.webp" width="720" alt="Windows Launcher showing 12 ArtCraft apps in two rows with OmegaDarling’s HyGel icons and a Ctrl+Alt+A shortcut in the lower left.">
+
+Each tab remembers its window size. You can keep **Launcher** compact and give **Manage Icons** more room. The divider stays in place when you switch. The tray or menu bar icon opens the larger tab (Launcher on a tie), and the keyboard shortcut always opens Launcher.
+
+### Choose different icons for apps and project files
+
+In **Manage Icons**, pick an app pack to preview its artwork, then choose **Apply icons** to review the changes. The macOS example pairs OmegaDarling’s **Cardboard** app icons with **Mascots** by 4NovemberKilo for project files, including PhotoCraft’s `.pcraft` and SoundCraft’s `.scraft`.
+
+<img src="docs/screenshots/manage-icons-macos.webp" width="720" alt="macOS Manage Icons showing Cardboard animal artwork in the app grid and a separate Mascots pack with previews for seven project file types.">
+
+On macOS, **Choose project files** lets you pick individual documents in Finder. On Windows and Linux, you can apply icons by project file type. You can restore the original app or file icons independently, or import your own artwork and share a personal pack as a ZIP.
+
+### Preview a pack before downloading it
+
+Hover over a pack name to see up to three sample icons. ArtCraft Launcher appears first when the pack includes it. In the Linux example, **Cardboard** is marked **Downloaded**, while **Chrome Glass** by Mains still says **Download** even with its preview open. Click the pack or press **Enter** to download its full artwork.
+
+<img src="docs/screenshots/pack-preview-linux.webp" width="720" alt="Linux pack menu with Cardboard marked Downloaded and Chrome Glass marked Download. Three Chrome Glass animal icons appear beside the highlighted row.">
+
+The progress bar shows when artwork is downloading or loading from disk. To check for new packs and updates, right-click the tray or menu bar icon and choose **Refresh available icon packs**.
 
 ## Community icon packs
 
-The selected ArtCraft Discord artwork is organized by the posting creator. Each style folder contains app-named PNGs and a BetterIcon pack description. The folders can be imported individually in Manage Icons. Choose **Refresh available icon packs** from the tray or menu bar to check for new packs and updates.
+The nine themes in [Craft-Icons-OmegaDarling](Craft-Icons-OmegaDarling/) are by **OmegaDarling**. Each contains 20 icons, including ArtCraft Launcher. Existing `Craft-Icons-Zach` theme IDs remain compatible.
+
+The selected ArtCraft Discord artwork is organized by the posting creator. Each style folder contains app-named PNGs and a BetterIcon pack description. The folders can be imported individually in Manage Icons.
 
 | Creator | Collection |
 | --- | --- |
@@ -35,25 +52,24 @@ The selected ArtCraft Discord artwork is organized by the posting creator. Each 
 | Cryogenn | [ArtCraft iconPackage](Craft-Icons-Cryogenn/) |
 | Mike22 | [CraftApps AIO November](Craft-Icons-Mike22/) |
 
-The circleb Origami Animals set is a separate import ZIP in the existing circleb folder. VimiummuimiV and Mike22 also supplied file-type artwork, which is preserved in their source archives. BetterIcon lets you choose separate packs for apps and ArtCraft project files.
+The circleb Origami Animals set is a separate import ZIP in the existing circleb folder. VimiummuimiV and Mike22 also supplied file-type artwork, which is preserved in their source archives.
 
 Credits, source links, inferred app assignments, and artwork notes appear in each creator folder.
 
 ## Supported Applications
 
-Supports all official Artcraft Crafting Apps.
+BetterIcon recognizes the official ArtCraft apps, including ArtCraft Launcher, FilmCraft, PhotoCraft, PdfCraft, SoundCraft, and VectorCraft. The Launcher tab shows the ones installed on your computer.
 
 ## How to Run
 
 ### Linux
 
 - Extract the graphical Linux package and run `./install.sh` to add **BetterIcon for ArtCraft** to Applications and the system tray. Press **Ctrl+Alt+A** to open Launcher. [Linux guide](Linux/README.md)
-- The terminal icon installer and restore scripts in a source checkout are `Linux/install.sh` and `Linux/uninstall.sh`.
+- The original terminal installer, `Linux/install.sh`, reports which apps it finds and backs up their desktop entries. Run `Linux/uninstall.sh` to restore them. The scripts support KDE Plasma, GNOME, Cinnamon, XFCE, i3, and Hyprland.
 
 ### Windows
 
-- Run either Windows installer to add BetterIcon and its Start menu shortcut. A source checkout also includes `Windows/Start-Tray.cmd`.
-- On **Launcher**, type to narrow the list, then press Enter or double-click an app. Open **Manage Icons** to preview packs and review artwork changes. Click the tray icon again to close the popup.
+- Run either Windows installer to add BetterIcon and its Start menu shortcut. Click the tray icon to open or close the popup. A source checkout also includes `Windows/Start-Tray.cmd`.
 - **Restore original icons** restores the saved shortcuts. Shared shortcuts request administrator access only when applying or restoring.
 - Share personal packs with **Manage Icons → Export ZIP**. Recipients use **Import ZIP** to load the artwork and its credits.
 - The command-line installers remain available as `Windows/Install-Windows.cmd` and `Windows/Restore-Windows.cmd`.
