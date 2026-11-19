@@ -236,16 +236,19 @@ func run(args []string) (any, error) {
 	switch args[2] {
 	case "refresh":
 		err = l.refresh()
+		if err == nil {
+			l, err = openLibrary(args[0], args[1])
+		}
 	case "acquire":
 		if len(args) != 4 {
 			return nil, errors.New("Missing pack")
 		}
-		err = l.acquire(args[3])
+		err = l.acquire(l.currentID(args[3]))
 	case "preview":
 		if len(args) != 4 {
 			return nil, errors.New("Missing preview")
 		}
-		return l.thumbnail(args[3])
+		return l.thumbnail(l.currentID(args[3]))
 	case "list":
 	default:
 		return nil, errors.New("Unknown catalog operation")

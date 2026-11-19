@@ -1,6 +1,8 @@
 # BetterIcon for Mac
 
-BetterIcon 1.26.0 is a Universal app for Apple silicon and Intel Macs running macOS 12.4 or later. Choose Bundled for all 39 packs and their previews offline, or OnDemand to download individual packs.
+BetterIcon 1.26.1 is a Universal app for Apple silicon and Intel Macs running macOS 12.4 or later. Choose Bundled for all 32 packs and their previews offline, or OnDemand to download individual packs.
+
+VimiummuimiV’s eight Modern Flat variants now appear as one 13-icon pack. BetterIcon remembers the selection separately for app and project file icons. If your downloaded artwork differs, it stays usable offline and shows **Update available** until you select the pack.
 
 ## Install and use
 
@@ -35,11 +37,11 @@ Preferences, personal packs, and verified originals live in `~/Library/Applicati
 
 ## Local builds and checks
 
-Build on a Mac with Xcode Command Line Tools and Go 1.25. The build uses the verified Windows 1.26.0 bundled artwork ZIP or a checkout containing the source images. Go and Python are build tools. The installed app includes its catalog helper.
+Build on a Mac with Xcode Command Line Tools and Go 1.25. The build uses the verified Windows 1.26.1 bundled artwork ZIP or a checkout containing the source images. Go and Python are build tools. The installed app includes its catalog helper.
 
 ~~~sh
-./build.sh "$HOME/Downloads/BetterIcon-Bundled" /path/to/Windows-1.26.0.zip Bundled
-./build.sh "$HOME/Downloads/BetterIcon-OnDemand" /path/to/Windows-1.26.0.zip OnDemand
+./build.sh "$HOME/Downloads/BetterIcon-Bundled" /path/to/Windows-1.26.1.zip Bundled
+./build.sh "$HOME/Downloads/BetterIcon-OnDemand" /path/to/Windows-1.26.1.zip OnDemand
 ./test.sh "$HOME/Downloads/BetterIcon-Bundled/BetterIcon.app"
 ./test.sh "$HOME/Downloads/BetterIcon-OnDemand/BetterIcon.app"
 ~~~

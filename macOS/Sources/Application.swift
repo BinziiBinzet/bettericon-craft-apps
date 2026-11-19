@@ -99,6 +99,22 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
         library.projectKeys = Set(published.formats.map(\.Key))
         library.projectApps = Set(published.formats.map(\.Application))
         super.init()
+        migratePackSelections()
+    }
+
+    private func migratePackSelections() {
+        var changed = false
+        for pack in builtins where !pack.previousIDs.isEmpty {
+            if pack.previousIDs.contains(prefs.selected) {
+                prefs.selected = pack.id
+                changed = true
+            }
+            if let id = prefs.fileSelected, pack.previousIDs.contains(id) {
+                prefs.fileSelected = pack.id
+                changed = true
+            }
+        }
+        if changed { savePrefs() }
     }
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -490,6 +506,7 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
         background("Refreshing available icon packs…", work: { try self.published.list("refresh") }) { rows in
             self.builtins = rows
             self.status = "Available icon packs refreshed."
+            self.migratePackSelections()
         }
     }
     private func preview(_ id: String, token: Int) {

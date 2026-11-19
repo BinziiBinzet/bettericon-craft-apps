@@ -1,6 +1,8 @@
 # BetterIcon for Linux
 
-BetterIcon 1.26.0 launches installed ArtCraft desktop apps and manages their icons from the **Launcher** and **Manage Icons** tabs. The Bundled edition includes all 39 packs and small previews. The OnDemand edition downloads a pack when you click its name or press Enter. Both packages include catalog helpers for ARM64 and x86-64. Starting in the tray loads the window interface only when you first open it. The interface uses software rendering.
+BetterIcon 1.26.1 launches installed ArtCraft desktop apps and manages their icons from the **Launcher** and **Manage Icons** tabs. The Bundled edition includes all 32 packs and small previews. The OnDemand edition downloads a pack when you click its name or press Enter. Both packages include catalog helpers for ARM64 and x86-64. Starting in the tray loads the window interface only when you first open it. The interface uses software rendering.
+
+VimiummuimiV’s eight Modern Flat variants now appear as one 13-icon pack. BetterIcon remembers the selection separately for app and project file icons. If your downloaded artwork differs, it stays usable offline and shows **Update available** until you select the pack.
 
 ## Install
 
@@ -28,6 +30,6 @@ To uninstall the app, use `./uninstall.sh` from the extracted package. The insta
 
 ## Build from source
 
-With Go 1.25 on PATH, build each edition locally using Python 3.11 or newer. From a project-specific virtual environment run `python Linux/build-desktop.py /path/to/Windows-1.26.0.zip /path/to/output --edition Bundled` and repeat with `--edition OnDemand`. The build verifies artwork against the pack and preview manifests and emits an archive and SHA-256 checksum. In a source checkout, `Linux/install.sh` and `Linux/uninstall.sh` remain the legacy terminal icon installation and restore tools.
+With Go 1.25 on PATH, build each edition locally using Python 3.11 or newer. From a project-specific virtual environment run `python Linux/build-desktop.py /path/to/Windows-1.26.1.zip /path/to/output --edition Bundled` and repeat with `--edition OnDemand`. The build verifies artwork against the pack and preview manifests and emits an archive and SHA-256 checksum. In a source checkout, `Linux/install.sh` and `Linux/uninstall.sh` remain the legacy terminal icon installation and restore tools.
 
 Run `bash Linux/test-desktop.sh /path/to/extracted-package` for the X11 desktop suite. On a machine with Mutter and XWayland, add `--mutter-resize` to exercise pointer drags in GNOME’s compositor using a private virtual display. Both modes use a temporary user profile.

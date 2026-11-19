@@ -67,7 +67,11 @@ func startBetterIcon() throws {
             return
         }
         let apps = install.catalog.discover(extraFolders: folders)
-        let matches = packs.filter { $0.id == packName || $0.title == packName || $0.name == packName }
+        let matches = packs.filter { pack in
+            guard let packName else { return false }
+            return pack.id == packName || pack.title == packName || pack.name == packName
+                || pack.previousIDs.contains { $0 == packName || ($0 as NSString).lastPathComponent == packName }
+        }
         guard restore || matches.count == 1 else { throw Problem("Specify a pack ID from --list-packs.") }
         let pack = matches.first ?? .defaults
         if !restore && pack.status == "Download" { throw Problem("Select this pack in Manage Icons to download it first.") }

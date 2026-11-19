@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -46,9 +48,22 @@ type library struct {
 }
 type view struct {
 	ID, Name, Author, Status      string
+	PreviousIDs                   []string `json:",omitempty"`
 	Icons, FileIcons              map[string]string
 	CanApps, CanFiles, HasPreview bool
 }
+
+const modernFlat = "Craft-Icons-VimiummuimiV/Modern Flat"
+
+var modernFlatVariants = func() []string {
+	var ids []string
+	for _, effect := range []string{"Wand", "Bolt", "Spark", "Sliders"} {
+		for _, sound := range []string{"Knob", "Sliders"} {
+			ids = append(ids, modernFlat+" - "+effect+" - "+sound)
+		}
+	}
+	return ids
+}()
 
 var hex40 = regexp.MustCompile("^[0-9a-f]{40}$")
 var hex64 = regexp.MustCompile("^[0-9a-f]{64}$")
@@ -194,6 +209,18 @@ func openLibrary(resources, state string) (*library, error) {
 			l.latest = s
 		}
 	}
+	// Keep the seed intact: its original paths identify the bundled files.
+	flat, merged := l.latest.Packs[modernFlat]
+	if !merged {
+		flat, merged = l.seed.Packs[modernFlat]
+	}
+	if merged {
+		l.latest.Packs = maps.Clone(l.latest.Packs)
+		l.latest.Packs[modernFlat] = flat
+		for _, id := range modernFlatVariants {
+			delete(l.latest.Packs, id)
+		}
+	}
 	b, err = os.ReadFile(filepath.Join(folder, "previews.tsv"))
 	if err != nil {
 		return nil, err
@@ -222,6 +249,38 @@ func (p pack) signature() string {
 	}
 	sort.Strings(keys)
 	return checksum([]byte(strings.Join(keys, "\n")))
+}
+
+// Old receipts include the original directory in their cache signature. Compare
+// the files inside the pack without changing that signature or moving artwork.
+func (p pack) sameArtwork(other pack) bool {
+	if p.ID == other.ID {
+		return p.signature() == other.signature()
+	}
+	if len(p.Assets) != len(other.Assets) {
+		return false
+	}
+	type file struct {
+		name     string
+		document bool
+	}
+	blobs := make(map[file]string, len(p.Assets))
+	for _, a := range p.Assets {
+		blobs[file{path.Base(a.File), a.Document}] = a.Blob
+	}
+	for _, a := range other.Assets {
+		if blobs[file{path.Base(a.File), a.Document}] != a.Blob {
+			return false
+		}
+	}
+	return true
+}
+
+func (l *library) currentID(id string) string {
+	if _, merged := l.latest.Packs[modernFlat]; merged && slices.Contains(modernFlatVariants, id) {
+		return modernFlat
+	}
+	return id
 }
 func (l *library) filesPresent(p pack) bool {
 	root := filepath.Join(l.state, "downloads", p.signature())
@@ -257,6 +316,35 @@ func (l *library) acquired() map[string]pack {
 	}
 	return saved
 }
+
+type localPack struct {
+	pack
+	root, status string
+}
+
+func (l *library) localArtwork(target pack, previous []string, saved map[string]pack) localPack {
+	var fallback localPack
+	for _, id := range append([]string{target.ID}, previous...) {
+		var copies []localPack
+		if p, ok := saved[id]; ok {
+			copies = append(copies, localPack{p, filepath.Join(l.state, "downloads", p.signature()), "Downloaded"})
+		}
+		if p, ok := l.seed.Packs[id]; l.bundled && ok {
+			copies = append(copies, localPack{p, filepath.Join(l.resources, "Packs"), "Included"})
+		}
+		for _, copy := range copies {
+			if target.sameArtwork(copy.pack) {
+				return copy
+			}
+			if fallback.root == "" {
+				fallback = copy
+				fallback.status = "Update available"
+			}
+		}
+	}
+	return fallback
+}
+
 func (l *library) list() []view {
 	saved := l.acquired()
 	available := map[string]pack{}
@@ -273,7 +361,13 @@ func (l *library) list() []view {
 	}
 	result := make([]view, 0, len(available))
 	for id, p := range available {
+		if l.currentID(id) != id {
+			continue
+		}
 		v := view{ID: id, Name: p.Name, Author: p.Author, Status: "Download", Icons: map[string]string{}, FileIcons: map[string]string{}}
+		if _, merged := l.latest.Packs[modernFlat]; id == modernFlat && merged {
+			v.PreviousIDs = modernFlatVariants
+		}
 		_, v.HasPreview = l.previews[id]
 		for _, a := range p.Assets {
 			if a.Document {
@@ -288,22 +382,9 @@ func (l *library) list() []view {
 				}
 			}
 		}
-		local, ok := saved[id]
-		root := ""
-		seed, included := l.seed.Packs[id]
-		matches := l.bundled && included && seed.signature() == p.signature()
-		if ok && (local.signature() == p.signature() || !matches) {
-			root = filepath.Join(l.state, "downloads", local.signature())
-			v.Status = "Downloaded"
-		} else if l.bundled && included {
-			local = seed
-			root = filepath.Join(l.resources, "Packs")
-			v.Status = "Included"
-		}
-		if root != "" {
-			if local.signature() != p.signature() {
-				v.Status = "Update available"
-			}
+		local := l.localArtwork(p, v.PreviousIDs, saved)
+		if local.root != "" {
+			v.Status = local.status
 			// Prefer PNG when an artist supplies several formats.
 			for _, ext := range []string{".ico", ".svg", ".png"} {
 				for _, a := range local.Assets {
@@ -314,7 +395,7 @@ func (l *library) list() []view {
 					if a.Document {
 						files = v.FileIcons
 					}
-					files[a.Key] = filepath.Join(root, filepath.FromSlash(a.File))
+					files[a.Key] = filepath.Join(local.root, filepath.FromSlash(a.File))
 				}
 			}
 		}
