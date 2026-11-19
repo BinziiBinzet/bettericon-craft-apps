@@ -11,6 +11,8 @@ Choose an installer for Windows 10/11 with .NET Framework 4.8 or later.
 
 Click the repeat-arrows button beside the App icon pack picker to **Refresh available icon packs**. The system tray menu offers the same command. Both editions remember the refreshed list offline. New packs are marked **Download**. Packs you already have can show **Update available**. Choose one to fetch its updated artwork. Refreshing the list preserves your current app and file icon selections.
 
+Starting in 1.26.3, BetterIcon checks at launch and about every 30 minutes while running. A dot on the refresh button means there are new or updated packs to review. Click the button to refresh the list, then select the packs you want to download.
+
 Open **BetterIcon** from Start. Both editions install for your Windows account and offer an optional desktop shortcut. The setup is unsigned, so Windows may show an unknown-publisher or SmartScreen notice.
 
 Run a newer Setup to upgrade. Finish any icon operation and close BetterIcon's dialogs first; Setup waits for a graceful exit and refuses to continue if the app stays busy. It never force-terminates BetterIcon. Preferences, personal packs, shortcut backups, and already-applied icons are preserved. Setup registers BetterIcon in **Settings > Apps > Installed apps** for normal removal. Uninstall preserves those same files so existing shortcuts retain their icons and a reinstall can recover your preferences. It does not restore ArtCraft shortcuts; use BetterIcon's Restore actions before uninstalling if that is what you want.

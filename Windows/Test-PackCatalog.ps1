@@ -33,9 +33,12 @@ try {
     [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($art)); [IO.File]::WriteAllText($art,'before')
     & $module {
         $script:TestRef='2'*40
+        $script:TestOffline=$false
+        $script:TestTreeReads=0
         function script:Get-PublishedPackText([string]$Url) {
+            if ($script:TestOffline) { throw 'Fixture is offline.' }
             if ($Url.EndsWith('/ref/heads/main')) { return (@{object=@{type='commit';sha=$script:TestRef}} | ConvertTo-Json) }
-            if ($Url -like '*/trees/*') { return $script:TestTree }
+            if ($Url -like '*/trees/*') { $script:TestTreeReads++; return $script:TestTree }
             throw 'No preview index in this fixture.'
         }
     }
@@ -44,14 +47,55 @@ try {
         & $module { param($r,$j) $script:TestRef=$r; $script:TestTree=$j } $Rev $json
     }
     SetTree ('2'*40) @($updated,$new,$ignore)
+    $observed=Get-BetterIconPackUpdates
+    Check ($observed.Count -eq 2 -and $observed.Revision -ceq ('2'*40) -and $observed.Baseline -cmatch '^[a-f0-9]{64}$') 'Background check detects both changed artwork and a new file-only pack'
+    Check (!(Test-Path -LiteralPath $state)) 'Background check leaves the catalog and artwork caches untouched'
+    $beforeReads=& $module { $script:TestTreeReads }
+    $repeated=Get-BetterIconPackUpdates -Previous $observed
+    Check ($repeated.Count -eq 2 -and (& $module { $script:TestTreeReads }) -eq $beforeReads) 'Matching revision and baseline reuse the result without a second tree fetch'
+    $wrongBaseline=[pscustomobject]@{ Revision=$observed.Revision; Baseline=('0'*64); Count=99 }
+    $rechecked=Get-BetterIconPackUpdates -Previous $wrongBaseline
+    Check ($rechecked.Count -eq 2 -and (& $module { $script:TestTreeReads }) -eq ($beforeReads+1)) 'Mismatched baseline forces an artwork comparison'
+    $beforeReads=& $module { $script:TestTreeReads }
+    $invalidCount=[pscustomobject]@{ Revision=$observed.Revision; Baseline=$observed.Baseline; Count=-1 }
+    $rechecked=Get-BetterIconPackUpdates -Previous $invalidCount
+    Check ($rechecked.Count -eq 2 -and (& $module { $script:TestTreeReads }) -eq ($beforeReads+1)) 'Invalid cached count forces an artwork comparison'
+
+    $snapshot=Join-Path $state 'pack-catalog/latest.tsv'
+    [void][IO.Directory]::CreateDirectory((Split-Path -Parent $snapshot))
+    $wrongSeedRows=@(& $module { param($items) ConvertTo-PackCatalogRows $items } @($updated,$new))
+    [IO.File]::WriteAllLines($snapshot,[string[]](@(('2'*40) + [char]9 + ('9'*40)) + $wrongSeedRows))
+    $unchangedSnapshot=(Get-FileHash $snapshot).Hash
+    $rechecked=Get-BetterIconPackUpdates
+    Check ($rechecked.Count -eq 2 -and (Get-FileHash $snapshot).Hash -eq $unchangedSnapshot) 'A snapshot from another seed is ignored without being rewritten'
+
     Update-BetterIconPackCatalog
+    $beforeReads=& $module { $script:TestTreeReads }
+    $acknowledged=Get-BetterIconPackUpdates -Previous $observed
+    Check ($acknowledged.Count -eq 0 -and $acknowledged.Baseline -cne $observed.Baseline -and
+           (& $module { $script:TestTreeReads }) -eq $beforeReads) 'Manual refresh acknowledges the pending revision even with a previous positive check'
+    $digest=(Get-FileHash $snapshot).Hash
+    SetTree ('6'*40) @($updated,$new,$ignore)
+    $beforeReads=& $module { $script:TestTreeReads }
+    $unrelatedCheck=Get-BetterIconPackUpdates -Previous $observed
+    Check ($unrelatedCheck.Count -eq 0 -and $unrelatedCheck.Revision -ceq ('6'*40) -and
+           (& $module { $script:TestTreeReads }) -eq ($beforeReads+1)) 'An unrelated commit with the same pack artwork does not raise the badge'
+    SetTree ('7'*40) @($new)
+    $removedCheck=Get-BetterIconPackUpdates -Previous $unrelatedCheck
+    Check ($removedCheck.Count -eq 0 -and (Get-FileHash $snapshot).Hash -eq $digest) 'Removal-only changes do not raise the badge or overwrite the acknowledged list'
+    & $module { $script:TestOffline=$true }
+    $offline=$false; try { $null=Get-BetterIconPackUpdates -Previous $observed } catch { $offline=$true }
+    & $module { $script:TestOffline=$false }
+    Check ($offline -and (Get-FileHash $snapshot).Hash -eq $digest) 'An offline check reports failure and keeps the acknowledged list'
+
     $themes=@(Get-BetterIconTheme); $old=$themes | Where-Object Id -eq 'Craft-Icons-Example/Ink'
     $other=$themes | Where-Object Id -eq 'Craft-Icons-Other Artist/New theme'
     Check ($themes.Count -eq 2 -and $old.UpdateAvailable -and $old.Status -eq 'Available' -and (Test-Path (Join-Path $old.Path 'PhotoCraft.png'))) 'Revised artwork retains the usable included copy until explicitly selected'
     Check ($other.Status -eq 'Download' -and !$other.IconCount -and $other.FileIcons.ContainsKey('.pcraft')) 'A new file-only pack is discoverable and unrelated preview sheets are ignored'
     Check (!(Test-Path (Join-Path $state 'downloads'))) 'Checking the list creates no full-pack cache'
-    $snapshot=Join-Path $state 'pack-catalog/latest.tsv'; $digest=(Get-FileHash $snapshot).Hash
     SetTree ('3'*40) @($new) $true
+    $failed=$false; try { $null=Get-BetterIconPackUpdates -Previous $observed } catch { $failed=$true }
+    Check ($failed -and (Get-FileHash $snapshot).Hash -eq $digest) 'A truncated background check rejects partial metadata without changing the acknowledged list'
     $failed=$false; try { Update-BetterIconPackCatalog } catch { $failed=$true }
     Check ($failed -and (Get-FileHash $snapshot).Hash -eq $digest) 'A truncated server tree leaves the saved catalog intact'
     $target=& $module { (Get-DownloadCatalog)['Craft-Icons-Example/Ink'] }

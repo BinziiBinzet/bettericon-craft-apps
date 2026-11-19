@@ -53,13 +53,8 @@ function Get-DownloadCatalog {
     $latest = $seed
     $folder = Join-Path $state 'pack-catalog'
     $snapshot = Join-Path $folder 'latest.tsv'
-    if ([IO.File]::Exists($snapshot)) {
-        $lines = [IO.File]::ReadAllLines($snapshot)
-        $header = if ($lines.Count) { $lines[0].Split([char]9) }
-        if ($lines.Count -gt 1 -and $header.Count -eq 2 -and $header[1] -ceq $seedLines[0]) {
-            try { $latest = Read-PackSnapshot $lines $state } catch { Write-Verbose $_.Exception.Message }
-        }
-    }
+    $saved = Read-RefreshedPackSnapshot $snapshot $state $seedLines[0]
+    if ($saved) { $latest = $saved.Packs }
     if (![object]::ReferenceEquals($latest,$seed)) {
         foreach ($id in @($latest.Keys)) {
             if ($seed.Contains($id) -and $seed[$id].Signature -ceq $latest[$id].Signature) { $latest[$id]=$seed[$id] }

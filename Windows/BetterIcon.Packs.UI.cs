@@ -260,6 +260,14 @@ namespace BetterIcon.Tray
             GraphicsState saved = canvas.Save();
             try {
                 canvas.SmoothingMode = SmoothingMode.AntiAlias;
+                if (packUpdateCheck != null && packUpdateCheck.Count > 0) {
+                    float diameter = Math.Max(5f, 7f * scale);
+                    float inset = Math.Max(2f, 2.5f * scale);
+                    var badge = new RectangleF(button.ClientSize.Width - inset - diameter, inset, diameter, diameter);
+                    Color accentColor = appearancePalette == null ? SystemColors.Highlight : appearancePalette.Accent;
+                    using (var fill = new SolidBrush(accentColor)) canvas.FillEllipse(fill, badge);
+                    using (var edge = new Pen(button.ForeColor)) canvas.DrawEllipse(edge, badge);
+                }
                 canvas.TranslateTransform(button.ClientSize.Width / 2f - 12f * scale, button.ClientSize.Height / 2f - 12f * scale);
                 canvas.ScaleTransform(scale, scale);
                 using (Pen pen = new Pen(color, 2f) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round }) {

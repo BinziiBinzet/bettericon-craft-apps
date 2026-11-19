@@ -264,7 +264,7 @@ static partial class PackEditionTests
                 Wait(() => !Field<bool>(form, "busy"));
                 int after = combo.Items.OfType<ThemeEntry>().Count(t => !t.IsDefault);
                 Check(refresh.Enabled && File.Exists(snapshot) && after >= 32 && Find(combo, id) != null,
-                    "The button reads the public catalog, refreshes the app dropdown (" + before + " to " + after + ") and is ready to use again");
+                    "The button reads the public catalog, refreshes the app dropdown (" + before + " to " + after + ") and is ready to use again. " + Field<Label>(form, "status").Text);
                 Check(MenuLabel(form, Find(combo, id)) == Find(combo, id).ToString(), "The tray theme menu shows the refreshed entry and its availability");
                 var dialog = typeof(LauncherForm).GetNestedType("ProjectFileDialog", BindingFlags.NonPublic);
                 using (var files = (Form)Activator.CreateInstance(dialog, new object[] { form, null })) {
@@ -272,8 +272,115 @@ static partial class PackEditionTests
                 }
                 Check(!Directory.Exists(Path.Combine(state, "downloads")) && !Directory.Exists(Path.Combine(state, "pack-previews")), "Refreshing requests metadata without downloading packs or WebP artwork");
                 Check(prefs.SequenceEqual(File.ReadAllBytes(Path.Combine(state, "tray-preferences.json"))), "Refreshing preserves the app and file pack preferences");
+                string newPackLabel = Find(combo, id).ToString();
+                string updatedPackLabel = Find(combo, "Craft-Icons-Komplett/Standard").ToString();
+                typeof(LauncherForm).GetMethod("ExitLauncher", Fields).Invoke(form, null);
+                CheckUpdateBadge(windows, state, fixture, snapshot, newPackLabel, updatedPackLabel);
                 Offline();
+                continue;
             }
+            typeof(LauncherForm).GetMethod("ExitLauncher", Fields).Invoke(form, null);
+        }
+    }
+
+    static int PackUpdateCount(LauncherForm form)
+    {
+        var check = Field<PackUpdateCheck>(form, "packUpdateCheck");
+        return check == null ? 0 : check.Count;
+    }
+
+    static void RunBackgroundPackCheck(LauncherForm form)
+    {
+        var check = (System.Threading.Tasks.Task)typeof(LauncherForm).GetMethod("CheckForPackUpdates", Fields).Invoke(form, null);
+        Check(!Field<bool>(form, "busy"), "The background pack check leaves the rest of BetterIcon available");
+        Wait(() => check.IsCompleted);
+        check.GetAwaiter().GetResult();
+    }
+
+    static int[] RefreshButtonCorner(Button refresh)
+    {
+        using (var bitmap = new Bitmap(refresh.Width, refresh.Height)) {
+            refresh.DrawToBitmap(bitmap, refresh.ClientRectangle);
+            var pixels = new List<int>();
+            for (int y = 1; y < bitmap.Height / 3; y++)
+                for (int x = bitmap.Width * 2 / 3; x < bitmap.Width - 1; x++)
+                    pixels.Add(bitmap.GetPixel(x, y).ToArgb());
+            return pixels.ToArray();
+        }
+    }
+
+    static void CheckUpdateBadge(string windows, string state, FixtureConfig fixture, string snapshot, string omittedLabel, string changedLabel)
+    {
+        const string omitted = "Craft-Icons-Cryogenn/ArtCraft iconPackage - Dark";
+        const string changed = "Craft-Icons-Komplett/Standard";
+        var lines = File.ReadAllLines(snapshot);
+        var header = lines[0].Split('\t');
+        header[0] = new string('0', 40);
+        var assets = lines.Skip(1).Select(line => line.Split('\t')).ToArray();
+        var oldAsset = assets.First(row => row[2].StartsWith(changed + "/", StringComparison.Ordinal));
+        oldAsset[0] = new string('0', 40);
+        File.WriteAllLines(snapshot, new[] { String.Join("\t", header) }.Concat(assets
+            .Where(row => !row[2].StartsWith(omitted + "/", StringComparison.Ordinal))
+            .Select(row => String.Join("\t", row))));
+
+        byte[] staleSnapshot = File.ReadAllBytes(snapshot);
+        string preferences = Path.Combine(state, "tray-preferences.json");
+        byte[] savedPreferences = File.ReadAllBytes(preferences);
+        var automatic = new FixtureConfig {
+            StateDirectory = state, ShortcutDirectory = fixture.ShortcutDirectory,
+            KeepOpenForAutomation = true, AutomaticPackChecks = true
+        };
+        using (var show = new EventWaitHandle(false, EventResetMode.AutoReset))
+        using (var stop = new EventWaitHandle(false, EventResetMode.AutoReset))
+        using (var form = new LauncherForm(windows, automatic, true, show, stop)) {
+            var refresh = Field<Button>(form, "refreshPacksButton");
+            string initialDescription = refresh.AccessibleDescription;
+            form.Start();
+            Wait(() => !Field<bool>(form, "busy") && Field<Catalog>(form, "catalog") != null);
+            var combo = Field<ComboBox>(form, "themes");
+            var selected = combo.SelectedItem;
+            var status = Field<Label>(form, "status");
+            string initialStatus = status.Text;
+            Wait(() => PackUpdateCount(form) != 0);
+            Check(!form.Visible && PackUpdateCount(form) == 2 && status.Text == initialStatus &&
+                  Object.ReferenceEquals(combo.SelectedItem, selected),
+                  "The hidden launcher quietly detects one new pack and one artwork update at startup");
+            Check(staleSnapshot.SequenceEqual(File.ReadAllBytes(snapshot)) && savedPreferences.SequenceEqual(File.ReadAllBytes(preferences)) &&
+                  !Directory.Exists(Path.Combine(state, "downloads")) && !Directory.Exists(Path.Combine(state, "pack-previews")),
+                  "Automatic checking only reads metadata and preserves the current catalog and artwork caches");
+
+            string[] proxyNames = { "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY" };
+            var proxies = proxyNames.ToDictionary(name => name, Environment.GetEnvironmentVariable);
+            try {
+                Offline();
+                RunBackgroundPackCheck(form);
+                Check(PackUpdateCount(form) == 2 && !form.Visible,
+                      "An offline background check keeps the prior badge and leaves the launcher hidden");
+            } finally {
+                foreach (var proxy in proxies) Environment.SetEnvironmentVariable(proxy.Key, proxy.Value);
+            }
+
+            form.ShowManager();
+            Field<TabControl>(form, "pages").SelectedIndex = 1;
+            combo.Focus();
+            Application.DoEvents();
+            Check(refresh.Visible && refresh.Enabled && (refresh.AccessibleDescription ?? "").Contains("2"),
+                  "The refresh button is available and exposes the pending count to screen readers");
+            var marked = RefreshButtonCorner(refresh);
+            refresh.PerformClick();
+            Check(Field<bool>(form, "busy"), "The badged refresh button starts a manual refresh");
+            Wait(() => !Field<bool>(form, "busy"));
+            combo.Focus();
+            Application.DoEvents();
+            Check(!staleSnapshot.SequenceEqual(File.ReadAllBytes(snapshot)),
+                  "The manual refresh replaces the older catalog (" + status.Text + ")");
+            Check(PackUpdateCount(form) == 0 && refresh.AccessibleDescription == initialDescription &&
+                  !marked.SequenceEqual(RefreshButtonCorner(refresh)),
+                  "Refreshing manually acknowledges the changes and removes the visible badge");
+            Check(Find(combo, omitted).ToString() == omittedLabel && Find(combo, changed).ToString() == changedLabel &&
+                  savedPreferences.SequenceEqual(File.ReadAllBytes(preferences)) &&
+                  !Directory.Exists(Path.Combine(state, "downloads")) && !Directory.Exists(Path.Combine(state, "pack-previews")),
+                  "Acknowledging the badge preserves pack availability and leaves artwork downloads to the user");
             typeof(LauncherForm).GetMethod("ExitLauncher", Fields).Invoke(form, null);
         }
     }
