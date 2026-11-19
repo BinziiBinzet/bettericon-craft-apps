@@ -19,9 +19,16 @@ static class PackTests
         ThemeEntry[] omega = catalog.Themes.Where(t => t.Pack == "Craft-Icons-Zach").ToArray();
         check(omega.Length == 9 && omega.All(t => t.Author == "OmegaDarling" && t.ToString().Contains("OmegaDarling") && t.Id.StartsWith("Craft-Icons-Zach/")), "OmegaDarling credits are public while existing pack IDs stay stable");
         check(catalog.Themes.Length == 32 && catalog.Themes.Sum(t => t.IconCount) == 452 && !catalog.Themes.Any(t => t.Name == "OilSlick"), "Nine OmegaDarling packs are present in the 32-theme, 452-icon catalog");
-        check(catalog.Themes.SelectMany(t => t.Icons).All(icon => !String.IsNullOrEmpty(icon.PreviewPath) && Path.GetExtension(icon.PreviewPath).Equals(".png", StringComparison.OrdinalIgnoreCase) && File.Exists(icon.PreviewPath))
-            && catalog.Themes.All(theme => { using (Image image = Image.FromFile(theme.Icons[0].PreviewPath)) return Math.Max(image.Width, image.Height) >= 120; }),
-            "The catalog retains source-sized PNG previews alongside native shortcut artwork");
+        check(catalog.Themes.SelectMany(t => t.Icons).All(icon => !String.IsNullOrEmpty(icon.PreviewPath) && File.Exists(icon.PreviewPath)
+                && new[] { ".png", ".svg" }.Contains(Path.GetExtension(icon.PreviewPath), StringComparer.OrdinalIgnoreCase))
+            && catalog.Themes.All(theme => {
+                string path = theme.Icons[0].PreviewPath;
+                if (Path.GetExtension(path).Equals(".svg", StringComparison.OrdinalIgnoreCase)) {
+                    using (Bitmap image = SvgArtwork.Render(File.ReadAllBytes(path), 128)) return image.Width == 128 && image.Height == 128;
+                }
+                using (Image image = Image.FromFile(path)) return Math.Max(image.Width, image.Height) >= 120;
+            }),
+            "The catalog retains source-sized PNG or renderable SVG previews alongside shortcut artwork");
         check(library.VisibleThemes(catalog.Themes).Length == catalog.Themes.Length, "An empty personal library preserves all bundled packs");
         string input = Path.Combine(state, "Imported sample"); Directory.CreateDirectory(input);
         string png = Path.Combine(input, "PhotoCraft.png");

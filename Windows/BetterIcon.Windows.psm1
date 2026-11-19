@@ -1,6 +1,6 @@
 # BetterIcon-Craft Apps Windows support.
 Set-StrictMode -Version Latest
-$script:Version = '1.26.3'
+$script:Version = '1.26.4'
 $script:SvgArtworkType = $null
 $script:DownloadCatalog = $null
 $script:AvailableCatalog = $null

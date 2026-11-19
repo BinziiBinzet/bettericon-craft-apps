@@ -1,0 +1,2 @@
+# Artwork catalogs pin exact SVG bytes; keep checkouts identical on Windows.
+*.svg -text

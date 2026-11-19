@@ -24,6 +24,19 @@ static class SvgTests
             check(bitmap.Size == new Size(512, 512) && bitmap.GetPixel(256, 10).A == 0 && bitmap.GetPixel(1, 129).A == 0 && left.R > left.B && right.B > right.R,
                 "SVG rendering preserves viewBox aspect, transparency, paths, CSS, gradients and clipping at the requested size");
         }
+        string clipped = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 100\"><defs><clipPath id=\"edge\"><path d=\"M 4 84 L 51 9 L 96 84 Z\"/></clipPath></defs><rect width=\"100\" height=\"100\" fill=\"#51d0e6\" clip-path=\"url(#edge)\"/></svg>";
+        foreach (int size in new[] { 32, 128 }) {
+            using (Bitmap bitmap = SvgArtwork.Render(Bytes(clipped), size)) {
+                int partial = 0;
+                for (int y = 0; y < size; y++)
+                    for (int x = 0; x < size; x++) {
+                        byte alpha = bitmap.GetPixel(x, y).A;
+                        if (alpha > 0 && alpha < 255) partial++;
+                    }
+                check(partial > size / 2 && bitmap.GetPixel(size / 2, size / 2).A == 255 && bitmap.GetPixel(0, 0).A == 0,
+                    "Clipped SVG artwork has smooth transparent edges at " + size + " pixels");
+            }
+        }
         string vector = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\"><rect x=\"15.5\" width=\"0.5\" height=\"32\" fill=\"#00ff00\"/></svg>";
         using (Bitmap bitmap = SvgArtwork.Render(Bytes(vector), 512))
             check(bitmap.GetPixel(251, 256).G == 255 && bitmap.GetPixel(251, 256).A > 240 && bitmap.GetPixel(244, 256).A == 0,
