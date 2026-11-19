@@ -125,13 +125,45 @@ import WebKit
             ["tile-data": ["file-data": ["_CFURLString": "https://example.invalid"]]],
         ]
         try check(AppCatalog.dockURLs(tiles) == [film], "only local Dock file references enter discovery")
-        let packs = try Pack.bundled(at: resources.appendingPathComponent("Packs"))
-        try check(packs.count == 15 && packs.reduce(0) { $0 + $1.icons.count } == 265, "all Windows pack artwork")
+        let published = try PublishedPacks(resources: resources, state: root.appendingPathComponent("test-pack-cache"))
+        var packs = try published.list()
+        let slim = packs.allSatisfy { $0.status == "Download" }
+        try check(packs.count == 39 && packs.reduce(0) { $0 + $1.icons.count } == (slim ? 0 : 543), "edition artwork inventory")
+        if slim {
+            _ = try published.list("acquire", id: "Craft-Icons-Zach/Cardboard")
+            packs = try published.list("acquire", id: "Craft-Icons-Zach/Edgework")
+        }
         let cardboard = packs.first { $0.name == "Cardboard" }!
         let edge = packs.first { $0.name == "Edgework" }!
         let photoArt = cardboard.icons["PhotoCraft"]!
         let filmArt = cardboard.icons["FilmCraft"]!
         let lib = try PackLibrary(installed.state.appendingPathComponent("Packs"))
+        lib.projectKeys = Set(published.formats.map(\.Key))
+        lib.projectApps = Set(published.formats.map(\.Application))
+        let docID = try lib.store(name: "Project only", author: "Fixture", files: [".pcraft": photoArt])
+        let doc = lib.visible(packs).first { $0.id == docID }!
+        let localPreview = try published.preview(doc)
+        try check(localPreview.flatMap { NSImage(contentsOf: $0) } != nil, "personal file pack produces a local hover preview")
+        let archive = root.appendingPathComponent("documents.zip")
+        try lib.export(doc, to: archive)
+        try lib.remove(doc)
+        let roundID = try lib.importPack(archive)
+        let round = lib.visible(packs).first { $0.id == roundID }!
+        try check(!round.canApps && round.canFiles && round.documents[".pcraft"] != nil, "FileTypes ZIP round trip")
+        let file = root.appendingPathComponent("example.pcraft"), contents = Data("project data".utf8)
+        try contents.write(to: file)
+        let entry = AppEntry(name: "example.pcraft", craft: ".pcraft", url: file, launchURL: file, bundleID: "", scope: .personal, isDocument: true)
+        let storeFiles = AppIcons(installed.state.appendingPathComponent("File Test"))
+        let filePack = Pack(id: doc.id, name: doc.name, author: doc.author, icons: published.fileArt(round))
+        let originalFile = try systemImage(file)
+        for restore in [false, true] {
+            let plan = storeFiles.review(apps: [entry], pack: filePack, scope: .personal, restore: restore)
+            let result = try storeFiles.perform(plan, apps: [entry], pack: filePack)
+            try check(result.changed.count == 1 && result.errors.isEmpty, "apply and restore a Finder project icon: " + result.errors.joined())
+            let difference = try distance(systemImage(file), originalFile)
+            try check(restore ? difference < 0.02 : difference > 0.05, "Finder resolves project file artwork")
+            try check(try Data(contentsOf: file) == contents, "project data is preserved")
+        }
         let first = try lib.store(
             name: "Mixed", author: "Artist", files: ["PhotoCraft": photoArt, "FilmCraft": filmArt])
         let p = lib.visible(packs).first { $0.id == first }!
@@ -226,7 +258,7 @@ import WebKit
         try check(try forkBytes(photo) == custom, "restore exact pre-existing custom resource fork")
         _ = try apply(cardboard, .personal, false, "FilmCraft")
         try check(
-            (try URL(resolvingAliasFileAt: alias, options: .withoutUI)).standardizedFileURL == film
+            (try URL(resolvingAliasFileAt: alias, options: .withoutUI)).resolvingSymlinksInPath().path == film.resolvingSymlinksInPath().path
                 && (try distance(systemImage(film), original)) < 0.02,
             "Finder alias keeps launch target and does not alter shared bundle")
         _ = try apply(.defaults, .personal, true, "FilmCraft")
@@ -256,7 +288,7 @@ import WebKit
         let web = host.web!
         func js(_ source: String) async throws -> Any? { try await web.evaluateJavaScript(source) }
         func until(_ source: String) async throws {
-            for _ in 0..<150 {
+            for _ in 0..<600 {
                 if let b = try? await js(source) as? Bool, b { return }
                 try await Task.sleep(nanoseconds: 100_000_000)
             }
@@ -264,6 +296,20 @@ import WebKit
         }
         try await until("typeof model !== 'undefined' && model && model.apps.length===3 && !working")
         try check(true, "actual app discovers fixture apps and creates its grids")
+        var trayImage = false
+        host.statusMenu { menu, _ in
+            guard let themes = menu.item(withTitle: "Change icon theme")?.submenu,
+                  let row = themes.items.first(where: { ($0.representedObject as? Pack)?.name == "Mascots" }),
+                  let preview = themes.delegate as? TrayPackPreview else { return }
+            preview.menu(themes, willHighlight: row)
+            let until = Date().addingTimeInterval(15)
+            while Date() < until && !trayImage {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+                trayImage = NSApp.windows.contains { $0.identifier?.rawValue == "BetterIconPackPreview" && $0.isVisible }
+            }
+            preview.menuDidClose(themes)
+        }
+        try check(trayImage, "menu bar pack hover displays a non-activating preview")
         let footerStyle = """
             ['fontFamily','fontSize','fontWeight','lineHeight','color'].every(
               key => getComputedStyle(el('launcherShortcut'))[key] === getComputedStyle(el('version'))[key])
@@ -279,6 +325,34 @@ import WebKit
             })()
             """)
         try check(inCorner as? Bool == true, "shortcut is at the lower left outside the scrolling grid")
+        let slim = (try String(contentsOf: install.resources.appendingPathComponent("Catalog/edition"), encoding: .utf8)).contains("OnDemand")
+        let cache = install.state.appendingPathComponent("pack-cache")
+        try check(!fm.fileExists(atPath: cache.appendingPathComponent("acquired").path), "opening never downloads a pack")
+        host.statusMenu { menu, _ in
+            let i = menu.indexOfItem(withTitle: "Refresh available icon packs")
+            if i >= 0 { menu.performActionForItem(at: i) }
+        }
+        try await until("model.status==='Available icon packs refreshed.' && !working")
+        try check(!fm.fileExists(atPath: cache.appendingPathComponent("acquired").path), "native tray refresh fetches metadata only")
+        try await until("page==='manage'")
+        _ = try await js("el('filePacks').click();true")
+        try await until("!el('packOptions').hidden")
+        let mouse = """
+          (()=>{const row=[...el('packOptions').children].find(r=>r.dataset.id==='Craft-Icons-4NovemberKilo/Mascots');
+          row.scrollIntoView({block:'nearest'});const r=row.getBoundingClientRect();
+          row.dispatchEvent(new MouseEvent('pointerover',{bubbles:true,clientX:r.left+12,clientY:r.top+r.height/2}));return true})()
+          """
+        _ = try await js(mouse)
+        try await until("!el('hoverPreview').hidden && el('hoverPreview').naturalWidth===204")
+        try check(!fm.fileExists(atPath: cache.appendingPathComponent("acquired").path), "WebP hover renders without downloading full artwork")
+        _ = try await js("hoverRow.click();true")
+        try await until("model.filePack.id==='Craft-Icons-4NovemberKilo/Mascots' && !working")
+        let independent = try await js("model.pack.id!==model.filePack.id") as? Bool
+        try check(independent == true, "file pack and app pack are independent")
+        _ = try await js("el('packs').click();[...el('packOptions').children].find(r=>r.dataset.id==='Craft-Icons-Zach/Cardboard').click();true")
+        try await until("model.pack.id==='Craft-Icons-Zach/Cardboard' && !working")
+        try await until("model.pack.status==='\(slim ? "Downloaded" : "Included")'")
+        _ = try await js("el('launcherTab').click();true")
         try await until("model.pack.id==='Craft-Icons-Zach/Cardboard' && model.prefs.size===48")
         try check(true, "fresh launch matches the Windows Cardboard preview at 48 pixels")
         if let surface = host.window.contentView {
@@ -332,7 +406,7 @@ import WebKit
         _ = try await js("el('menu').children[1].click();true")
         try await until("model.prefs.color==='clay'&&model.prefs.variant==='dark'")
         _ = try await js("el('new').click();true")
-        try await until("el('editor').open&&el('assignments').children.length===20")
+        try await until("el('editor').open&&el('assignments').children.length===33")
         _ = try await js("el('editor').close();true")
         try await until("!el('editor').open")
         try check(true, "personal editor lists all canonical ArtCraft apps")

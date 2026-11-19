@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Create the offline Linux installer from the shared interface and checked artwork."""
+"""Build a Linux installer with bundled or on-demand artwork."""
 import argparse
 import hashlib
 import shutil
 import tarfile
 import tempfile
-import zipfile
+import subprocess
+import os
+import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -16,9 +18,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("artwork_zip", type=Path)
     parser.add_argument("output", type=Path)
+    parser.add_argument("--edition", choices=["Bundled", "OnDemand"], default="Bundled")
     args = parser.parse_args()
     version = (HERE / "desktop/VERSION").read_text().strip()
-    name = f"BetterIcon-{version}-Linux"
+    name = f"BetterIcon-{version}-Linux-{args.edition}"
     args.output.mkdir(parents=True, exist_ok=True)
     dest = args.output / (name + ".tar.gz")
     if dest.exists():
@@ -32,17 +35,13 @@ def main():
         shutil.copy2(HERE.parent / "LICENSE", app / "LICENSE")
         shutil.copy2(HERE / "setup-desktop.py", staging)
         shutil.copy2(HERE / "README.md", staging)
-        rows = [line.split("\t") for line in (MAC / "Artwork.tsv").read_text().splitlines()]
-        if len(rows) != 250:
-            raise ValueError("Incomplete artwork manifest.")
-        with zipfile.ZipFile(args.artwork_zip) as archive:
-            for sha, packed, _ in rows:
-                data = archive.read(packed)
-                if hashlib.sha256(data).hexdigest() != sha:
-                    raise ValueError("Artwork differs from the release inventory: " + packed)
-                path = app / ("Brand/" + packed.removeprefix("Windows/Assets/AppIcons/") if packed.startswith("Windows/Assets/AppIcons/") else "Packs/" + packed)
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_bytes(data)
+        subprocess.run([sys.executable, HERE.parent / "Shared/prepare_packs.py", app,
+                        args.artwork_zip, args.edition], check=True)
+        for arch in ("arm64", "amd64"):
+            env = dict(os.environ, CGO_ENABLED="0", GOOS="linux", GOARCH=arch)
+            subprocess.run(["go", "build", "-trimpath", "-ldflags=-s -w",
+                            "-o", str((app / ("packstore-" + arch)).resolve()), "."],
+                           cwd=HERE.parent / "Shared/packstore", env=env, check=True)
         for script, flags in (("install.sh",""), ("uninstall.sh","--uninstall ")):
             path = staging / script
             path.write_text('#!/bin/sh\nset -eu\nexec /usr/bin/python3 "$(dirname "$0")/setup-desktop.py" ' + flags + '"$@"\n')

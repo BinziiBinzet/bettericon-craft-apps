@@ -2,6 +2,8 @@
 import io
 import json
 import re
+import platform
+import subprocess
 import uuid
 import zipfile
 from dataclasses import dataclass, field
@@ -24,12 +26,19 @@ class Pack:
     icons: dict = field(default_factory=dict)
     personal: bool = False
 
+    documents: dict = field(default_factory=dict)
+    status: str = "Local"
+    can_apps: bool = True
+    can_files: bool = False
+    has_preview: bool = False
+
     def model(self):
         title = self.author if self.name == "Root" else self.name
         if self.author and self.name != "Root":
             title += " / " + self.author
         return dict(id=self.id, title=title + (" (personal)" if self.personal else ""),
-                    personal=self.personal, default=self.id == DEFAULT_ID)
+                    personal=self.personal, default=self.id == DEFAULT_ID, status=self.status, canApps=self.can_apps,
+                    canFiles=self.can_files, hasPreview=bool(self.has_preview or self.icons or self.documents))
 
 
 def image_bytes(data, ext):
@@ -74,26 +83,66 @@ def read_image(path):
 class Packs:
     def __init__(self, resources, data):
         self.store = data / "personal"
-        self.builtin = {DEFAULT_ID: Pack(DEFAULT_ID, "ArtCraft default", "")}
-        for path in sorted((resources / "Packs").rglob("*.png")):
-            group, *rest = path.relative_to(resources / "Packs").parts
-            author = group.removeprefix("Craft-Icons-")
-            name = rest[0] if len(rest) > 1 else "Root"
-            prefix = "Zach" if author == "OmegaDarling" else author
-            key = f"Craft-Icons-{prefix}/{name}"
-            craft = canonical(path.stem)
-            if craft:
-                self.builtin.setdefault(key, Pack(key, name, author)).icons[craft] = path
+        self.resources = resources
+        self.cache = data / "pack-cache"
+        arch = {"x86_64": "amd64", "aarch64": "arm64"}.get(platform.machine(), platform.machine())
+        self.helper = resources / ("packstore-" + arch)
+        self.formats = {f["Key"]: f for f in json.loads((resources / "Catalog/ProjectFileTypes.json").read_text())}
+        self.use_catalog(self.run("list"))
+
+    def run(self, action, *args):
+        proc = subprocess.run([self.helper, self.resources, self.cache, action, *args],
+                              capture_output=True, text=True, encoding="utf8")
+        if proc.returncode:
+            raise ValueError(proc.stderr.strip() or "Could not read the icon pack catalog.")
+        return json.loads(proc.stdout)
+
+    def use_catalog(self, rows):
+        default = Pack(DEFAULT_ID, "ArtCraft default", "", status="Default", can_files=True)
+        self.builtin = {DEFAULT_ID: default}
+        for row in rows:
+            self.builtin[row["ID"]] = Pack(row["ID"], row["Name"], row["Author"],
+                {k: Path(v) for k, v in row["Icons"].items()},
+                documents={k: Path(v) for k, v in row["FileIcons"].items()},
+                status=row["Status"], can_apps=row["CanApps"], can_files=row["CanFiles"],
+                has_preview=row["HasPreview"])
         self.reload()
+
+    def preview(self, pack):
+        if pack.has_preview:
+            return self.run("preview", pack.id)
+        art = pack.icons or pack.documents
+        files = [art[k] for k in sorted(art, key=lambda k: (k != "ArtCraftLauncher", k))[:3]]
+        if not files:
+            return None
+        identity = "\n".join(f"{f}:{f.stat().st_mtime_ns}" for f in files)
+        path = self.cache / "local-previews" / (digest(identity.encode()) + ".png")
+        if not path.is_file():
+            strip = GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, True, 8, len(files) * 70 - 6, 64)
+            strip.fill(0)
+            for index, source in enumerate(files):
+                image = GdkPixbuf.Pixbuf.new_from_file_at_scale(str(source), 64, 64, True)
+                width, height = image.get_width(), image.get_height()
+                image.copy_area(0, 0, width, height, strip, index*70 + (64-width)//2, (64-height)//2)
+            atomic(path, bytes(strip.save_to_bufferv("png", [], [])[1]))
+        return str(path)
+
+    def file_art(self, pack):
+        return pack.documents or {key: pack.icons[f["Application"]] for key, f in self.formats.items()
+                                  if f["Application"] in pack.icons}
 
     def reload(self):
         self.all = dict(self.builtin)
         for p in self.store.glob("*.json"):
             meta = load_json(p, {})
             files = {craft: self.store / "images" / (sha + ".png") for craft, sha in meta["icons"].items()
-                     if craft in CRAFT and re.fullmatch("[a-f0-9]{64}", sha)}
+                     if (craft in CRAFT or craft in self.formats) and re.fullmatch("[a-f0-9]{64}", sha)}
             key = "Personal/" + p.stem
-            self.all[key] = Pack(key, meta["Name"], meta["Author"], files, True)
+            apps = {k: v for k, v in files.items() if k in CRAFT}
+            docs = {k: v for k, v in files.items() if k in self.formats}
+            pack = Pack(key, meta["Name"], meta["Author"], apps, True, docs, can_apps=bool(apps))
+            pack.can_files = bool(self.file_art(pack))
+            self.all[key] = pack
 
     def save(self, name, author, files, editing=None):
         name, author = name.strip(), author.strip()
@@ -105,7 +154,7 @@ class Packs:
             raise ValueError("Choose a personal pack to edit.")
         image_map = {}
         for craft, source in files.items():
-            if craft not in CRAFT:
+            if craft not in CRAFT and craft not in self.formats:
                 raise ValueError("Unknown ArtCraft app.")
             data = source if isinstance(source, bytes) else read_image(source)
             sha = digest(data)
@@ -143,7 +192,13 @@ class Packs:
                     if metadata.get("Format") != "BetterIcon.IconPack" or metadata.get("Version") != 1:
                         raise ValueError("Unsupported BetterIcon pack format.")
                     continue
-                ext, craft = path.suffix.lower(), canonical(path.stem)
+                ext = path.suffix.lower()
+                if any(p.casefold() == "filetypes" for p in path.parts[:-1]):
+                    craft = "." + path.stem.lstrip(".").lower()
+                    if craft not in self.formats:
+                        continue
+                else:
+                    craft = canonical(path.stem)
                 if ext not in FORMATS or not craft:
                     continue
                 rank = FORMATS.index(ext)
@@ -165,6 +220,8 @@ class Packs:
             archive.writestr("bettericon-pack.json", json.dumps(meta))
             for craft, asset in sorted(pack.icons.items()):
                 archive.write(asset, craft + asset.suffix.lower())
+            for key, asset in sorted(pack.documents.items()):
+                archive.write(asset, "FileTypes/" + key.lstrip(".") + asset.suffix.lower())
         atomic(path, data.getvalue(), 0o644)
 
 

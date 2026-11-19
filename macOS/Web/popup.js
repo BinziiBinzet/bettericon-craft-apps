@@ -20,6 +20,7 @@ function make(tag, content) {
   return node;
 }
 function tab(name, focus = true) {
+  closePackPicker();
   page = name;
   for (const id of ["launcher", "manage"]) {
     el(id).hidden = id !== name;
@@ -29,7 +30,7 @@ function tab(name, focus = true) {
   if (focus) (name === "launcher" ? el("apps") : el("packs")).focus();
 }
 function requestTab(name) {
-  send("tab", { name });
+  if (name !== page) send("tab", { name });
 }
 function reset(pageName) {
   if (activeDialog()) return;
@@ -42,12 +43,13 @@ function reset(pageName) {
 function iconURL(base, size) {
   return base + "?size=" + Math.min(4096, Math.round(size * window.devicePixelRatio));
 }
-function packActions() {
-  const p = model.pack;
+function packActions(group = "apps") {
+  const p = group === "files" ? model.filePack : model.pack;
   return [
-    ["Customize…", () => send("editor", { mode: "customize" }), !p.default],
-    ["Edit pack…", () => send("editor", { mode: "edit" }), p.personal],
-    ["Export ZIP…", () => send("export"), p.personal],
+    ["Customize…", () => send("editor", { mode: "customize", group }), !p.default],
+    ["Edit pack…", () => send("editor", { mode: "edit", group }), p.personal],
+    ["Export ZIP…", () => send("export", { group }), p.personal],
+    ["Remove pack", () => send("remove", { group }), !p.default],
     ["Restore built-in packs", () => send("unhide"), true],
   ];
 }
@@ -205,9 +207,19 @@ function update(next) {
     pack = model.pack;
   document.documentElement.dataset.dark = String(model.dark);
   document.body.classList.toggle("iconOnly", !p.names);
-  const options = model.packs.map((item) => new Option(item.title, item.id));
-  el("packs").replaceChildren(...options);
-  el("packs").value = pack.id;
+  setPackButtons(model);
+  const samples = el("fileSamples");
+  samples.replaceChildren(...(model.fileSamples || []).map(file => {
+    const item = make("span"), image = document.createElement("img");
+    image.alt = "";
+    image.src = file.image;
+    item.append(image, document.createTextNode(file.name));
+    return item;
+  }));
+  samples.hidden = !samples.childElementCount;
+  text("applyFiles", model.fileAction || "Apply project file icons…");
+  el("applyFiles").disabled = !model.fileCount;
+  el("apply").disabled = !pack.default && !model.preview.length;
   text(
     "detail",
     pack.default
@@ -239,7 +251,7 @@ function busy(message) {
     section.inert = working;
   for (const dialog of document.querySelectorAll("dialog[open]")) dialog.inert = working;
   if (!working) for (const dialog of document.querySelectorAll("dialog")) dialog.inert = false;
-  if (working) closeMenu();
+  if (working) { closeMenu(); closePackPicker(); }
 }
 function editor(info) {
   editorFiles = { ...info.files };
@@ -307,11 +319,16 @@ new ResizeObserver(([bar]) => {
 el("launcherTab").onclick = () => requestTab("launcher");
 el("manageTab").onclick = () => requestTab("manage");
 el("launcherShortcut").onclick = () => send("changeHotkey");
-el("packs").onchange = () => send("select", { id: el("packs").value });
+el("packs").onclick = () => openPackPicker("apps");
+el("filePacks").onclick = () => openPackPicker("files");
+el("packs").onchange = () => send("select", { id: el("packs").value, group: "apps" });
+el("applyFiles").onclick = () => send("reviewFiles", { restore: false });
+el("restoreFiles").onclick = () => send("reviewFiles", { restore: true });
 el("packs").oncontextmenu = (e) => {
   e.preventDefault();
   menu(packActions(), e.clientX, e.clientY);
 };
+el("filePacks").oncontextmenu = e => { e.preventDefault(); menu(packActions("files"), e.clientX, e.clientY); };
 el("new").onclick = () => send("editor", { mode: "new" });
 el("remove").onclick = () => send("remove");
 el("import").onclick = () =>
@@ -358,7 +375,7 @@ document.addEventListener("pointerdown", (e) => {
 });
 document.addEventListener("contextmenu", (e) => e.preventDefault());
 document.addEventListener("keydown", (e) => {
-  if (activeDialog() || working || !model) return;
+  if (activeDialog() || working || !model || !el("packOptions").hidden) return;
   if (!el("menu").hidden) {
     if (e.key === "Escape") {
       closeMenu();
@@ -441,6 +458,7 @@ el("launcher").addEventListener(
 );
 window.betterIcon = {
   update,
+  packPreview,
   reset,
   tab,
   busy,

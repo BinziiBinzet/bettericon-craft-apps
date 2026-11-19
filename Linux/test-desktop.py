@@ -110,7 +110,11 @@ def core():
     cat.discover()
     check({e.craft for e in cat.entries.values()} == {"FilmCraft","PhotoCraft"}, "discover user and shared ArtCraft desktop entries")
     packs = Packs(payload, cat.data)
-    check(len(packs.builtin) == 14 and sum(len(p.icons) for p in packs.builtin.values()) == 218, "13 named packs and all 218 approved icons")
+    slim = (payload / "Catalog/edition").read_text().strip() == "OnDemand"
+    check(len(packs.builtin) == 40 and sum(len(p.icons) for p in packs.builtin.values()) == (0 if slim else 543),
+          "expected packaged artwork and 39 pack choices")
+    if slim:
+        packs.use_catalog(packs.run("acquire", "Craft-Icons-Zach/Cardboard"))
     pack = packs.all["Craft-Icons-Zach/Cardboard"]
     check(pack.author == "OmegaDarling", "preserve artwork credits and identifiers")
     backend = DesktopIcons(cat.data)
@@ -143,6 +147,27 @@ def core():
           "shared folder overrides are deduplicated and reversible")
     cat.update(folders=[])
     key = packs.save("My pack", "Fixture", {"PhotoCraft":pack.icons["PhotoCraft"]})
+    from project_icons import ProjectIcons
+    doc_key = packs.save("File pack", "Fixture", {".pcraft": pack.icons["FilmCraft"]})
+    docs = packs.all[doc_key]
+    check(Path(packs.preview(docs)).is_file(), "personal file pack has a local hover preview")
+    doczip = home / "File pack.zip"
+    packs.export(docs, doczip)
+    imported_key = packs.import_from(doczip)
+    imported = packs.all[imported_key]
+    check(not imported.can_apps and imported.can_files and set(imported.documents) == {".pcraft"},
+          "project-only FileTypes ZIP round trips separately from app icons")
+    project = ProjectIcons(cat.data, packs.formats)
+    target = home / "example.pcraft"
+    target.write_text("project data")
+    project.apply(packs.file_art(imported))
+    def file_info():
+        return subprocess.check_output(["gio", "info", "-a", "standard::icon,standard::content-type", str(target)],
+                                       text=True)
+    check("bettericon-project-pcraft-" in file_info(), "GIO resolves the project MIME icon")
+    project.apply({})
+    check("bettericon-project-pcraft-" not in file_info() and target.read_text() == "project data",
+          "restore removes the MIME icon and preserves the document")
     output = home / "round trip.zip"
     packs.export(packs.all[key], output)
     new = packs.import_from(output)
@@ -234,6 +259,32 @@ def gui():
     check(pop.web.get_settings().get_hardware_acceleration_policy() == WebKit2.HardwareAccelerationPolicy.NEVER,
           "the popup uses software rendering")
     ready("manage",(836,606))
+    slim = (payload / "Catalog/edition").read_text().strip() == "OnDemand"
+    base = app.packs.cache / "acquired"
+    prior = set(base.glob("*"))
+    app.menu(app.tray, 3, Gtk.get_current_event_time())
+    submenu = next(i for i in app.tray_menu.get_children() if i.get_label() == "Change icon theme").get_submenu()
+    mast = next(i for i in submenu.get_children() if "Mascots" in i.get_label())
+    mast.emit("select")
+    check(wait(lambda: app.tray_preview is not None and app.tray_preview.get_visible(), 25), "native tray hover displays a preview")
+    mast.emit("deselect")
+    refresh_item = next(i for i in app.tray_menu.get_children() if i.get_label() == "Refresh available icon packs")
+    app.tray_menu.popdown()
+    refresh_item.activate()
+    check(wait(lambda: js("model.status==='Available icon packs refreshed.' && !working"), 40) and
+          set(base.glob("*")) == prior, "native tray refresh fetches metadata only")
+    js("el('filePacks').click();true")
+    js("""(()=>{const row=[...el('packOptions').children].find(r=>r.dataset.id==='Craft-Icons-4NovemberKilo/Mascots');
+              row.scrollIntoView({block:'nearest'});const r=row.getBoundingClientRect();row.dispatchEvent(
+              new MouseEvent('pointerover',{bubbles:true,clientX:r.left+12,clientY:r.top+r.height/2}));return true})()""")
+    check(wait(lambda: js("!el('hoverPreview').hidden && el('hoverPreview').naturalWidth===204"), 35) and
+          set(base.glob("*")) == prior, "hover renders one verified WebP without acquiring a pack")
+    js("hoverRow.click();true")
+    check(wait(lambda: js("model.filePack.id==='Craft-Icons-4NovemberKilo/Mascots' && !working"), 90) and
+          js("model.pack.id!==model.filePack.id"), "click selects the project pack independently")
+    check(len(set(base.glob("*")) - prior) == int(slim), "only the clicked on-demand pack was downloaded")
+    js("el('packs').click();el('packOptions').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));true")
+    check(js("el('packOptions').hidden"), "Escape dismisses the pack list")
     drag_grip(-18, -16)
     check(wait(lambda: tab_size(Catalog().prefs,"manage") == (818,590)), "the visible grip shrinks Manage Icons")
     drag_at(pop, 814, 295, 18, 0)

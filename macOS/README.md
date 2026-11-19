@@ -1,6 +1,6 @@
 # BetterIcon for Mac
 
-BetterIcon 1.23.3 brings the Windows launcher, 13 icon packs, and all 218 original pack images to the Mac. The Universal app targets Apple silicon and Intel Macs running macOS 12.4 or later. Everything needed to use it is in the app bundle.
+BetterIcon 1.26.0 is a Universal app for Apple silicon and Intel Macs running macOS 12.4 or later. Choose Bundled for all 39 packs and their previews offline, or OnDemand to download individual packs.
 
 ## Install and use
 
@@ -25,7 +25,9 @@ The icon change uses Finder metadata on the app. Its executable, signed resource
 
 Type the beginning of an app name, use the arrow keys, and press Return to launch. Double-click also launches. Escape clears the filter and then hides the window. Control-scroll over the launcher to change icon size. The numeric size field, Reset, and Show app names affect both tabs. Drag the popup edges to resize.
 
-Import folders or Windows BetterIcon ZIPs, create personal packs, or right-click an icon and choose **Choose icon…**. Editing a built-in creates a personal copy. Right-click the pack selector for **Customize**, **Edit pack**, **Export ZIP**, and **Restore built-in packs**. Exports preserve author credits and original SVG, ICO, or PNG artwork. Mac-only ICNS files become PNGs when shared with Windows. The built-in packs leave ArtCraft Launcher’s own artwork in place. You can assign it a personal icon.
+Import folders or Windows BetterIcon ZIPs, create personal packs, or right-click an icon and choose **Choose icon…**. Editing a built-in creates a personal copy. Right-click the pack selector for **Customize**, **Edit pack**, **Export ZIP**, and **Restore built-in packs**. Exports preserve author credits and original SVG, ICO, or PNG artwork. Mac-only ICNS files become PNGs when shared with Windows. Packs can include a custom ArtCraft Launcher icon. Hover a pack name for up to three sample icons, starting with ArtCraft Launcher when available. An on-demand pack downloads when you click its name or press Return. The label changes to **Downloaded** once the pack is ready. Choose **Refresh available icon packs** in the menu bar icon’s right-click menu to check for additions and updates.
+
+Choose **Project file icon pack** separately from **App icon pack**. Choose **Choose project files…** to apply Finder custom icons to one or more existing documents, such as .pcraft and .scraft. Use **Restore project file icons…** to pick documents and restore their saved Finder artwork. A pack can supply dedicated artwork through `FileTypes/pcraft.png` or `FileTypes/scraft.png` in its ZIP. A pack with only app artwork uses the corresponding app icons for its project files.
 
 Click the version text at the bottom of **Manage Icons** to open the BetterIcon GitHub project in your default browser. The adjacent buttons select BetterIcon’s own icon and cycle Dark, Light, and System appearance. All sixteen Windows color variants are included.
 
@@ -33,11 +35,13 @@ Preferences, personal packs, and verified originals live in `~/Library/Applicati
 
 ## Local builds and checks
 
-With Xcode and a macOS SDK installed, run the scripts from this directory. The first command uses the Windows 1.21.0 release ZIP when it is available beside the checkout. You can also supply its path as the second argument. Without the ZIP, the builder checks local artwork and fetches missing images from the pinned source commits. Every image must match the Windows release hash.
+Build on a Mac with Xcode Command Line Tools and Go 1.25. The build uses the verified Windows 1.26.0 bundled artwork ZIP or a checkout containing the source images. Go and Python are build tools. The installed app includes its catalog helper.
 
 ~~~sh
-./build.sh "$HOME/Downloads/BetterIcon-build"
-./test.sh "$HOME/Downloads/BetterIcon-build/BetterIcon.app"
+./build.sh "$HOME/Downloads/BetterIcon-Bundled" /path/to/Windows-1.26.0.zip Bundled
+./build.sh "$HOME/Downloads/BetterIcon-OnDemand" /path/to/Windows-1.26.0.zip OnDemand
+./test.sh "$HOME/Downloads/BetterIcon-Bundled/BetterIcon.app"
+./test.sh "$HOME/Downloads/BetterIcon-OnDemand/BetterIcon.app"
 ~~~
 
 The build produces a locally signed Universal app and a drag-to-install disk image. The local build has no Apple notarization ticket. The test script uses disposable bundles, real Finder metadata, a private pack library, and an offscreen copy of the app interface.

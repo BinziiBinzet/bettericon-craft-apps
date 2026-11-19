@@ -53,7 +53,9 @@ struct AppEntry: Hashable {
     let launchURL: URL
     let bundleID: String
     let scope: Scope
+    var isDocument = false
     var isAlias: Bool { url != launchURL }
+    var usesFileFork: Bool { isDocument || isAlias }
 }
 
 struct AppCatalog {
@@ -159,6 +161,16 @@ struct Pack {
     let author: String
     let icons: [String: URL]
     var personal = false
+    var documents = [String: URL]()
+    var status = "Local"
+    var canApps = true
+    var canFiles = false
+    var hasPreview = false
+    var canPreview: Bool { hasPreview || !icons.isEmpty || !documents.isEmpty }
+    var model: [String: Any] {
+        ["id": id, "title": title, "status": isDefault ? "Default" : status, "default": isDefault,
+         "personal": personal, "canApps": canApps, "canFiles": canFiles || isDefault, "hasPreview": canPreview]
+    }
     var isDefault: Bool { id == "ArtCraft/Default" }
     var title: String {
         if isDefault { return name }
@@ -166,36 +178,11 @@ struct Pack {
         return credit + (personal ? " (personal)" : "")
     }
     static let defaults = Pack(id: "ArtCraft/Default", name: "ArtCraft default", author: "", icons: [:])
-    static func bundled(at root: URL) throws -> [Pack] {
-        var packs = [Pack]()
-        for author in ["OmegaDarling", "Komplett", "circleb"] {
-            let group = root.appendingPathComponent("Craft-Icons-" + author)
-            let dirs =
-                author == "circleb"
-                ? [group]
-                : try fm.contentsOfDirectory(at: group, includingPropertiesForKeys: [.isDirectoryKey])
-                    .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
-            for dir in dirs {
-                let name = author == "circleb" ? "Root" : dir.lastPathComponent
-                var icons = [String: URL]()
-                for file in try fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
-                where file.pathExtension.lowercased() == "png" {
-                    if let craft = Craft.canonical(file.deletingPathExtension().lastPathComponent) {
-                        icons[craft] = file
-                    }
-                }
-                let prefix = author == "OmegaDarling" ? "Zach" : author
-                if !icons.isEmpty {
-                    packs.append(
-                        Pack(id: "Craft-Icons-\(prefix)/\(name)", name: name, author: author, icons: icons))
-                }
-            }
-        }
-        return packs.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
-    }
+
 }
 
 struct Preferences: Codable {
+    var fileSelected: String?
     var selected = "Craft-Icons-Zach/Cardboard"
     var size = 48
     var names = true

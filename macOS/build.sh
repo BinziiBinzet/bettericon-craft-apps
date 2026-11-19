@@ -3,12 +3,14 @@ set -euo pipefail
 export COPYFILE_DISABLE=1
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(dirname "$here")"
-out="${1:?Usage: build.sh OUTPUT_DIRECTORY [Windows-1.21.0.zip or artwork checkout]}"
+out="${1:?Usage: build.sh OUTPUT_DIRECTORY [Windows-1.26.0.zip or artwork checkout] [Bundled|OnDemand]}"
 mkdir -p "$out"
 out="$(cd "$out" && pwd)"
 version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$here/Info.plist")"
 minimum="$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$here/Info.plist")"
-dmg="$out/BetterIcon-$version-macOS.dmg"
+edition="${3:-Bundled}"
+case "$edition" in Bundled|OnDemand) ;; *) echo 'Choose Bundled or OnDemand.' >&2; exit 2;; esac
+dmg="$out/BetterIcon-$version-macOS-$edition.dmg"
 if [[ -e "$out/BetterIcon.app" || -e "$dmg" ]]; then
     echo "Choose an output directory without an existing BetterIcon.app or disk image." >&2
     exit 1
@@ -21,14 +23,14 @@ mkdir -p "$app/Contents/MacOS" "$resources/Web" "$stage/BetterIcon.iconset"
 cp -X "$here/Info.plist" "$app/Contents/"
 cp -X "$here"/Web/* "$resources/Web/"
 cp -X "$repo/LICENSE" "$resources/LICENSE"
-input="${2:-}"
-default_zip="$(dirname "$repo")/bettericon-windows-builds/1.21.0-final/BetterIcon-Craft-Apps-Windows-1.21.0.zip"
-if [[ -z "$input" && -s "$default_zip" ]]; then input="$default_zip"; fi
-if [[ -n "$input" ]]; then
-    /usr/bin/ruby "$here/prepare-artwork.rb" "$resources" "$repo" "$input"
-else
-    /usr/bin/ruby "$here/prepare-artwork.rb" "$resources" "$repo"
-fi
+input="${2:-$repo}"
+/usr/bin/python3 "$repo/Shared/prepare_packs.py" "$resources" "$input" "$edition"
+mkdir -p "$app/Contents/Helpers"
+for target in arm64 amd64; do
+    (cd "$repo/Shared/packstore"; CGO_ENABLED=0 GOOS=darwin GOARCH="$target" go build -trimpath -ldflags="-s -w" -o "$stage/packs-$target" .)
+done
+xcrun lipo -create "$stage/packs-arm64" "$stage/packs-amd64" -output "$app/Contents/Helpers/packstore"
+/usr/bin/codesign --force --sign - --timestamp=none "$app/Contents/Helpers/packstore"
 for px in 16 32 128 256 512; do
     for scale in 1 2; do
         n=$((px*scale))

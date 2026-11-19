@@ -143,6 +143,9 @@ final class ArtScheme: NSObject, WKURLSchemeHandler {
             let mime: String
             let bytes: Data
             switch source {
+            case .file(let file) where file.pathExtension.lowercased() == "webp":
+                bytes = try Data(contentsOf: file)
+                mime = "image/webp"
             case .file(let file) where file.pathExtension.lowercased() == "png":
                 bytes = try Artwork.load(file)
                 mime = "image/png"

@@ -58,7 +58,10 @@ func startBetterIcon() throws {
             return
         }
         let lib = try PackLibrary(install.state.appendingPathComponent("Packs"))
-        let packs = lib.visible(try Pack.bundled(at: resources.appendingPathComponent("Packs")))
+        let published = try PublishedPacks(resources: resources, state: install.state)
+        lib.projectKeys = Set(published.formats.map(\.Key))
+        lib.projectApps = Set(published.formats.map(\.Application))
+        let packs = lib.visible(try published.list())
         if listPacks {
             for pack in packs { print([pack.id, pack.title, String(pack.icons.count)].joined(separator: "\t")) }
             return
@@ -67,6 +70,7 @@ func startBetterIcon() throws {
         let matches = packs.filter { $0.id == packName || $0.title == packName || $0.name == packName }
         guard restore || matches.count == 1 else { throw Problem("Specify a pack ID from --list-packs.") }
         let pack = matches.first ?? .defaults
+        if !restore && pack.status == "Download" { throw Problem("Select this pack in Manage Icons to download it first.") }
         let backend = AppIcons(install.state.appendingPathComponent("App Icons"))
         let plan = backend.review(
             apps: apps, pack: pack, scope: scope, restore: restore || pack.isDefault, only: only)

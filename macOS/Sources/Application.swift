@@ -38,11 +38,22 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
 {
     let install: Installation
     let library: PackLibrary, icons: AppIcons
-    let builtins: [Pack]
+    let published: PublishedPacks
+    var builtins: [Pack]
+    private lazy var trayPreview = TrayPackPreview(published)
+    private let previewQueue: OperationQueue = {
+        let queue = OperationQueue()
+        queue.maxConcurrentOperationCount = 1
+        queue.qualityOfService = .utility
+        return queue
+    }()
+    private var fileSelection: Pack {
+        packs.first { $0.id == prefs.fileSelected && $0.status != "Download" } ?? .defaults
+    }
     var prefs: Preferences
     private var packs: [Pack] { library.visible(builtins) }
-    private var fallback: Pack { packs.first { $0.id == "Craft-Icons-Zach/Cardboard" } ?? .defaults }
-    private var selected: Pack { packs.first { $0.id == prefs.selected } ?? fallback }
+    private var fallback: Pack { packs.first { $0.id == "Craft-Icons-Zach/Cardboard" && $0.status != "Download" } ?? .defaults }
+    private var selected: Pack { packs.first { $0.id == prefs.selected && $0.status != "Download" && $0.canApps } ?? fallback }
     private var apps = [AppEntry](), maxSize = 1024
     private var brandURLs = [String: String]()
     let scheme = ArtScheme()
@@ -83,7 +94,10 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
         )
         library = try PackLibrary(install.state.appendingPathComponent("Packs"))
         icons = AppIcons(install.state.appendingPathComponent("App Icons"))
-        builtins = try Pack.bundled(at: install.resources.appendingPathComponent("Packs"))
+        published = try PublishedPacks(resources: install.resources, state: install.state)
+        builtins = try published.list()
+        library.projectKeys = Set(published.formats.map(\.Key))
+        library.projectApps = Set(published.formats.map(\.Application))
         super.init()
     }
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -304,7 +318,7 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
         let order: [String: [String]] = [
             "update": ["next"], "reset": ["pageName"], "tab": ["name"], "busy": ["message"], "editor": ["info"],
             "assignment": ["craft", "name"], "hotkey": ["info"], "keyStatus": ["message", "shortcut"], "doneDialog": ["id"],
-            "showError": ["id", "message"],
+            "showError": ["id", "message"], "packPreview": ["id", "token", "url"],
         ]
         guard let keys = order[fn] else { return }
         web.callAsyncJavaScript(
@@ -361,10 +375,13 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
             }
         }
         let settings = (try? JSONSerialization.jsonObject(with: JSONEncoder().encode(prefs))) ?? [:]
+        let fileArt = published.fileArt(fileSelection)
+        let fileSamples = fileArt.sorted { $0.key < $1.key }.map { ["name": $0.key, "image": scheme.link($0.value)] }
         let state: [String: Any] = [
             "apps": tiles, "preview": preview.sorted { ($0["name"] ?? "") < ($1["name"] ?? "") },
-            "packs": packs.map { ["id": $0.id, "title": $0.title] },
-            "pack": ["id": pack.id, "default": pack.isDefault, "personal": pack.personal] as [String: Any],
+            "packs": packs.map(\.model), "filePack": fileSelection.model,
+            "fileCount": fileArt.count, "fileSamples": fileSamples, "fileAction": "Choose project files…",
+            "pack": pack.model,
             "prefs": settings, "maxSize": maxSize, "dark": dark, "brands": brandURLs, "version": version,
             "status": status, "shortcut": shortcutText, "projectURL": Self.projectURL.absoluteString,
         ]
@@ -442,29 +459,81 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
         return panel.runModal() == .OK ? panel.url : nil
     }
     private func changeSelection(
-        _ id: String, message: String = "Pack preview selected. Apply icons to change the installed apps."
+        _ id: String, message: String = "Icon pack selected.", group: String = "apps"
     ) {
-        guard let pack = packs.first(where: { $0.id == id }) else { return }
-        let previous = prefs.selected
-        background(
-            "Loading " + pack.title + "…",
-            work: {
-                for file in pack.icons.values {
-                    guard file.isFileURL, fm.isReadableFile(atPath: file.path), Artwork.dimension(file) > 0 else {
-                        throw Problem("Pack artwork could not be loaded.")
-                    }
+        guard let pack = packs.first(where: { $0.id == id }),
+              group == "files" ? (pack.canFiles || pack.isDefault) : pack.canApps else { return }
+        let needsDownload = ["Download", "Update available"].contains(pack.status)
+        if needsDownload {
+            background("Downloading " + pack.title + "…", work: { try self.published.list("acquire", id: id) }) { rows in
+                self.builtins = rows
+                self.changeSelection(id, message: message, group: group)
+            }
+            return
+        }
+        let artwork = group == "files" ? published.fileArt(pack) : pack.icons
+        background("Loading " + pack.title + "…", work: {
+            for file in artwork.values {
+                guard file.isFileURL, fm.isReadableFile(atPath: file.path), Artwork.dimension(file) > 0 else {
+                    throw Problem("Pack artwork could not be loaded.")
                 }
-            },
-            done: { _ in
-                self.prefs.selected = pack.id
-                self.rangeForSelection()
-                self.status = message
-                self.savePrefs()
-            },
-            onError: { e in
-                self.prefs.selected = previous
-                self.report(e.localizedDescription)
-            })
+            }
+        }, done: { _ in
+            if group == "files" { self.prefs.fileSelected = id }
+            else { self.prefs.selected = id; self.rangeForSelection() }
+            self.status = message
+            self.savePrefs()
+        })
+    }
+    private func refreshPacks() {
+        show(tab: .manage)
+        background("Refreshing available icon packs…", work: { try self.published.list("refresh") }) { rows in
+            self.builtins = rows
+            self.status = "Available icon packs refreshed."
+        }
+    }
+    private func preview(_ id: String, token: Int) {
+        guard let pack = packs.first(where: { $0.id == id && $0.canPreview }) else { return }
+        previewQueue.cancelAllOperations()
+        previewQueue.addOperation {
+            guard let url = try? self.published.preview(pack) else { return }
+            DispatchQueue.main.async {
+                self.call("packPreview", ["id": id, "token": token, "url": self.scheme.link(url)])
+            }
+        }
+    }
+    private func reviewFiles(restore: Bool) {
+        let pack = fileSelection
+        let artwork = published.fileArt(pack)
+        let formats = published.formats.filter { restore || artwork[$0.Key] != nil }
+        guard !formats.isEmpty else { return }
+        let panel = NSOpenPanel()
+        panel.title = restore ? "Choose project files to restore" : "Choose project files to change"
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.allowedContentTypes = formats.flatMap { [$0.Key] + ($0.Aliases ?? []) }.compactMap { UTType(filenameExtension: String($0.dropFirst())) }
+        nativePanel = true
+        let response = panel.runModal()
+        nativePanel = false
+        guard response == .OK else { return }
+        let targets = panel.urls.compactMap { file -> AppEntry? in
+            let ext = "." + file.pathExtension.lowercased()
+            guard let format = formats.first(where: { $0.Key == ext || ($0.Aliases ?? []).contains(ext) }) else { return nil }
+            return AppEntry(name: file.lastPathComponent, craft: format.Key, url: file, launchURL: file,
+                            bundleID: "", scope: .personal, isDocument: true)
+        }
+        let store = AppIcons(install.state.appendingPathComponent("Project File Icons"))
+        let filePack = Pack(id: pack.id, name: pack.name, author: pack.author, icons: artwork)
+        let plan = store.review(apps: targets, pack: filePack, scope: .personal, restore: restore)
+        let count = plan.rows.filter(\.change).count
+        let details = plan.rows.map { $0.app.name + " — " + $0.message }.joined(separator: "\n")
+        guard count > 0 else { report(details); return }
+        let verb = restore ? "Restore" : "Apply"
+        guard alert(verb + " icons for these project files?", details, buttons: [verb, "Cancel"]) == 0 else { return }
+        background("Updating project file icons…", work: { try store.perform(plan, apps: targets, pack: filePack) }) { result in
+            self.status = "\(result.changed.count) project file icons updated."
+            if !result.errors.isEmpty { self.report(result.errors.joined(separator: "\n")) }
+        }
     }
     private func launch(_ app: AppEntry) {
         guard fm.fileExists(atPath: app.launchURL.path) else {
@@ -544,18 +613,18 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
             }
         }
     }
-    private func editor(_ mode: String) {
-        let pack = selected
+    private func editor(_ mode: String, group: String = "apps") {
+        let pack = group == "files" ? fileSelection : selected
         guard mode == "new" || (!pack.isDefault && (mode != "edit" || pack.personal)) else { return }
         editing = mode == "edit" ? pack : nil
-        files = mode == "new" ? [:] : pack.icons
+        files = mode == "new" ? [:] : pack.icons.merging(pack.documents) { _, doc in doc }
         modal = true
         let name = mode == "edit" ? pack.name : library.copyName(mode == "new" ? .defaults : pack)
         call(
             "editor",
             [
                 "info": [
-                    "apps": Craft.names, "edit": editing != nil, "files": files.mapValues(\.lastPathComponent),
+                    "apps": Craft.names + published.formats.map(\.Key), "edit": editing != nil, "files": files.mapValues(\.lastPathComponent),
                     "name": name, "author": mode == "new" ? "" : pack.author,
                 ] as [String: Any]
             ])
@@ -567,13 +636,15 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
         }
     }
     private func selectSaved(_ id: String, _ message: String, clearing: [String] = []) {
-        prefs.selected = id
+        if let pack = packs.first(where: { $0.id == id }), !pack.canApps {
+            prefs.fileSelected = id
+        } else { prefs.selected = id }
         rangeForSelection()
         status = message
         savePrefs(removing: clearing)
     }
-    private func exportPack() {
-        let pack = selected
+    private func exportPack(group: String = "apps") {
+        let pack = group == "files" ? fileSelection : selected
         guard pack.personal else { return }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.zip]
@@ -590,7 +661,7 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
         guard Craft.names.contains(craft), let url = chooseFile() else { return }
         let pack = selected
         let name = pack.personal ? pack.name : library.copyName(pack)
-        var assignments = pack.icons
+        var assignments = pack.icons.merging(pack.documents) { _, doc in doc }
         assignments[craft] = url
         let newFiles = assignments
         background(
@@ -653,7 +724,9 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
         case "hide": if !modal { window.orderOut(nil) }
         case "changeHotkey": openHotkey()
         case "launch": if let app = apps.first(where: { $0.url.path == data["id"] as? String }) { launch(app) }
-        case "select": changeSelection(data["id"] as? String ?? "")
+        case "select": changeSelection(data["id"] as? String ?? "", group: data["group"] as? String ?? "apps")
+        case "previewPack": preview(data["id"] as? String ?? "", token: data["token"] as? Int ?? 0)
+        case "reviewFiles": reviewFiles(restore: data["restore"] as? Bool ?? false)
         case "names":
             prefs.names = data["value"] as? Bool ?? true
             savePrefs()
@@ -677,9 +750,9 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
             style()
             savePrefs()
             render()
-        case "editor": editor(data["mode"] as? String ?? "new")
+        case "editor": editor(data["mode"] as? String ?? "new", group: data["group"] as? String ?? "apps")
         case "pickAssignment":
-            if modal, Craft.names.contains(craft), let file = chooseFile() {
+            if modal, Craft.names.contains(craft) || library.projectKeys.contains(craft), let file = chooseFile() {
                 files[craft] = file
                 call("assignment", ["craft": craft, "name": file.lastPathComponent])
             }
@@ -718,9 +791,9 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
                 call("doneDialog", ["id": "hotkey"])
             } catch { call("showError", ["id": "keyError", "message": error.localizedDescription]) }
         case "import": importPack(zip: data["zip"] as? Bool ?? true)
-        case "export": exportPack()
+        case "export": exportPack(group: data["group"] as? String ?? "apps")
         case "remove":
-            let p = selected
+            let p = data["group"] as? String == "files" ? fileSelection : selected
             if !p.isDefault
                 && alert(
                     "Remove " + p.name + "?",
@@ -731,7 +804,11 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
             {
                 do {
                     try library.remove(p)
-                    selectSaved(fallback.id, "Pack removed.")
+                    if p.id == prefs.fileSelected { prefs.fileSelected = nil }
+                    if p.id == prefs.selected { prefs.selected = fallback.id }
+                    status = "Pack removed."
+                    rangeForSelection()
+                    savePrefs()
                     render()
                 } catch { report(error.localizedDescription) }
             }
@@ -784,12 +861,15 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
             _ = add(app.name + (app.scope == .shared ? " (shared)" : ""), to: launchMenu) { self.launch(app) }
         }
         if apps.isEmpty { _ = add("No ArtCraft apps found", to: launchMenu, enabled: false) {} }
+        _ = add("Refresh available icon packs", to: menu) { self.refreshPacks() }
         let themes = sub("Change icon theme")
-        for p in packs {
-            let e = add(p.title, to: themes, enabled: !working) {
+        themes.delegate = trayPreview
+        for p in packs where p.canApps {
+            let e = add(p.title + "  ·  " + (p.isDefault ? "Default" : p.status), to: themes, enabled: !working) {
                 self.show(tab: .manage)
                 self.changeSelection(p.id)
             }
+            if p.canPreview { e.representedObject = p }
             e.state = p.id == selected.id ? .on : .off
         }
         menu.addItem(.separator())
@@ -835,5 +915,6 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
         trackingStatusMenu = true
         defer { trackingStatusMenu = false }
         present(menu, button)
+        trayPreview.dismiss()
     }
 }

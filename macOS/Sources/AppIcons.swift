@@ -172,8 +172,12 @@ final class AppIcons {
     }
     private func identity(_ app: AppEntry) throws -> String {
         var st = stat()
-        guard lstat(app.url.path, &st) == 0, st.st_mode & S_IFMT == (app.isAlias ? S_IFREG : S_IFDIR) else {
+        guard lstat(app.url.path, &st) == 0, st.st_mode & S_IFMT == (app.usesFileFork ? S_IFREG : S_IFDIR) else {
             throw Problem("App removed or moved.")
+        }
+        if app.isDocument {
+            guard st.st_nlink == 1 else { throw Problem("This document has multiple hard links.") }
+            return "\(st.st_dev)/\(st.st_ino)/\(app.craft)"
         }
         if app.isAlias {
             guard let resolved = try? URL(resolvingAliasFileAt: app.url, options: [.withoutUI, .withoutMounting]),
@@ -192,7 +196,7 @@ final class AppIcons {
             var row = ReviewRow(app: app, message: "")
             do {
                 row.identity = try identity(app)
-                let snapshot = try FinderIcon.capture(app.url, alias: app.isAlias)
+                let snapshot = try FinderIcon.capture(app.url, alias: app.usesFileFork)
                 row.before = snapshot.signature
                 let rec = try readRecord(app)
                 if let rec {
@@ -228,7 +232,7 @@ final class AppIcons {
                 row.message =
                     restore
                     ? "Restore original icon"
-                    : (app.isAlias ? "Change Finder alias icon" : "Change application icon")
+                    : (app.isDocument ? "Change project file icon" : (app.isAlias ? "Change Finder alias icon" : "Change application icon"))
             } catch { row.message = error.localizedDescription }
             return row
         }
@@ -250,17 +254,20 @@ final class AppIcons {
         guard let source = NSImage(data: data), let image = try NSImage(data: Artwork.png(source, pixels: 1024))
         else { throw Problem("Could not render the chosen artwork.") }
         let stage = fm.temporaryDirectory.appendingPathComponent("BetterIcon-" + UUID().uuidString)
-        if app.isAlias {
+        if app.isDocument {
+            guard fm.createFile(atPath: stage.path, contents: nil) else { throw Problem("Could not prepare a document icon.") }
+            try before.write(stage, alias: true)
+        } else if app.isAlias {
             try fm.copyItem(at: app.url, to: stage)
         } else {
             try fm.createDirectory(at: stage, withIntermediateDirectories: false)
         }
         defer { try? fm.removeItem(at: stage) }
-        if !app.isAlias && (before.file != nil || before.custom) { try before.write(stage, alias: false) }
+        if !app.usesFileFork && (before.file != nil || before.custom) { try before.write(stage, alias: false) }
         guard NSWorkspace.shared.setIcon(image, forFile: stage.path, options: []) else {
             throw Problem("macOS could not prepare this custom icon.")
         }
-        return (image, try FinderIcon.capture(stage, alias: app.isAlias))
+        return (image, try FinderIcon.capture(stage, alias: app.usesFileFork))
     }
     func perform(_ plan: Review, apps: [AppEntry], pack: Pack) throws -> IconResult {
         try withStateLock(root.appendingPathComponent("operations.lock"), blocking: false) {
@@ -286,7 +293,7 @@ final class AppIcons {
                 guard flock(targetLock, LOCK_EX | LOCK_NB) == 0 else {
                     throw Problem("Another account is changing this app’s icon.")
                 }
-                let before = try FinderIcon.capture(app.url, alias: app.isAlias)
+                let before = try FinderIcon.capture(app.url, alias: app.usesFileFork)
                 guard before.signature == row.before, try identity(app) == row.identity else {
                     throw Problem("App changed after review.")
                 }
@@ -318,22 +325,22 @@ final class AppIcons {
                 rec.pending = desired.artworkSignature
                 try save(rec, at: recordURL(app))
                 guard try identity(app) == row.identity,
-                    try FinderIcon.capture(app.url, alias: app.isAlias) == before
+                    try FinderIcon.capture(app.url, alias: app.usesFileFork) == before
                 else { throw Problem("App changed during preparation.") }
                 guard ws.setIcon(image, forFile: path, options: []) else {
                     throw Problem(
                         "macOS declined the icon change. Check write access and App Management in System Settings."
                     )
                 }
-                if plan.restore, try FinderIcon.capture(app.url, alias: app.isAlias) != desired {
+                if plan.restore, try FinderIcon.capture(app.url, alias: app.usesFileFork) != desired {
                     // setIcon notifies Icon Services; restore original resource
                     // bytes as well (including older Finder formats/aliases).
-                    try desired.write(app.url, alias: app.isAlias)
+                    try desired.write(app.url, alias: app.usesFileFork)
                     ws.noteFileSystemChanged(path)
                 }
-                let actual = try FinderIcon.capture(app.url, alias: app.isAlias)
+                let actual = try FinderIcon.capture(app.url, alias: app.usesFileFork)
                 guard plan.restore ? actual == desired : actual.artworkSignature == desired.artworkSignature else {
-                    try before.write(app.url, alias: app.isAlias)
+                    try before.write(app.url, alias: app.usesFileFork)
                     ws.noteFileSystemChanged(path)
                     throw Problem("macOS wrote unexpected icon data. The prior icon was restored.")
                 }

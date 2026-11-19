@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """BetterIcon's Linux desktop entry point."""
 import hashlib
+from concurrent.futures import ThreadPoolExecutor
 import os
 import sys
 from pathlib import Path
@@ -18,6 +19,7 @@ gi.require_version("WebKit2", "4.1")
 from gi.repository import Gdk, GdkX11, Gio, GLib, Gtk
 
 from catalog import CRAFT, DEFAULT_ID, DEFAULT_KEY, PROJECT, VERSION, Catalog, DesktopIcons, load_json
+from project_icons import ProjectIcons
 from packs import FORMATS, Packs
 from shortcuts import KEYS, backend, label
 from window import Popup
@@ -36,6 +38,12 @@ class BetterIcon(Gtk.Application):
         self.shortcut = self.popup = None
         self.editing, self.files = None, {}
         self.tray_menu = None
+        self.catalog_busy = False
+        self.worker = ThreadPoolExecutor(max_workers=1)
+        self.hover_worker = ThreadPoolExecutor(max_workers=1)
+        self.hover_job = None
+        self.tray_preview = None
+        self.tray_hover_generation = 0
 
     def do_startup(self):
         Gtk.Application.do_startup(self)
@@ -44,6 +52,7 @@ class BetterIcon(Gtk.Application):
         self.catalog = Catalog()
         self.packs = Packs(RES, self.catalog.data)
         self.icons = DesktopIcons(self.catalog.data)
+        self.projects = ProjectIcons(self.catalog.data, self.packs.formats)
         self.popup = Popup(self, self.catalog, RES, self.action, self.error)
         self.tray = Gtk.StatusIcon()
         self.tray.set_title("BetterIcon for ArtCraft")
@@ -82,12 +91,15 @@ class BetterIcon(Gtk.Application):
             self.shortcut.close()
         if hasattr(self, "tray"):
             self.tray.set_visible(False)
+        self.worker.shutdown(wait=False, cancel_futures=True)
+        self.hover_worker.shutdown(wait=False, cancel_futures=True)
         Gtk.Application.do_shutdown(self)
 
     @property
     def pack(self):
         p = self.catalog.prefs
-        return self.packs.all.get(p["selected"], self.packs.all[DEFAULT_ID])
+        pack = self.packs.all.get(p["selected"])
+        return pack if pack and pack.status != "Download" and pack.can_apps else self.packs.all[DEFAULT_ID]
 
     def error(self, message, field=None):
         self.status = str(message)
@@ -141,7 +153,13 @@ class BetterIcon(Gtk.Application):
         preview = [dict(id=k, name=k, craft=k, image=self.art(v)) for k, v in sorted((originals if pack.id == DEFAULT_ID else pack.icons).items())]
         choices = sorted((x for x in self.packs.all.values() if x.id not in p["hidden"]),
                          key=lambda x: (x.id != DEFAULT_ID, x.model()["title"].casefold()))
-        self.popup.js("update", dict(prefs=p, pack=pack.model(), packs=[x.model() for x in choices], apps=apps,
+        file_pack = self.packs.all.get(p.get("fileSelected"), self.packs.all[DEFAULT_ID])
+        if file_pack.status == "Download":
+            file_pack = self.packs.all[DEFAULT_ID]
+        file_art = self.packs.file_art(file_pack)
+        samples = [dict(name=k, image=self.art(v)) for k, v in sorted(file_art.items())]
+        self.popup.js("update", dict(filePack=file_pack.model(), fileCount=len(file_art), fileSamples=samples,
+                      fileAction="Apply project file icons…", prefs=p, pack=pack.model(), packs=[x.model() for x in choices], apps=apps,
                       preview=preview, brands=brands, dark=dark, maxSize=4096, version=VERSION, projectURL=PROJECT,
                       status=self.status, shortcut=label(p["hotkey"]) + (" (unavailable)" if self.key_error else ""),
                       emptyMessage="No ArtCraft apps found. Right-click the tray icon to refresh or choose an applications folder."))
@@ -153,14 +171,155 @@ class BetterIcon(Gtk.Application):
     def menu(self, icon, button, timestamp):
         menu = self.tray_menu = Gtk.Menu()
         choices = [("Open Launcher", lambda: self.popup.open()), ("Manage Icons…", lambda: self.popup.open("manage")),
-                   ("Refresh installed apps", self.refresh), ("Add an applications folder…", self.folder),
+                   ("Refresh available icon packs", self.refresh_packs), ("Refresh installed apps", self.refresh), ("Add an applications folder…", self.folder),
                    ("Change launcher shortcut…", self.show_key), ("Exit BetterIcon", self.safe_quit)]
         for title, callback in choices:
             item = Gtk.MenuItem.new_with_label(title)
             item.connect("activate", lambda _, action=callback: action())
             menu.append(item)
+        themes = Gtk.MenuItem.new_with_label("Change icon theme")
+        submenu = Gtk.Menu()
+        themes.set_submenu(submenu)
+        packs = [p for p in self.packs.all.values() if p.can_apps and p.id not in self.catalog.prefs["hidden"]]
+        for pack in sorted(packs, key=lambda p: (p.id != DEFAULT_ID, p.model()["title"].casefold())):
+            item = Gtk.MenuItem.new_with_label(pack.model()["title"] + "  ·  " + pack.status)
+            item.connect("activate", lambda _, key=pack.id: self.tray_select(key))
+            if pack.model()["hasPreview"]:
+                item.connect("select", lambda _, key=pack.id: self.tray_hover(key))
+            item.connect("deselect", lambda *_: self.clear_tray_preview())
+            submenu.append(item)
+        submenu.connect("hide", lambda *_: self.clear_tray_preview())
+        menu.connect("hide", lambda *_: self.clear_tray_preview())
+        menu.insert(themes, 2)
         menu.show_all()
         menu.popup(None, None, Gtk.StatusIcon.position_menu, icon, button, timestamp)
+
+    def tray_select(self, key):
+        self.popup.open("manage")
+        self.select_pack(key, "apps")
+
+    def clear_tray_preview(self):
+        self.tray_hover_generation += 1
+        if self.tray_preview:
+            self.tray_preview.destroy()
+            self.tray_preview = None
+
+    def tray_hover(self, key):
+        self.clear_tray_preview()
+        generation = self.tray_hover_generation
+        def display(path):
+            if not path or generation != self.tray_hover_generation:
+                return
+            device = Gdk.Display.get_default().get_default_seat().get_pointer()
+            _, x, y = device.get_position()
+            monitor = Gdk.Display.get_default().get_monitor_at_point(x, y).get_workarea()
+            win = Gtk.Window(type=Gtk.WindowType.POPUP)
+            win.set_accept_focus(False)
+            win.set_type_hint(Gdk.WindowTypeHint.TOOLTIP)
+            win.set_border_width(5)
+            win.add(Gtk.Image.new_from_file(str(path)))
+            win.move(x + 18 if x + 232 < monitor.x + monitor.width else x - 232,
+                     max(monitor.y, min(y + 16, monitor.y + monitor.height - 74)))
+            win.show_all()
+            win.get_window().set_pass_through(True)
+            self.tray_preview = win
+        def request():
+            if generation == self.tray_hover_generation:
+                self.load_preview(key, display)
+            return False
+        GLib.timeout_add(180, request)
+
+    def refresh_packs(self):
+        self.popup.open("manage")
+        self.catalog_operation("Refreshing available icon packs…", lambda: self.packs.run("refresh"),
+                               lambda rows: self.finish_catalog(rows, "Available icon packs refreshed."))
+
+    def finish_catalog(self, rows, message):
+        self.packs.use_catalog(rows)
+        self.status = message
+
+    def catalog_operation(self, message, work, done):
+        if self.catalog_busy:
+            return
+        self.catalog_busy = True
+        self.popup.js("busy", message)
+        def complete(future):
+            try:
+                done(future.result())
+            except Exception as exc:
+                self.error(exc)
+            finally:
+                self.catalog_busy = False
+                self.popup.js("busy", "")
+                self.render()
+            return False
+        self.worker.submit(work).add_done_callback(lambda future: GLib.idle_add(complete, future))
+
+    def select_pack(self, key, group):
+        pack = self.packs.all.get(key)
+        if not pack or not (pack.can_files if group == "files" else pack.can_apps):
+            return
+        download = pack.status in ("Download", "Update available")
+        def work():
+            rows = self.packs.run("acquire", key) if download else None
+            if rows is not None:
+                row = next(row for row in rows if row["ID"] == key)
+                files = (row["FileIcons"] or row["Icons"]) if group == "files" else row["Icons"]
+                GLib.idle_add(self.popup.js, "busy", "Loading " + pack.model()["title"] + "…")
+            else:
+                files = self.packs.file_art(pack) if group == "files" else pack.icons
+            for file in files.values():
+                if not Path(file).is_file():
+                    raise ValueError("Pack artwork could not be loaded.")
+            return rows
+        def done(rows):
+            if rows is not None:
+                self.packs.use_catalog(rows)
+            if group == "files":
+                self.catalog.update(fileSelected=key)
+            else:
+                self.catalog.update(selected=key, restored=[])
+            self.status = "Project file pack selected." if group == "files" else "App icon pack selected."
+        self.catalog_operation(("Downloading " if download else "Loading ") + pack.model()["title"] + "…", work, done)
+
+    def load_preview(self, key, display):
+        if key not in self.packs.all or not self.packs.all[key].model()["hasPreview"]:
+            return
+        if self.hover_job:
+            self.hover_job.cancel()
+        def ready(future):
+            if not future.cancelled():
+                try:
+                    path = future.result()
+                    if path:
+                        display(Path(path))
+                except (OSError, ValueError, GLib.Error):
+                    pass
+            return False
+        self.hover_job = self.hover_worker.submit(self.packs.preview, self.packs.all[key])
+        self.hover_job.add_done_callback(lambda f: GLib.idle_add(ready, f))
+
+    def select_personal(self, key):
+        if self.packs.all[key].can_apps:
+            self.catalog.update(selected=key, restored=[])
+        else:
+            self.catalog.update(fileSelected=key)
+
+    def review_files(self, restore):
+        pack = self.packs.all.get(self.catalog.prefs.get("fileSelected"), self.packs.all[DEFAULT_ID])
+        art = self.packs.file_art(pack)
+        if not restore and not art:
+            return
+        changes = self.projects.review({} if restore else art)
+        if not changes:
+            self.status = "No project file icons to change."
+            self.render()
+            return
+        if self.confirm("Restore project file icons?" if restore else "Apply project file icons?",
+                        ", ".join(sorted(changes)), "Restore" if restore else "Apply"):
+            self.projects.apply({} if restore else art)
+            self.status = "Project file icons restored." if restore else "Project file icons applied."
+            self.render()
 
     def safe_quit(self):
         if self.popup.modal or self.popup.native:
@@ -224,15 +383,15 @@ class BetterIcon(Gtk.Application):
     def choose_image(self):
         return self.choose("Choose icon artwork", Gtk.FileChooserAction.OPEN, ["*" + ext for ext in FORMATS])
 
-    def editor(self, mode):
-        pack = self.pack
+    def editor(self, mode, pack=None):
+        pack = pack or self.pack
         if mode == "edit" and not pack.personal:
             return
         self.editing = pack.id if mode == "edit" else None
-        self.files = {} if mode == "new" else dict(pack.icons)
+        self.files = {} if mode == "new" else {**pack.icons, **pack.documents}
         self.popup.modal = True
         self.popup.js("editor", dict(edit=mode == "edit", name="" if mode == "new" else pack.name,
-                      author="" if mode == "new" else pack.author, apps=CRAFT, files={k:v.name for k,v in self.files.items()}))
+                      author="" if mode == "new" else pack.author, apps=list(CRAFT) + list(self.packs.formats), files={k:v.name for k,v in self.files.items()}))
 
     def review(self, restore, only):
         self.catalog.discover()
@@ -252,6 +411,7 @@ class BetterIcon(Gtk.Application):
 
     def action(self, name, v):
         p, pop = self.catalog.prefs, self.popup
+        target = self.packs.all.get(p.get("fileSelected"), self.packs.all[DEFAULT_ID]) if v.get("group") == "files" else self.pack
         if name == "ready":
             pop.ready = True
             self.render()
@@ -264,6 +424,17 @@ class BetterIcon(Gtk.Application):
         if name == "dialogClosed":
             pop.modal = False
             self.editing, self.files = None, {}
+            return
+        if name == "previewPack":
+            self.load_preview(v.get("id"), lambda path: pop.js("packPreview", v.get("id"), v.get("token"), self.art(path)))
+            return
+        if self.catalog_busy:
+            return
+        if name == "select":
+            self.select_pack(v.get("id"), v.get("group", "apps"))
+            return
+        if name == "reviewFiles":
+            self.review_files(v.get("restore", False))
             return
         if name == "tab":
             pop.switch(v["name"])
@@ -296,10 +467,8 @@ class BetterIcon(Gtk.Application):
             self.render()
         elif name == "review":
             self.review(v.get("restore", False), v.get("only"))
-        elif name in ("select","size","names","appearance","brand"):
-            if name == "select" and v["id"] in self.packs.all:
-                self.catalog.update(selected=v["id"], restored=[])
-            elif name == "size":
+        elif name in ("size","names","appearance","brand"):
+            if name == "size":
                 self.catalog.update(size=max(24,min(4096,int(v["value"]))))
             elif name == "names":
                 self.catalog.update(names=bool(v["value"]))
@@ -310,8 +479,8 @@ class BetterIcon(Gtk.Application):
                 self.catalog.update(color=v["color"], variant=v["variant"])
             self.render()
         elif name == "editor":
-            self.editor(v["mode"])
-        elif name in ("pickAssignment", "clearAssignment") and v["craft"] in CRAFT:
+            self.editor(v["mode"], target)
+        elif name in ("pickAssignment", "clearAssignment") and (v["craft"] in CRAFT or v["craft"] in self.packs.formats):
             craft = v["craft"]
             if name == "clearAssignment":
                 self.files.pop(craft, None)
@@ -326,7 +495,7 @@ class BetterIcon(Gtk.Application):
             except (OSError, ValueError, GLib.Error) as exc:
                 self.error(exc, "editorError")
                 return
-            self.catalog.update(selected=key, restored=[])
+            self.select_personal(key)
             pop.js("doneDialog", "editor")
             self.render()
         elif name == "chooseIcon" and v.get("craft") in CRAFT:
@@ -339,19 +508,24 @@ class BetterIcon(Gtk.Application):
         elif name == "import":
             path = self.choose("Import icon pack", Gtk.FileChooserAction.OPEN, ["*.zip"]) if v["zip"] else self.choose("Import icon folder", Gtk.FileChooserAction.SELECT_FOLDER)
             if path:
-                self.catalog.update(selected=self.packs.import_from(path), restored=[])
+                self.select_personal(self.packs.import_from(path))
                 self.render()
-        elif name == "export" and self.pack.personal:
-            path = self.choose("Export icon pack", Gtk.FileChooserAction.SAVE, ["*.zip"], self.pack.name.replace("/", "-") + ".zip")
+        elif name == "export" and target.personal:
+            path = self.choose("Export icon pack", Gtk.FileChooserAction.SAVE, ["*.zip"], target.name.replace("/", "-") + ".zip")
             if path:
-                self.packs.export(self.pack, path)
-        elif name == "remove" and self.pack.id != DEFAULT_ID:
-            if self.confirm("Remove this icon pack?", self.pack.model()["title"], "Remove"):
-                if self.pack.personal:
-                    self.packs.remove(self.pack)
-                    self.catalog.update(selected=DEFAULT_ID)
+                self.packs.export(target, path)
+        elif name == "remove" and target.id != DEFAULT_ID:
+            if self.confirm("Remove this icon pack?", target.model()["title"], "Remove"):
+                changes = {}
+                if target.personal:
+                    self.packs.remove(target)
                 else:
-                    self.catalog.update(hidden=p["hidden"] + [self.pack.id], selected=DEFAULT_ID)
+                    changes["hidden"] = p["hidden"] + [target.id]
+                if p.get("selected") == target.id:
+                    changes["selected"] = DEFAULT_ID
+                if p.get("fileSelected") == target.id:
+                    changes["fileSelected"] = DEFAULT_ID
+                self.catalog.update(**changes)
                 self.render()
         elif name == "unhide":
             self.catalog.update(hidden=[])
