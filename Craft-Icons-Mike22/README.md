@@ -15,3 +15,5 @@ Artwork credited to **Mike22**. The styles are grouped in folders with app-named
 The three styles use the original 15 app PNGs per style. The monochrome artwork is pale and transparent, so its preview uses a dark background. [Original Artwork.zip](Original%20Artwork.zip) also includes file-type designs; BetterIcon 1.23.1 does not install file-type associations.
 
 The credit identifies the poster or supplied creator name. Reuse terms for this submission have not been established here; consult the original source or creator.
+
+Each style also has a `FileTypes` folder with 14 file type icons, one for each app, named for the app and a file type it opens, such as `PhotoCraft-PSD.png`. BetterIcon versions with file type icon packs use each one for every file type that app opens.
