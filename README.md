@@ -21,7 +21,7 @@ Open **Manage Icons** and choose an **App icon pack** and a **File type icon pac
 BetterIcon 1.28.0 recognizes **37 file icon designs** across native ArtCraft projects and groups of related formats. A pack can give PhotoCraft projects (`.pcraft`) their own icon, use one design for Photoshop documents (`.psd` and `.psb`), or give PDFs a separate icon. Coverage depends on the pack you choose. BetterIcon leaves your default apps in place.
 
 - **Windows** applies icons to registered file types in File Explorer. Extensions that share a Windows file class can share an icon.
-- **Linux** applies icons to MIME types for your user account. File managers may continue to show thumbnails for files they can preview.
+- **Linux** applies icons to MIME types for your user account. In GNOME Files, press **F5** to refresh a window that was already open. File managers may continue to show thumbnails for files they can preview.
 - **macOS** applies custom Finder icons to the files you choose. Select a folder to cover matching files in it and its subfolders. BetterIcon applies the pack to new matching files while it runs and catches up at the next start. Restore a folder to remove its BetterIcon file icons and stop watching it.
 
 On Windows and Linux, BetterIcon generally themes common formats like PDF when an ArtCraft app is their default opener. The preview before applying shows which types qualify.
@@ -36,7 +36,7 @@ Hover over a name in either picker to see up to three sample icons. **Download**
 
 ### Launch apps with one click
 
-Open **Launcher** from the tray or menu bar, or use the configurable keyboard shortcut. Click an app to open it, or type part of its name and press **Enter** or **Return**. Launcher shows the last applied app pack, with ArtCraft Launcher first when installed. The two tabs remember their window sizes separately. You can also change icon size, show or hide app names, and choose BetterIcon’s own icon and light or dark appearance.
+Open **Launcher** from the tray or menu bar, or use the configurable keyboard shortcut. Click an app to open it, or type part of its name and press **Enter** or **Return**. The icon brightens when you hover over it or select it with the keyboard. Launcher shows the last applied app pack, with ArtCraft Launcher first when installed. The two tabs remember their window sizes separately. You can also change icon size, show or hide app names, and choose BetterIcon’s own icon and light or dark appearance.
 
 <img src="docs/screenshots/1.28.0/launcher-macos.png" width="800" alt="BetterIcon’s macOS Launcher showing nine installed apps with OmegaDarling’s Foldmark artwork.">
 
@@ -71,7 +71,9 @@ For a portable pack, use transparent PNGs. Put app artwork at the top level, for
 
 ## Community icon packs
 
-BetterIcon includes styles from ArtCraft community creators. Browse the collections for artwork, credits, and source links. The nine [OmegaDarling themes](Craft-Icons-OmegaDarling/) include artwork for 20 apps. Existing `Craft-Icons-Zach` theme IDs remain compatible.
+BetterIcon includes styles from ArtCraft community creators. Browse the collections for artwork, credits, and source links. The nine OmegaDarling styles each include 20 app icons and a matching pack of 37 file icon designs. [Browse OmegaDarling’s artwork](Craft-Icons-OmegaDarling/)
+
+Existing `Craft-Icons-Zach` theme IDs remain compatible.
 
 | Creator | Collection |
 | --- | --- |
