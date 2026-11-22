@@ -63,11 +63,15 @@ Get the package for your system from [GitHub Releases](https://github.com/Binzii
 
 ## Make an icon pack
 
-The **BetterIcon Community Guide** covers designing readable small icons, naming app and document artwork, packaging a ZIP, and testing it in BetterIcon. Its desktop walkthrough uses 1.26.3. Pages 6–7 list the expanded 1.28.0 file types and filename groups. [Read the Community Guide PDF](docs/community/making-icons-for-artcraft.pdf)
+The **BetterIcon Community Guide** covers designing readable small icons, naming app and document artwork, packaging a ZIP, and testing it in BetterIcon. Pages 6–9 map all 96 supported extensions to 37 artwork keys and explain how to supply an app-level fallback. The desktop walkthrough uses 1.26.3. [Read the Community Guide PDF](docs/community/making-icons-for-artcraft.pdf)
 
 Try a working example with a PhotoCraft app icon and a matching project-file icon. In **Manage Icons**, choose **Import…** and pick the ZIP. [Download the Daybreak starter pack](docs/community/daybreak-starter-pack.zip?raw=true)
 
-For a portable pack, use transparent PNGs. Put app artwork at the top level, for example `PhotoCraft.png`, and file artwork in `FileTypes/`, for example `FileTypes/pcraft.png`. You can create an app pack, a file type pack, or a pack with both. Export personal packs as ZIPs to share them, or submit your artwork in a pull request with creator credits and any relevant source links.
+For a portable pack, use transparent PNGs. Put app artwork at the top level, for example `PhotoCraft.png`, and file artwork in `FileTypes/`, for example `FileTypes/pcraft.png`. You can create an app pack, a file type pack, or a pack with both.
+
+Give shared artwork a format-neutral design. For example, `.obj` and `.fbx` both use `FileTypes/obj.png`. A pack can also provide `FileTypes/TextureCraft-files.png` as a fallback for TextureCraft’s supported groups that have no dedicated artwork.
+
+Export personal packs as ZIPs to share them, or submit your artwork in a pull request with creator credits and any relevant source links.
 
 ## Community icon packs
 
