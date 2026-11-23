@@ -1,5 +1,6 @@
 import AppKit
 import Carbon.HIToolbox
+import CryptoKit
 import UniformTypeIdentifiers
 import WebKit
 
@@ -318,7 +319,9 @@ import WebKit
             && mike.count == 3 && mike.allSatisfy { $0.canApps && $0.canFiles }
             && packs.filter(\.canFiles).count == 17 && packs.filter(\.canApps).count == 27,
             "Komplett's five packs and Mike22's three file type sets are file type packs")
-        _ = try published.list("acquire", id: "Craft-Icons-Zach/Cardboard")
+        // Cardboard's PNG files serve as PNG art in the checks below, so it is fetched without its WebP twins. The others
+        // come as the Mac fetches them: an icon's WebP twin alone.
+        _ = try published.list("acquire", id: "Craft-Icons-Zach/Cardboard", readsWebP: false)
         _ = try published.list("acquire", id: "Craft-Icons-Komplett/Standard")
         _ = try published.list("acquire", id: "Craft-Icons-Mike22/CraftApps AIO November - Dark")
         packs = try published.list("acquire", id: "Craft-Icons-Zach/Edgework")
@@ -327,6 +330,12 @@ import WebKit
         let photoArt = cardboard.icons["PhotoCraft"]!
         let filmArt = cardboard.icons["FilmCraft"]!
         let standard = packs.first { $0.id == "Craft-Icons-Komplett/Standard" }!
+        let standardFiles = (fm.enumerator(at: root.appendingPathComponent("test-pack-cache/pack-cache/downloads"), includingPropertiesForKeys: nil)?
+            .compactMap { $0 as? URL } ?? []).filter { $0.path.contains("/Craft-Icons-Komplett/Standard/") && !$0.hasDirectoryPath }
+        try check(
+            Set(cardboard.icons.values.map(\.pathExtension)) == ["png"] && !standardFiles.isEmpty
+                && Set(standardFiles.map(\.pathExtension)) == ["webp"] && Set(standard.appFiles.values.map(\.pathExtension)) == ["webp"],
+            "a published pack downloads one file per icon: its WebP twins, or its PNG files when asked for those")
         let standardArt = published.fileArt(standard), standardTiles = published.fileTiles(standard)
         try check(!cardboard.canFiles && published.fileArt(cardboard).isEmpty && standard.appFiles.count == 14
             && standardArt.count == 27 && standardArt[".psd"] == standard.appFiles["PhotoCraft"] && standardArt[".anicraft"] == nil
@@ -1059,6 +1068,39 @@ import WebKit
         try await until("model.prefs.color==='clay'&&model.prefs.variant==='dark'&&model.prefs.theme==='Dark'&&model.dark===true")
         let clay = try await schemeMatches("#4b3832", dark: true)
         try check(clay, "choosing Clay Dark gives the app that icon's dark color scheme with readable text")
+        // The loading bars, which the system would draw in its own colors, take the scheme's too, as on Windows: the
+        // button gray with an accent chunk a quarter of the bar wide that moves across. With Reduce Motion on, the whole
+        // bar takes the accent and fades instead. The chunk is the bar's own background picture, which shows only while
+        // the page keeps WebKit's own inner bar transparent; a page loaded from a file can't read its style sheet back,
+        // so that rule is looked for in the file. The scroll bars take the scheme's colors where this WebKit can color
+        // them.
+        let chrome = try await js("""
+            (() => {
+              const css = getComputedStyle(document.documentElement), value = name => css.getPropertyValue('--' + name).trim();
+              const hex = color => '#' + color.match(/\\d+/g).slice(0, 3).map(v => Number(v).toString(16).padStart(2, '0')).join('');
+              const stops = image => (image.match(/rgba?\\([^)]*\\)/g) || []).map(hex).join(' ');
+              const bars = [el('busy').querySelector('progress'), el('offerBar')].map(bar => getComputedStyle(bar));
+              return {
+                face: value('control-face'), thumb: value('scroll-thumb'), track: value('scroll-track'), accent: value('accent'),
+                bars: bars.map(look => hex(look.backgroundColor) + ' ' + look.animationName).join('|'),
+                drawn: bars.map(look => stops(look.backgroundImage) + ' ' + look.backgroundSize + ' ' + look.backgroundRepeat).join('|'),
+                still: String(matchMedia('(prefers-reduced-motion: reduce)').matches),
+                scroll: CSS.supports('scrollbar-color', 'red blue')
+                  ? (css.scrollbarColor.match(/rgba?\\([^)]*\\)/g) || []).map(hex).join(' ') : 'not colored',
+              };
+            })()
+            """) as? [String: String]
+        let accent = chrome?["accent"] ?? ""
+        let (move, chunk) = chrome?["still"] == "true" ? ("loading-still", "100% 100%") : ("loading", "25% 100%")
+        let drawn = "\(accent) \(accent) \(chunk) no-repeat"
+        let sheet = try String(contentsOf: install.resources.appendingPathComponent("Web/popup.css"), encoding: .utf8)
+        let inner = sheet.range(of: #"progress::-webkit-progress-bar \{\s*background: transparent;\s*\}"#, options: .regularExpression) != nil
+        try check(
+            chrome?["face"] == "#7f726d" && chrome?["thumb"] == "#7f726d" && chrome?["track"] == "#42312c"
+                && chrome?["bars"] == "#7f726d \(move)|#7f726d \(move)" && accent.count == 7 && accent != "#7f726d"
+                && chrome?["drawn"] == "\(drawn)|\(drawn)" && inner
+                && ["#7f726d #42312c", "not colored"].contains(chrome?["scroll"] ?? ""),
+            "the loading bars take Clay Dark's colors too, the button gray with an accent chunk that moves, or fades with Reduce Motion on, and the scroll bars take them where this WebKit can color them")
         _ = try await js("el('new').click();true")
         try await until("el('editor').open&&el('assignments').children.length===57")
         let fileRows = try await js("""
@@ -3889,6 +3931,52 @@ import WebKit
         let twins = try PublishedPacks.packs(from: JSONSerialization.data(withJSONObject: [entry(
             ["PhotoCraft": path("PhotoCraft.webp")], fallbacks: [path("PhotoCraft.webp"): [path("PhotoCraft.png")]])]))
         try check(twins.first?.icons.count == 1 && pack.icons.count == 2, "Twins do not raise the icon count")
+        // Real downloads through the helper from a local pack source. macOS reads WebP, so a download fetches an icon's
+        // WebP twin alone; a WebP twin the Mac can't read brings its PNG twin, fetched then.
+        let twinRoot = root.appendingPathComponent("Twin downloads")
+        let twinResources = twinRoot.appendingPathComponent("Resources")
+        try fm.createDirectory(at: twinResources.appendingPathComponent("Catalog"), withIntermediateDirectories: true)
+        try fm.createDirectory(at: twinRoot.appendingPathComponent("Helpers"), withIntermediateDirectories: true)
+        try fm.createSymbolicLink(
+            at: twinRoot.appendingPathComponent("Helpers/packstore"),
+            withDestinationURL: resources.deletingLastPathComponent().appendingPathComponent("Helpers/packstore"))
+        for name in ["ProjectFileTypes.json", "previews.tsv"] {
+            try fm.copyItem(
+                at: resources.appendingPathComponent("Catalog/" + name), to: twinResources.appendingPathComponent("Catalog/" + name))
+        }
+        let twinFiles = [
+            "Craft-Icons-Checks/Light/PhotoCraft.webp": webp("A13"), "Craft-Icons-Checks/Light/PhotoCraft.png": bluePNG,
+            "Craft-Icons-Checks/Unreadable/PhotoCraft.webp": bluePNG, "Craft-Icons-Checks/Unreadable/PhotoCraft.png": bluePNG,
+        ]
+        let twinSource = try folder(twinRoot.appendingPathComponent("Source"), twinFiles)
+        func blob(_ data: Data) -> String {
+            Insecure.SHA1.hash(data: Data("blob \(data.count)\0".utf8) + data).map { String(format: "%02x", $0) }.joined()
+        }
+        let twinRows = twinFiles.keys.sorted().map { "\(blob(twinFiles[$0]!))\t\($0)\t\($0)\t\(digest(twinFiles[$0]!))" }
+        try Data(([String(repeating: "1", count: 40)] + twinRows).joined(separator: "\n").utf8)
+            .write(to: twinResources.appendingPathComponent("Catalog/packs.tsv"))
+        setenv("BETTERICON_PACK_SOURCE", twinSource.path, 1)
+        defer { unsetenv("BETTERICON_PACK_SOURCE") }
+        let twinState = twinRoot.appendingPathComponent("State")
+        let downloads = try PublishedPacks(resources: twinResources, state: twinState)
+        func fetched(_ name: String) -> [String] {
+            let all = fm.enumerator(at: twinState.appendingPathComponent("pack-cache/downloads"), includingPropertiesForKeys: nil)?
+                .compactMap { $0 as? URL } ?? []
+            return all.filter { $0.path.contains("/Craft-Icons-Checks/\(name)/") }.map(\.lastPathComponent).sorted()
+        }
+        let light = try downloads.list("acquire", id: "Craft-Icons-Checks/Light").first { $0.id == "Craft-Icons-Checks/Light" }
+        let afterUnreadable = try downloads.list("acquire", id: "Craft-Icons-Checks/Unreadable")
+        let unreadable = afterUnreadable.first { $0.id == "Craft-Icons-Checks/Unreadable" }
+        let lightAfter = afterUnreadable.first { $0.id == "Craft-Icons-Checks/Light" }
+        unsetenv("BETTERICON_PACK_SOURCE")
+        try check(
+            fetched("Light") == ["PhotoCraft.webp"] && light?.icons["PhotoCraft"]?.pathExtension == "webp"
+                && fetched("Unreadable") == ["PhotoCraft.png", "PhotoCraft.webp"]
+                && unreadable?.icons["PhotoCraft"]?.pathExtension == "png" && unreadable?.leftOut.isEmpty == true,
+            "a download fetches an icon's WebP twin alone, and its PNG twin too when the Mac can't read the WebP")
+        try check(
+            light?.status == "Downloaded" && lightAfter?.status == "Downloaded" && lightAfter?.icons["PhotoCraft"]?.pathExtension == "webp",
+            "after one pack's PNG files were fetched for a WebP the Mac can't read, a pack downloaded as WebP alone still counts as downloaded")
         let stripPack = try PublishedPacks.packs(from: JSONSerialization.data(withJSONObject: [entry(["PhotoCraft": path("Strip/PhotoCraft.webp")])]))
         let strip = try stripPack.first.flatMap { try published.preview($0) }
         let tile = strip.flatMap { NSBitmapImageRep(data: (try? Data(contentsOf: $0)) ?? Data()) }?.colorAt(x: 32, y: 32)?

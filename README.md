@@ -96,7 +96,7 @@ Export personal packs as ZIPs to share them, or submit your artwork in a pull re
 
 ## Community icon packs
 
-The 1.28.0 catalog has 41 community packs. The nine OmegaDarling styles each include 20 app icons and a matching pack of 37 file icon designs with hover previews. The published packs have yet to add WebP artwork or opt in to unlisted file types. [Browse OmegaDarling’s artwork](Craft-Icons-OmegaDarling/)
+The catalog has 41 community packs. The nine OmegaDarling styles each include 20 app icons and a matching pack of 37 file icon designs with hover previews. Most icons also come as a lighter WebP copy, at most 1,024 pixels per side. BetterIcon 1.29.0 and later download one file per icon, the WebP where the computer can read it and the PNG otherwise. With WebP, all the packs together are about 44 MB in place of 433 MB. The published packs have yet to opt in to unlisted file types. [Browse OmegaDarling’s artwork](Craft-Icons-OmegaDarling/)
 
 Existing `Craft-Icons-Zach` theme IDs remain compatible.
 

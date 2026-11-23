@@ -354,6 +354,9 @@ static class TrayTests
         }
         AppEntry photo = catalog.Apps.First(app => app.Application == "PhotoCraft"), film = catalog.Apps.First(app => app.Application == "FilmCraft");
         Dictionary<string, byte[]> bundled = basis.Icons.ToDictionary(icon => icon.Application, icon => File.ReadAllBytes(String.IsNullOrEmpty(icon.PreviewPath) ? icon.Path : icon.PreviewPath));
+        // A personal pack keeps WebP artwork as PNG, so the copy of an icon whose published file is a WebP twin is that PNG.
+        Dictionary<string, byte[]> kept = basis.Icons.ToDictionary(icon => icon.Application, icon =>
+            String.Equals(Path.GetExtension(String.IsNullOrEmpty(icon.PreviewPath) ? icon.Path : icon.PreviewPath), ".webp", StringComparison.OrdinalIgnoreCase) ? WebpArtwork.ToPng(bundled[icon.Application]) : bundled[icon.Application]);
         byte[] shortcut = File.ReadAllBytes(Path.Combine(root, "PhotoCraft.lnk"));
         try {
             Check(!Descendants(form).Any(control => control.Text == "Restore one app" || control.Text == "Restore app default..." || control.AccessibleName == "App to restore"),
@@ -369,7 +372,7 @@ static class TrayTests
             ThemeEntry saved = (ThemeEntry)themes.SelectedItem;
             Check(saved.Managed && saved.Author == basis.Author && saved.IconCount == basis.IconCount && library.VisibleThemes(new ThemeEntry[0]).Length == count + 1,
                 "Editing a built-in icon creates one complete personal pack with the existing author credit");
-            Check(saved.Icons.All(icon => File.ReadAllBytes(icon.Path).SequenceEqual(icon.Application == photo.Application ? File.ReadAllBytes(png) : bundled[icon.Application]))
+            Check(saved.Icons.All(icon => File.ReadAllBytes(icon.Path).SequenceEqual(icon.Application == photo.Application ? File.ReadAllBytes(png) : kept[icon.Application]))
                 && basis.Icons.All(icon => File.ReadAllBytes(String.IsNullOrEmpty(icon.PreviewPath) ? icon.Path : icon.PreviewPath).SequenceEqual(bundled[icon.Application])),
                 "A context edit replaces only the chosen assignment and leaves bundled source artwork intact");
             List<Bitmap> appImages = (List<Bitmap>)field("appArtwork"), packImages = (List<Bitmap>)field("packArtwork");
@@ -388,7 +391,7 @@ static class TrayTests
             ThemeEntry edited = (ThemeEntry)themes.SelectedItem;
             Check(edited.LibraryId == saved.LibraryId && edited.Id != saved.Id && edited.Name == saved.Name && library.VisibleThemes(new ThemeEntry[0]).Length == count + 1
                 && File.ReadAllBytes(edited.Icons.Single(icon => icon.Application == photo.Application).Path).SequenceEqual(File.ReadAllBytes(png))
-                && File.ReadAllBytes(saved.Icons.Single(icon => icon.Application == film.Application).Path).SequenceEqual(bundled[film.Application]),
+                && File.ReadAllBytes(saved.Icons.Single(icon => icon.Application == film.Application).Path).SequenceEqual(kept[film.Application]),
                 "A second edit updates the same personal pack while retaining other choices and immutable earlier revisions");
             int filmIndex = Array.IndexOf(catalog.Apps, film);
             Check(appImages[appIndex].GetPixel(64, 64).ToArgb() == Color.Lime.ToArgb() && appImages[filmIndex].GetPixel(64, 64).ToArgb() != Color.Magenta.ToArgb() && preferences.AppliedTheme == saved.Id,
@@ -730,6 +733,8 @@ static class TrayTests
                     LinkLabel shortcutLink = (LinkLabel)typeof(LauncherForm).GetField("launcherShortcut", instance).GetValue(form);
                     Check(shortcutLink.Enabled && shortcutLink.Text.EndsWith(unavailable + " (unavailable)"),
                         "Startup identifies a saved shortcut held by another window and keeps the editor accessible");
+                    // This is the thread's second message loop: scroll bar skins must still follow their bars in it.
+                    AppearanceTests.CheckSkinsInLaterLoop(Check);
                     stop.Set();
                 }
                 catch (Exception error) { failure = error; timer.Stop(); context.ExitThread(); }

@@ -174,7 +174,7 @@ namespace BetterIcon.Tray
     {
         readonly TableLayoutPanel loadingPanel = new TableLayoutPanel();
         readonly Label loadingMessage = new Label();
-        readonly ProgressBar loadingProgress = new ProgressBar();
+        readonly ProgressBar loadingProgress = new ThemedProgressBar();
         Task packLoadTask = Task.FromResult(0);
         ThemeEntry loadingTheme;
         object loadingFileTheme;

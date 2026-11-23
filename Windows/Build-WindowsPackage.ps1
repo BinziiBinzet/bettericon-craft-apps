@@ -67,19 +67,25 @@ try {
         $rows = [IO.File]::ReadAllLines($catalog)
         if ($rows[0] -cne ([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'ArtworkRevision.txt'))).Trim()) { throw 'Incorrect seed artwork revision.' }
         # The download size of each pack comes from the artwork checked here, so it always matches this catalog.
-        $packBytes = [Collections.Generic.SortedDictionary[string,long]]::new([StringComparer]::Ordinal)
-        $packFiles = @{}
         foreach ($row in $rows[1..($rows.Count-1)]) {
             $parts = $row.Split([char]9)
             if ($parts.Count -ne 4) { throw "Artwork mismatch: $row" }
             $artwork = Join-Path $repository $parts[2]
             if ((Get-FileHash -LiteralPath $artwork -Algorithm SHA256).Hash -ine $parts[3]) { throw "Artwork mismatch: $row" }
-            $asset = & (Get-Module BetterIcon.Windows) { param($path) Get-CatalogAsset $path } $parts[2]
-            $group = if ($asset.Group -eq 'Craft-Icons-OmegaDarling') { 'Craft-Icons-Zach' } else { $asset.Group }
-            $id = $group + '/' + $asset.Name
-            $packBytes[$id] = $(if ($packBytes.ContainsKey($id)) { $packBytes[$id] } else { [long]0 }) + ([IO.FileInfo]::new($artwork)).Length
-            $packFiles[$id] = [int]$packFiles[$id] + 1
         }
+        # A download fetches one twin per icon (Get-PackDownloadAssets): the WebP where the PC reads WebP, else the PNG.
+        $packSizes = & (Get-Module BetterIcon.Windows) {
+            param($lines, $repository)
+            # Read-PackSnapshot names each pack's download folder under a state folder; nothing is written there.
+            $packs = @((Read-PackSnapshot $lines (Join-Path ([IO.Path]::GetTempPath()) 'bettericon-sizes')).Values)
+            $ids = [string[]]@($packs | ForEach-Object Id); [Array]::Sort($ids, [StringComparer]::Ordinal)
+            foreach ($id in $ids) {
+                $pack = $packs | Where-Object Id -ceq $id
+                $readable = @(Get-PackDownloadAssets $pack $true); $plain = @(Get-PackDownloadAssets $pack $false)
+                $bytes = foreach ($set in @(,$readable) + @(,$plain)) { [long](@($set | ForEach-Object { ([IO.FileInfo]::new((Join-Path $repository $_.Source))).Length }) | Measure-Object -Sum).Sum }
+                $id + [char]9 + $bytes[0] + [char]9 + $readable.Count + [char]9 + $bytes[1]
+            }
+        } $rows $repository
         # OnDemand.tsv tells the app that no pack artwork is installed beside it.
         [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive,$catalog,'Windows/OnDemand.tsv')
         $fileCount++
@@ -87,8 +93,8 @@ try {
         # its #catalog line names the SHA-256 of the exact catalog bytes packaged as OnDemand.tsv.
         $sha = [Security.Cryptography.SHA256]::Create()
         try { $catalogHash = ([BitConverter]::ToString($sha.ComputeHash([IO.File]::ReadAllBytes($catalog)))).Replace('-','').ToLowerInvariant() } finally { $sha.Dispose() }
-        $sizeLines = @('# Download size in bytes and file count of each pack in OnDemand.tsv. Written by Build-WindowsPackage.ps1 from the artwork it checked.', ('#catalog' + [char]9 + $catalogHash)) +
-            @(foreach ($id in $packBytes.Keys) { $id + [char]9 + $packBytes[$id] + [char]9 + $packFiles[$id] })
+        $sizeLines = @('# Download size in bytes and file count of each pack in OnDemand.tsv where the PC reads WebP, then the size where it can''t. Written by Build-WindowsPackage.ps1 from the artwork it checked.', ('#catalog' + [char]9 + $catalogHash)) +
+            @($packSizes)
         $sizeEntry = $archive.CreateEntry('Windows/PackSizes.tsv', [IO.Compression.CompressionLevel]::Optimal)
         $sizeStream = $sizeEntry.Open()
         try { $sizeBytes = [Text.UTF8Encoding]::new($false).GetBytes(($sizeLines -join "`n") + "`n"); $sizeStream.Write($sizeBytes, 0, $sizeBytes.Length) } finally { $sizeStream.Dispose() }

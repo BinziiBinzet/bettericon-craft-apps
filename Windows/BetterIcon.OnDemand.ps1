@@ -21,11 +21,74 @@ function Test-PackAsset([string]$Path, $Asset) {
     } finally { $sha.Dispose(); $stream.Dispose() }
 }
 
-function Test-DownloadedPack($Pack, [switch]$Verify) {
+function Get-PackItemKey([string]$File) {
+    # The icon a pack file draws: files whose names differ only in their extension are one icon in several formats.
+    $File.Substring(0, $File.Length - [IO.Path]::GetExtension($File).Length)
+}
+
+function Get-PackTwins($Pack) {
+    # The icons of a pack published as WebP and in another format too, by Get-PackItemKey.
+    $webp = @{}; $other = @{}; $twins = @{}
+    foreach ($asset in $Pack.Assets.Values) {
+        $key = Get-PackItemKey $asset.File
+        if ([IO.Path]::GetExtension($asset.File) -ieq '.webp') { $webp[$key] = $true } else { $other[$key] = $true }
+    }
+    foreach ($key in $webp.Keys) { if ($other.ContainsKey($key)) { $twins[$key] = $true } }
+    return $twins
+}
+
+function Test-PackWebpReadable {
+    # Whether every part of BetterIcon on this PC reads WebP pack artwork. Shared shortcuts change in an elevated pass, which
+    # may read WebP only through Windows' own decoder or a WebP support only administrators can change (SharedDecoder), so
+    # BetterIcon's per-user WebP support does not count here.
+    [bool]((Get-WebpArtworkType)::SharedDecoder)
+}
+
+function Get-PackDownloadAssets($Pack, [bool]$Webp) {
+    # The files a download fetches: one twin per icon. Where this PC reads WebP (-Webp), a PNG gives way to its WebP twin; where
+    # it can't, a WebP gives way to the other files of its icon. Every other file is fetched as it is.
+    $twins = Get-PackTwins $Pack
+    foreach ($asset in $Pack.Assets.Values) {
+        if ($twins.ContainsKey((Get-PackItemKey $asset.File))) {
+            $extension = [IO.Path]::GetExtension($asset.File)
+            if (($Webp -and $extension -ieq '.png') -or (!$Webp -and $extension -ieq '.webp')) { continue }
+        }
+        $asset
+    }
+}
+
+function Test-DownloadedPack($Pack, [switch]$Verify, $Webp) {
+    # Complete when the download wrote .complete and every icon has its files. Of twins (an icon published as WebP and in
+    # another format) a download fetches one (Get-PackDownloadAssets), so the icon needs one of its other files, or its WebP
+    # where this PC reads WebP (Test-PackWebpReadable, unless -Webp answers) and the download recorded no problem with it.
+    # With -Verify, every file that is there must match its checksum too.
     if (![IO.File]::Exists((Join-Path $Pack.Path '.complete'))) { return $false }
+    $twins = Get-PackTwins $Pack
+    $usable = @{}; $webpReady = @{}; $recorded = $null
     foreach ($asset in $Pack.Assets.Values) {
         $path = Join-Path $Pack.Path $asset.File
-        if (![IO.File]::Exists($path) -or ($Verify -and !(Test-PackAsset $path $asset))) { return $false }
+        $present = [IO.File]::Exists($path)
+        if ($present -and $Verify -and !(Test-PackAsset $path $asset)) { return $false }
+        $key = Get-PackItemKey $asset.File
+        if (!$twins.ContainsKey($key)) {
+            if (!$present) { return $false }
+            continue
+        }
+        if (!$usable.ContainsKey($key)) { $usable[$key] = $false }
+        if (!$present) { continue }
+        if ([IO.Path]::GetExtension($asset.File) -ine '.webp') { $usable[$key] = $true; continue }
+        if ($null -eq $recorded) {
+            $recorded = @{}
+            $list = Join-Path $Pack.Path '.webp-problems'
+            if ([IO.File]::Exists($list)) { foreach ($line in [IO.File]::ReadAllLines($list)) { $recorded[$line.Split([char]9)[0]] = $true } }
+        }
+        if (!$recorded.ContainsKey($asset.File)) { $webpReady[$key] = $true }
+    }
+    foreach ($key in @($usable.Keys)) {
+        if ($usable[$key]) { continue }
+        if (!$webpReady.ContainsKey($key)) { return $false }
+        if ($null -eq $Webp) { $Webp = Test-PackWebpReadable }
+        if (!$Webp) { return $false }
     }
     return $true
 }
@@ -35,7 +98,10 @@ function Get-LegacyPackPath($Pack,[string]$State) {
     $legacy = Join-Path (Join-Path (Join-Path $State 'downloads/4a2527ea0c2384904a1a3e878860f974c8f726c4') $Pack.Folder) $Pack.Name
     if (![IO.File]::Exists((Join-Path $legacy '.complete'))) { return }
     $files = @(Get-ChildItem -LiteralPath $legacy -File -Recurse | Where-Object Extension -in '.png','.ico','.svg')
-    if ($files.Count -ne $Pack.Assets.Count) { return }
+    # Those versions read no WebP. A WebP published since is a twin such a copy can do without, as long as it has a twin.
+    $twins = Get-PackTwins $Pack
+    $webp = @($Pack.Assets.Values | Where-Object { [IO.Path]::GetExtension($_.File) -ieq '.webp' })
+    if (@($webp | Where-Object { !$twins.ContainsKey((Get-PackItemKey $_.File)) }).Count -or $files.Count -ne $Pack.Assets.Count - $webp.Count) { return }
     foreach ($file in $files) {
         $relative = $file.FullName.Substring($legacy.Length+1).Replace('\','/')
         $asset = Get-CatalogAsset ($Pack.Folder + '/' + $Pack.Name + '/' + $relative)
@@ -135,10 +201,13 @@ function Get-DownloadCatalog {
 }
 
 function Get-PackDownloadSizes {
-    # Download size in bytes of each pack ID in the installed catalog. Build-WindowsPackage.ps1 measures the artwork it
-    # packages against and writes PackSizes.tsv beside the catalog; a table written for another catalog is ignored. A
-    # source checkout has the artwork itself, so its sizes are measured here.
+    # Download size in bytes of each pack ID in the installed catalog, as a download on this PC fetches it: one twin per icon
+    # (Get-PackDownloadAssets). Build-WindowsPackage.ps1 measures the artwork it packages against and writes PackSizes.tsv
+    # beside the catalog: column 2 is the size where the PC reads WebP, column 4 where it can't (a table without column 4
+    # has one size). A table written for another catalog is ignored. A source checkout has the artwork itself, so its sizes
+    # are measured here.
     $sizes = @{}
+    $webp = $null
     $seedPath = Get-SeedCatalogPath
     $table = Join-Path $PSScriptRoot 'PackSizes.tsv'
     if ([IO.File]::Exists($table)) {
@@ -149,20 +218,28 @@ function Get-PackDownloadSizes {
             foreach ($line in $lines) {
                 if ($line.StartsWith('#')) { continue }
                 $f = $line.Split([char]9)
-                if ($f.Count -eq 3 -and $f[1] -match '^\d{1,12}$') { $sizes[$f[0]] = [long]$f[1] }
+                if ($f.Count -notin 3,4 -or $f[1] -notmatch '^\d{1,12}$' -or ($f.Count -eq 4 -and $f[3] -notmatch '^\d{1,12}$')) { continue }
+                $size = $f[1]
+                if ($f.Count -eq 4 -and $f[3] -cne $f[1]) {
+                    if ($null -eq $webp) { $webp = Test-PackWebpReadable }
+                    if (!$webp) { $size = $f[3] }
+                }
+                $sizes[$f[0]] = [long]$size
             }
             return $sizes
         }
     }
-    foreach ($line in @([IO.File]::ReadAllLines($seedPath) | Select-Object -Skip 1)) {
-        $f = $line.Split([char]9)
-        if ($f.Count -ne 4) { continue }
-        $asset = Get-CatalogAsset $f[2]
-        $file = Join-Path $script:RepositoryRoot $f[2].Replace('/', '\')
-        if (!$asset -or ![IO.File]::Exists($file)) { continue }
-        $group = if ($asset.Group -eq 'Craft-Icons-OmegaDarling') { 'Craft-Icons-Zach' } else { $asset.Group }
-        $id = $group + '/' + $asset.Name
-        $sizes[$id] = [long]$(if ($sizes.ContainsKey($id)) { $sizes[$id] } else { 0 }) + ([IO.FileInfo]::new($file)).Length
+    foreach ($pack in @((Read-PackSnapshot ([IO.File]::ReadAllLines($seedPath)) (Get-PackState)).Values)) {
+        $readable = $false
+        if ((Get-PackTwins $pack).Count) {
+            if ($null -eq $webp) { $webp = Test-PackWebpReadable }
+            $readable = $webp
+        }
+        foreach ($asset in @(Get-PackDownloadAssets $pack $readable)) {
+            $file = Join-Path $script:RepositoryRoot $asset.Source.Replace('/', '\')
+            if (![IO.File]::Exists($file)) { continue }
+            $sizes[$pack.Id] = [long]$(if ($sizes.ContainsKey($pack.Id)) { $sizes[$pack.Id] } else { 0 }) + ([IO.FileInfo]::new($file)).Length
+        }
     }
     return $sizes
 }
@@ -192,14 +269,18 @@ function Install-BetterIconDownloadedPack {
         $receipt = Join-Path (Join-Path $state 'pack-catalog/installed') ((Get-PathId (Join-Path $state $pack.Id)) + '.tsv')
         # The record of the pack list the files were chosen from, so a later "Update available" answers with its names.
         $record = if ($pack.PSObject.Properties['ReceiptLines']) { [string[]]$pack.ReceiptLines } else { [string[]](@($pack.Revision) + $pack.Rows.ToArray()) }
-        if (Test-DownloadedPack $pack -Verify) {
+        # Of an icon's twins only one is fetched: the WebP where every part of BetterIcon here reads WebP, otherwise the PNG.
+        # The receipt keeps every row, so the pack's signature, folder and update check stay those of the whole catalog entry.
+        $webp = (Get-PackTwins $pack).Count -and (Test-PackWebpReadable)
+        if (Test-DownloadedPack $pack -Verify -Webp $webp) {
             Write-PackSnapshot $receipt $record
             $script:DownloadCatalog=$null; return
         }
         [void][IO.Directory]::CreateDirectory($stage)
         # Tests use a local folder laid out like the published artwork tree, never GitHub. Elevated passes download nothing.
         $localSource = $env:BETTERICON_PACK_SOURCE
-        foreach ($asset in $pack.Assets.Values) {
+        $fetch = {
+            param($asset)
             $relative = ($asset.Source.Split('/') | ForEach-Object { [Uri]::EscapeDataString($_) }) -join '/'
             $url = 'https://raw.githubusercontent.com/BinziiBinzet/bettericon-craft-apps/'+$pack.Revision+'/'+$relative
             $file = Join-Path $stage $asset.File
@@ -219,15 +300,23 @@ function Install-BetterIconDownloadedPack {
             }
             if (!(Test-PackAsset $file $asset)) { throw 'The downloaded artwork did not match its published checksum. Choose the pack again.' }
         }
-        # Each WebP gets one full decode now. A WebP that fails is recorded with its cause, so its PNG twin is used and
-        # the reason can be shown. Without a decoder a WebP can't be checked yet: it is named in .webp-unchecked, and gets
-        # its full decode once a decoder exists, before anything chooses it (Get-WebpProblems).
+        $fetched = @(Get-PackDownloadAssets $pack $webp)
+        foreach ($asset in $fetched) { & $fetch $asset }
+        # Each WebP gets one full decode now. A WebP that fails is recorded with its cause, and the other files of its icon,
+        # left out for it, are fetched now, so its PNG twin is used and the reason can be shown. Without a decoder a WebP
+        # can't be checked yet: it is named in .webp-unchecked, and gets its full decode once a decoder exists, before
+        # anything chooses it (Get-WebpProblems). A download only fetches such a WebP when its icon has no other file.
         $problems = [Collections.Generic.List[string]]::new(); $unchecked = [Collections.Generic.List[string]]::new()
-        foreach ($asset in $pack.Assets.Values) {
+        foreach ($asset in $fetched) {
             if ([IO.Path]::GetExtension($asset.File) -ine '.webp') { continue }
             $cause = Get-WebpProblem (Join-Path $stage $asset.File) $true
             if (!$cause) { continue }
-            if ((Get-WebpArtworkType)::FileCause($cause)) { $problems.Add($asset.File + [char]9 + $cause) } else { $unchecked.Add($asset.File) }
+            if (!(Get-WebpArtworkType)::FileCause($cause)) { $unchecked.Add($asset.File); continue }
+            $problems.Add($asset.File + [char]9 + $cause)
+            $key = Get-PackItemKey $asset.File
+            foreach ($other in @($pack.Assets.Values | Where-Object { (Get-PackItemKey $_.File) -eq $key -and [IO.Path]::GetExtension($_.File) -ine '.webp' })) {
+                if (![IO.File]::Exists((Join-Path $stage $other.File))) { & $fetch $other }
+            }
         }
         if ($problems.Count) { [IO.File]::WriteAllLines((Join-Path $stage '.webp-problems'), [string[]]$problems.ToArray(), [Text.UTF8Encoding]::new($false)) }
         if ($unchecked.Count) { [IO.File]::WriteAllLines((Join-Path $stage '.webp-unchecked'), [string[]]$unchecked.ToArray(), [Text.UTF8Encoding]::new($false)) }

@@ -214,7 +214,7 @@ namespace BetterIcon.Tray
         readonly ContextMenuStrip importPackMenu = new ContextMenuStrip(), managePackMenu = new ContextMenuStrip(), manageFilePackMenu = new ContextMenuStrip();
         readonly Label packDetails = new Label(), filePackDetails = new Label();
         readonly Button applyFiles = new Button(), restoreFiles = new Button();
-        readonly TrackBar iconSizeSlider = new TrackBar();
+        readonly TrackBar iconSizeSlider = new ThemedTrackBar();
         readonly TextBox iconSizeValue = new IconSizeTextBox();
         readonly Button resetIconSize = new Button();
         readonly CheckBox showAppNames = new CheckBox();
