@@ -37,25 +37,37 @@ def blob(data):
 def main():
     catalog = (ROOT / "Windows/PackCatalog.tsv").read_bytes().replace(b"\r\n", b"\n")
     rows = catalog.decode("utf8").strip().split("\n")
-    sizes, files = Counter(), Counter()
+    # Each icon's files: those whose catalog names differ only in their extension are one icon in several formats.
+    icons = {}
     for row in rows[1:]:
-        blob_id, _, source, sha = row.split("\t")
+        blob_id, name, source, sha = row.split("\t")
         path = ROOT / source
         if not path.is_file():
             sys.exit("Missing pack artwork: " + source)
         data = path.read_bytes()
         if (hashlib.sha256(data).hexdigest() != sha) if sha != "-" else (blob(data) != blob_id):
             sys.exit("Pack artwork differs from the catalog: " + source)
-        pid = pack_id(source)
-        sizes[pid] += len(data)
-        files[pid] += 1
+        stem, _, ext = name.rpartition(".")
+        icons.setdefault((pack_id(source), stem), []).append((ext.lower(), len(data)))
+    # A download fetches one twin per icon (the helper's downloadAssets): where the computer reads WebP, a PNG gives way
+    # to its WebP twin (columns 2 and 3); where it can't, a WebP gives way to the icon's other files (column 4).
+    sizes, files, plain = Counter(), Counter(), Counter()
+    for (pid, _), entries in icons.items():
+        twins = any(ext == "webp" for ext, _ in entries) and any(ext != "webp" for ext, _ in entries)
+        for ext, size in entries:
+            if not (twins and ext == "png"):
+                sizes[pid] += size
+                files[pid] += 1
+            if not (twins and ext == "webp"):
+                plain[pid] += size
     if MODERN_FLAT in sizes:
         for pid in [p for p in sizes if p.startswith(MODERN_FLAT + " - ")]:
-            del sizes[pid], files[pid]
+            del sizes[pid], files[pid], plain[pid]
     lines = [
-        "# Download size in bytes and file count of each pack in the installer's catalog. Written by macOS/pack-sizes.py.",
+        "# Download size in bytes and file count of each pack in the installer's catalog where the computer reads WebP,"
+        " then the size where it can't. Written by macOS/pack-sizes.py.",
         "#catalog\t" + hashlib.sha256(catalog).hexdigest(),
-    ] + [f"{pid}\t{sizes[pid]}\t{files[pid]}" for pid in sorted(sizes)]
+    ] + [f"{pid}\t{sizes[pid]}\t{files[pid]}\t{plain[pid]}" for pid in sorted(sizes)]
     (HERE / "PackSizes.tsv").write_text("\n".join(lines) + "\n", encoding="utf8", newline="\n")
     print(f"{len(sizes)} packs, {sum(sizes.values())} bytes")
 

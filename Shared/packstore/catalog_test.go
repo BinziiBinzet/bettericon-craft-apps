@@ -159,7 +159,8 @@ func TestExplicitPackLifecycle(t *testing.T) {
 		t.Fatal("offline refresh replaced catalog")
 	}
 
-	// A WebP published next to the PNG is an update. Both files are downloaded, and the WebP is preferred.
+	// A WebP published next to the PNG is an update. A download fetches one of the twins: the WebP where the app reads WebP
+	// (BETTERICON_WEBP_READABLE=1), else the PNG. A file the pack's folder already holds is not fetched again.
 	offline, twin, next = false, "webp", strings.Repeat("3", 40)
 	if _, err := run([]string{res, state, "refresh"}); err != nil {
 		t.Fatal(err)
@@ -180,26 +181,110 @@ func TestExplicitPackLifecycle(t *testing.T) {
 		b, _ := os.ReadFile(file)
 		return string(b)
 	}
-	// Each download fetches both files. Losing either one means the pack must be downloaded again.
-	for _, lost := range []string{"pcraft.webp", "pcraft.png", ""} {
+	// acquire with the app's answer, and how many PNG and WebP requests it made.
+	acquireWith := func(readable string) (view, int, int) {
+		t.Helper()
+		t.Setenv("BETTERICON_WEBP_READABLE", readable)
 		png, webp := fetched(path), fetched(twinPath)
 		if err := load().acquire(id); err != nil {
 			t.Fatal(err)
 		}
-		v := load().list()[0]
-		chosen := v.FileIcons[".pcraft"]
-		if fetched(path) != png+1 || fetched(twinPath) != webp+1 || v.Status != "Downloaded" || filepath.Base(chosen) != "pcraft.webp" || read(chosen) != twin ||
-			len(v.Fallbacks[chosen]) != 1 || filepath.Base(v.Fallbacks[chosen][0]) != "pcraft.png" || read(v.Fallbacks[chosen][0]) != data {
-			t.Fatalf("download with %d PNG and %d WebP requests: %+v", fetched(path)-png, fetched(twinPath)-webp, v)
+		return load().list()[0], fetched(path) - png, fetched(twinPath) - webp
+	}
+	v, png, webp := acquireWith("1")
+	chosen := v.FileIcons[".pcraft"]
+	if png != 0 || webp != 1 || v.Status != "Downloaded" || filepath.Base(chosen) != "pcraft.webp" || read(chosen) != twin || len(v.Fallbacks) != 0 {
+		t.Fatalf("download where the app reads WebP, with %d PNG and %d WebP requests: %+v", png, webp, v)
+	}
+	if v, png, webp = acquireWith("1"); png+webp != 0 || v.Status != "Downloaded" {
+		t.Fatalf("a download fetched files the pack already holds: %d PNG and %d WebP requests", png, webp)
+	}
+	// Where the app can't read WebP, the WebP alone does not make a download: the pack needs its PNG twin, and only that is fetched.
+	t.Setenv("BETTERICON_WEBP_READABLE", "0")
+	if v := load().list()[0]; v.Status != "Download" {
+		t.Fatalf("a WebP alone counts as downloaded where the app can't read WebP: %+v", v)
+	}
+	v, png, webp = acquireWith("0")
+	chosen = v.FileIcons[".pcraft"]
+	if png != 1 || webp != 0 || v.Status != "Downloaded" || filepath.Base(chosen) != "pcraft.webp" || len(v.Fallbacks[chosen]) != 1 ||
+		filepath.Base(v.Fallbacks[chosen][0]) != "pcraft.png" || read(v.Fallbacks[chosen][0]) != data {
+		t.Fatalf("download where the app can't read WebP, with %d PNG and %d WebP requests: %+v", png, webp, v)
+	}
+	// Without its WebP the PNG serves either way. Without both files, the pack must be downloaded again.
+	if err := os.Remove(chosen); err != nil {
+		t.Fatal(err)
+	}
+	for _, readable := range []string{"1", "0"} {
+		t.Setenv("BETTERICON_WEBP_READABLE", readable)
+		if v := load().list()[0]; v.Status != "Downloaded" || filepath.Base(v.FileIcons[".pcraft"]) != "pcraft.png" || len(v.Fallbacks) != 0 {
+			t.Fatalf("PNG twin alone, reading WebP %s: %+v", readable, v)
 		}
-		if lost == "" {
-			break
-		}
-		if err := os.Remove(filepath.Join(filepath.Dir(chosen), lost)); err != nil {
+	}
+	if err := os.Remove(filepath.Join(filepath.Dir(chosen), "pcraft.png")); err != nil {
+		t.Fatal(err)
+	}
+	if load().list()[0].Status != "Download" {
+		t.Fatal("a pack without either twin still marked downloaded")
+	}
+}
+
+// A download fetches one twin per icon, from the local pack source tests use: never a request.
+func TestTwinDownloads(t *testing.T) {
+	res, state, source := t.TempDir(), t.TempDir(), t.TempDir()
+	write := func(file, data string) {
+		t.Helper()
+		if err := atomic(file, []byte(data)); err != nil {
 			t.Fatal(err)
 		}
-		if load().list()[0].Status != "Download" {
-			t.Fatalf("missing %s still marked downloaded", lost)
+	}
+	old := client.Transport
+	t.Cleanup(func() { client.Transport = old })
+	client.Transport = serve(func(r *http.Request) (*http.Response, error) {
+		t.Errorf("unexpected request %s", r.URL)
+		return nil, fmt.Errorf("offline")
+	})
+	t.Setenv("BETTERICON_PACK_SOURCE", source)
+	revision, id := strings.Repeat("1", 40), "Craft-Icons-Artist/Light"
+	files := []string{"PhotoCraft.png", "PhotoCraft.webp", "FileTypes/pcraft.webp", "FileTypes/pcraft.png", "FilmCraft.svg", "GridCraft.webp"}
+	rows := []string{revision}
+	for _, file := range files {
+		published := id + "/" + file
+		write(filepath.Join(source, filepath.FromSlash(published)), "art "+file)
+		rows = append(rows, strings.Join([]string{blob("art " + file), published, published, checksum([]byte("art " + file))}, "\t"))
+	}
+	catalog := filepath.Join(res, "Catalog")
+	write(filepath.Join(catalog, "ProjectFileTypes.json"), `[{"Key":".pcraft","Application":"PhotoCraft"}]`)
+	write(filepath.Join(catalog, "packs.tsv"), strings.Join(rows, "\n"))
+	write(filepath.Join(catalog, "previews.tsv"), fmt.Sprintf("%s\n%s\tthumb.webp\t%s\t12\tPhotoCraft", revision, id, checksum([]byte("RIFFxxxxWEBP"))))
+	for _, c := range []struct{ readable, want string }{
+		{"1", "FileTypes/pcraft.webp,FilmCraft.svg,GridCraft.webp,PhotoCraft.webp"},
+		{"0", "FileTypes/pcraft.png,FilmCraft.svg,GridCraft.webp,PhotoCraft.png"},
+	} {
+		t.Setenv("BETTERICON_WEBP_READABLE", c.readable)
+		if err := os.RemoveAll(state); err != nil {
+			t.Fatal(err)
+		}
+		result, err := run([]string{res, state, "acquire", id})
+		if err != nil {
+			t.Fatal(err)
+		}
+		v := result.([]view)[0]
+		l, err := openLibrary(res, state)
+		if err != nil {
+			t.Fatal(err)
+		}
+		root := filepath.Join(state, "downloads", l.latest.Packs[id].signature())
+		var got []string
+		filepath.WalkDir(root, func(file string, d os.DirEntry, err error) error {
+			if err == nil && !d.IsDir() {
+				rel, _ := filepath.Rel(filepath.Join(root, filepath.FromSlash(id)), file)
+				got = append(got, filepath.ToSlash(rel))
+			}
+			return nil
+		})
+		slices.Sort(got)
+		if strings.Join(got, ",") != c.want || v.Status != "Downloaded" || len(v.Icons) != 3 || len(v.FileIcons) != 1 || len(v.Fallbacks) != 0 {
+			t.Fatalf("reading WebP %s, fetched %q: %+v", c.readable, got, v)
 		}
 	}
 }
@@ -893,7 +978,8 @@ func TestUnlistedFileIconApps(t *testing.T) {
 		}
 		return packs
 	}
-	// Before a download, the catalog answers.
+	// Before a download, the catalog answers. The app reads WebP, so downloads fetch the WebP of twins.
+	t.Setenv("BETTERICON_WEBP_READABLE", "1")
 	if packs := check("not downloaded", "Download", want); len(packs) != len(want) {
 		t.Fatalf("packs: %+v", packs)
 	}
@@ -903,9 +989,10 @@ func TestUnlistedFileIconApps(t *testing.T) {
 		}
 	}
 	// A download keeps the answer. AppFileIcons still lists art named for a format and Komplett's icons, for listed formats.
+	// Mixed's twins came down as the WebP alone, so it has no PNG to fall back on.
 	packs := check("downloaded", "Downloaded", want)
 	if read(packs[legacy].AppFileIcons["PhotoCraft"]) != first[legacy+"/FileTypes/PhotoCraft-PSD.png"] || len(packs[komplett].AppFileIcons) != 3 ||
-		read(packs[mixed].AppFileIcons["PhotoCraft"]) != first[mixed+"/FileTypes/PhotoCraft-files.webp"] || len(packs[mixed].Fallbacks) != 1 {
+		read(packs[mixed].AppFileIcons["PhotoCraft"]) != first[mixed+"/FileTypes/PhotoCraft-files.webp"] || len(packs[mixed].Fallbacks) != 0 {
 		t.Fatalf("app-level art: %+v", packs)
 	}
 	// The next revision changes every file. Explicit's TextureCraft art is now named for a format, and Mike22's PhotoCraft art is explicit.

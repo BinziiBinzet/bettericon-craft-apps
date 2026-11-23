@@ -1,6 +1,7 @@
 """Read the bundled packs and interchange personal packs with Windows and Mac."""
 import io
 import json
+import os
 import re
 import platform
 import subprocess
@@ -103,9 +104,10 @@ def all_files(stem, craft):
     return re.fullmatch(spelled + "[ _.-]files", folded, re.IGNORECASE | re.ASCII) is not None
 
 
-def pack_sizes(path):
+def pack_sizes(path, readable=True):
     """{pack id: download size in bytes} from the installer's pack-sizes.tsv, which macOS/pack-sizes.py writes from the
-    pack artwork for its catalog. A pack the table does not list has no known size."""
+    pack artwork for its catalog. A download fetches one twin per icon: column 2 is the size where this computer reads
+    WebP, column 4, where the table has it, the size where it can't. A pack the table does not list has no known size."""
     sizes = {}
     try:
         text = Path(path).read_text(encoding="utf-8")
@@ -114,7 +116,8 @@ def pack_sizes(path):
     for line in text.splitlines():
         fields = line.split("\t")
         if not line.startswith("#") and len(fields) >= 2 and fields[1].isdigit():
-            sizes[fields[0]] = int(fields[1])
+            plain = not readable and len(fields) >= 4 and fields[3].isdigit()
+            sizes[fields[0]] = int(fields[3] if plain else fields[1])
     return sizes
 
 
@@ -186,18 +189,38 @@ class Packs:
         self.helper = resources / ("packstore-" + arch)
         self.formats = {f["Key"]: f for f in json.loads((resources / "Catalog/ProjectFileTypes.json").read_text())}
         # Each published pack's download size, for the offer a new installation makes.
-        self.sizes = pack_sizes(resources / "Catalog/pack-sizes.tsv")
+        self.sizes = pack_sizes(resources / "Catalog/pack-sizes.tsv", webp.available())
         # The packs being downloaded now, each with an event set when its download ends (see acquire).
         self._acquiring, self._acquiring_lock = {}, threading.Lock()
         self.rows = []
         self.use_catalog(self.run("list"))
 
-    def run(self, action, *args):
+    def run(self, action, *args, readable=None):
+        """The helper's answer. It is told whether this computer reads WebP (or readable says): a download then fetches
+        one twin per icon, the WebP where it can and the PNG where it can't, and a pack downloaded counts as such."""
+        if readable is None:
+            readable = webp.available()
+        env = dict(os.environ, BETTERICON_WEBP_READABLE="1" if readable else "0")
         proc = subprocess.run([self.helper, self.resources, self.cache, action, *args],
-                              capture_output=True, text=True, encoding="utf8")
+                              capture_output=True, text=True, encoding="utf8", env=env)
         if proc.returncode:
             raise ValueError(proc.stderr.strip() or "Could not read the icon pack catalog.")
         return json.loads(proc.stdout)
+
+    def _webp_fails(self, rows, key):
+        """Whether a downloaded WebP of this pack fails its full decode while its icon has no other file here, so that its
+        PNG twin, which a download where this computer reads WebP leaves out, must be fetched."""
+        for row in rows:
+            if row.get("ID") != key and key not in row.get("PreviousIDs", []):
+                continue
+            fallbacks = row.get("Fallbacks") or {}
+            for name in ("Icons", "FileIcons", "AppFileIcons"):
+                for first in (row.get(name) or {}).values():
+                    if Path(first).suffix.lower() == ".webp" and not fallbacks.get(first):
+                        cause = webp.verify(first)
+                        if cause and cause != webp.NO_DECODER:
+                            return True
+        return False
 
     def acquire(self, key):
         """Download one pack through the helper's acquire and return the helper's list. The offer's downloads run beside
@@ -214,7 +237,12 @@ class Packs:
             if any(row.get("ID") == key and row.get("Status") == "Downloaded" for row in rows):
                 return rows
         try:
-            return self.run("acquire", key)
+            rows = self.run("acquire", key)
+            # A WebP twin that fails its full decode gives way to its PNG twin, which the download left out: fetch the
+            # pack's PNG twins now. The helper keeps the files it has, so only those are fetched.
+            if self._webp_fails(rows, key):
+                rows = self.run("acquire", key, readable=False)
+            return rows
         finally:
             with self._acquiring_lock:
                 self._acquiring.pop(key, None)

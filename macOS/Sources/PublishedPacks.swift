@@ -127,10 +127,15 @@ struct PublishedPacks {
         formats = try JSONDecoder().decode([ProjectFormat].self, from: Data(contentsOf:
             resources.appendingPathComponent("Catalog/ProjectFileTypes.json")))
     }
-    private func run(_ args: [String]) throws -> Data {
+    /// The helper's answer. macOS reads WebP (ImageIO, macOS 11 and later), so a download fetches the WebP of an icon's
+    /// twins and leaves out its PNG; readsWebP false fetches the PNG twins instead.
+    private func run(_ args: [String], readsWebP: Bool = true) throws -> Data {
         let process = Process(), output = Pipe(), errors = Pipe()
         process.executableURL = resources.deletingLastPathComponent().appendingPathComponent("Helpers/packstore")
         process.arguments = [resources.path, state.path] + args
+        var environment = ProcessInfo.processInfo.environment
+        environment["BETTERICON_WEBP_READABLE"] = readsWebP ? "1" : "0"
+        process.environment = environment
         process.standardOutput = output
         process.standardError = errors
         try process.run()
@@ -153,8 +158,17 @@ struct PublishedPacks {
         /// The apps whose AppFileIcons art also draws file types outside the list (round S2 of the helper).
         let UnlistedFileIconApps: [String]?
     }
-    func list(_ action: String = "list", id: String? = nil) throws -> [Pack] {
-        try Self.packs(from: run([action] + (id.map { [$0] } ?? [])))
+    /// The helper's pack list, after an action such as acquire. A download fetches an icon's WebP twin and leaves out its
+    /// PNG; with readsWebP false it fetches the PNG twins instead.
+    func list(_ action: String = "list", id: String? = nil, readsWebP: Bool = true) throws -> [Pack] {
+        let args = [action] + (id.map { [$0] } ?? [])
+        let packs = try Self.packs(from: run(args, readsWebP: readsWebP))
+        // A WebP twin that can't be read leaves its icon out, because the download left out its PNG twin. Fetch the
+        // pack's PNG twins then; the helper keeps the files it has, so only those are fetched.
+        if readsWebP, action == "acquire", let id, packs.contains(where: { ($0.id == id || $0.previousIDs.contains(id)) && !$0.leftOut.isEmpty }) {
+            return try Self.packs(from: run(args, readsWebP: false))
+        }
+        return packs
     }
     /// The packs in the helper's list. The helper names each item's files best first: WebP, PNG, SVG, ICO. An item takes
     /// the first one that can be used, so a damaged or animated WebP gives way to its PNG. An item with no usable file

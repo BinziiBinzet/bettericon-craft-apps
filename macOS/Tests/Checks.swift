@@ -1,5 +1,6 @@
 import AppKit
 import Carbon.HIToolbox
+import CryptoKit
 import UniformTypeIdentifiers
 import WebKit
 
@@ -318,7 +319,9 @@ import WebKit
             && mike.count == 3 && mike.allSatisfy { $0.canApps && $0.canFiles }
             && packs.filter(\.canFiles).count == 17 && packs.filter(\.canApps).count == 27,
             "Komplett's five packs and Mike22's three file type sets are file type packs")
-        _ = try published.list("acquire", id: "Craft-Icons-Zach/Cardboard")
+        // Cardboard's PNG files serve as PNG art in the checks below, so it is fetched without its WebP twins. The others
+        // come as the Mac fetches them: an icon's WebP twin alone.
+        _ = try published.list("acquire", id: "Craft-Icons-Zach/Cardboard", readsWebP: false)
         _ = try published.list("acquire", id: "Craft-Icons-Komplett/Standard")
         _ = try published.list("acquire", id: "Craft-Icons-Mike22/CraftApps AIO November - Dark")
         packs = try published.list("acquire", id: "Craft-Icons-Zach/Edgework")
@@ -327,6 +330,12 @@ import WebKit
         let photoArt = cardboard.icons["PhotoCraft"]!
         let filmArt = cardboard.icons["FilmCraft"]!
         let standard = packs.first { $0.id == "Craft-Icons-Komplett/Standard" }!
+        let standardFiles = (fm.enumerator(at: root.appendingPathComponent("test-pack-cache/pack-cache/downloads"), includingPropertiesForKeys: nil)?
+            .compactMap { $0 as? URL } ?? []).filter { $0.path.contains("/Craft-Icons-Komplett/Standard/") && !$0.hasDirectoryPath }
+        try check(
+            Set(cardboard.icons.values.map(\.pathExtension)) == ["png"] && !standardFiles.isEmpty
+                && Set(standardFiles.map(\.pathExtension)) == ["webp"] && Set(standard.appFiles.values.map(\.pathExtension)) == ["webp"],
+            "a published pack downloads one file per icon: its WebP twins, or its PNG files when asked for those")
         let standardArt = published.fileArt(standard), standardTiles = published.fileTiles(standard)
         try check(!cardboard.canFiles && published.fileArt(cardboard).isEmpty && standard.appFiles.count == 14
             && standardArt.count == 27 && standardArt[".psd"] == standard.appFiles["PhotoCraft"] && standardArt[".anicraft"] == nil
@@ -3889,6 +3898,48 @@ import WebKit
         let twins = try PublishedPacks.packs(from: JSONSerialization.data(withJSONObject: [entry(
             ["PhotoCraft": path("PhotoCraft.webp")], fallbacks: [path("PhotoCraft.webp"): [path("PhotoCraft.png")]])]))
         try check(twins.first?.icons.count == 1 && pack.icons.count == 2, "Twins do not raise the icon count")
+        // Real downloads through the helper from a local pack source. macOS reads WebP, so a download fetches an icon's
+        // WebP twin alone; a WebP twin the Mac can't read brings its PNG twin, fetched then.
+        let twinRoot = root.appendingPathComponent("Twin downloads")
+        let twinResources = twinRoot.appendingPathComponent("Resources")
+        try fm.createDirectory(at: twinResources.appendingPathComponent("Catalog"), withIntermediateDirectories: true)
+        try fm.createDirectory(at: twinRoot.appendingPathComponent("Helpers"), withIntermediateDirectories: true)
+        try fm.createSymbolicLink(
+            at: twinRoot.appendingPathComponent("Helpers/packstore"),
+            withDestinationURL: resources.deletingLastPathComponent().appendingPathComponent("Helpers/packstore"))
+        for name in ["ProjectFileTypes.json", "previews.tsv"] {
+            try fm.copyItem(
+                at: resources.appendingPathComponent("Catalog/" + name), to: twinResources.appendingPathComponent("Catalog/" + name))
+        }
+        let twinFiles = [
+            "Craft-Icons-Checks/Light/PhotoCraft.webp": webp("A13"), "Craft-Icons-Checks/Light/PhotoCraft.png": bluePNG,
+            "Craft-Icons-Checks/Unreadable/PhotoCraft.webp": bluePNG, "Craft-Icons-Checks/Unreadable/PhotoCraft.png": bluePNG,
+        ]
+        let twinSource = try folder(twinRoot.appendingPathComponent("Source"), twinFiles)
+        func blob(_ data: Data) -> String {
+            Insecure.SHA1.hash(data: Data("blob \(data.count)\0".utf8) + data).map { String(format: "%02x", $0) }.joined()
+        }
+        let twinRows = twinFiles.keys.sorted().map { "\(blob(twinFiles[$0]!))\t\($0)\t\($0)\t\(digest(twinFiles[$0]!))" }
+        try Data(([String(repeating: "1", count: 40)] + twinRows).joined(separator: "\n").utf8)
+            .write(to: twinResources.appendingPathComponent("Catalog/packs.tsv"))
+        setenv("BETTERICON_PACK_SOURCE", twinSource.path, 1)
+        defer { unsetenv("BETTERICON_PACK_SOURCE") }
+        let twinState = twinRoot.appendingPathComponent("State")
+        let downloads = try PublishedPacks(resources: twinResources, state: twinState)
+        func fetched(_ name: String) -> [String] {
+            let all = fm.enumerator(at: twinState.appendingPathComponent("pack-cache/downloads"), includingPropertiesForKeys: nil)?
+                .compactMap { $0 as? URL } ?? []
+            return all.filter { $0.path.contains("/Craft-Icons-Checks/\(name)/") }.map(\.lastPathComponent).sorted()
+        }
+        let light = try downloads.list("acquire", id: "Craft-Icons-Checks/Light").first { $0.id == "Craft-Icons-Checks/Light" }
+        let unreadable = try downloads.list("acquire", id: "Craft-Icons-Checks/Unreadable")
+            .first { $0.id == "Craft-Icons-Checks/Unreadable" }
+        unsetenv("BETTERICON_PACK_SOURCE")
+        try check(
+            fetched("Light") == ["PhotoCraft.webp"] && light?.icons["PhotoCraft"]?.pathExtension == "webp"
+                && fetched("Unreadable") == ["PhotoCraft.png", "PhotoCraft.webp"]
+                && unreadable?.icons["PhotoCraft"]?.pathExtension == "png" && unreadable?.leftOut.isEmpty == true,
+            "a download fetches an icon's WebP twin alone, and its PNG twin too when the Mac can't read the WebP")
         let stripPack = try PublishedPacks.packs(from: JSONSerialization.data(withJSONObject: [entry(["PhotoCraft": path("Strip/PhotoCraft.webp")])]))
         let strip = try stripPack.first.flatMap { try published.preview($0) }
         let tile = strip.flatMap { NSBitmapImageRep(data: (try? Data(contentsOf: $0)) ?? Data()) }?.colorAt(x: 32, y: 32)?

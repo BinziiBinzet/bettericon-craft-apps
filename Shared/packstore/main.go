@@ -195,6 +195,23 @@ func sameBlob(b []byte, a asset) bool {
 	h.Write(b)
 	return fmt.Sprintf("%x", h.Sum(nil)) == a.Blob && (a.Hash == "-" || checksum(b) == a.Hash)
 }
+
+// fetchArtwork reads one published file. Tests set BETTERICON_PACK_SOURCE to a local folder laid out like the published
+// artwork tree, so no request reaches GitHub; the file is checked against its checksum either way.
+func fetchArtwork(revision, source string) ([]byte, error) {
+	local := os.Getenv("BETTERICON_PACK_SOURCE")
+	if local == "" {
+		return fetch(rawURL(revision, source), 16<<20)
+	}
+	b, err := os.ReadFile(filepath.Join(local, filepath.FromSlash(source)))
+	if err != nil {
+		return nil, errors.New("Artwork is missing from the local pack source")
+	}
+	if len(b) > 16<<20 {
+		return nil, errors.New("Artwork service response exceeds its limit")
+	}
+	return b, nil
+}
 func (l *library) acquire(id string) error {
 	p, ok := l.latest.Packs[id]
 	if !ok {
@@ -210,9 +227,18 @@ func (l *library) acquire(id string) error {
 	}
 	defer os.RemoveAll(stage)
 	final := filepath.Join(dir, p.signature())
+	// The receipt keeps every row, so the pack's signature, folder and update check stay those of the whole catalog entry.
 	rows := []string{p.Revision}
 	for _, a := range p.Assets {
-		b, e := fetch(rawURL(p.Revision, a.Source), 16<<20)
+		rows = append(rows, strings.Join([]string{a.Blob, a.File, a.Source, a.Hash}, "\t"))
+	}
+	// One twin per icon, as the app reads WebP or not. A file the pack's folder already holds is not fetched again.
+	wanted := p.downloadAssets(webpReadable())
+	for _, a := range wanted {
+		if b, e := os.ReadFile(filepath.Join(final, a.File)); e == nil && sameBlob(b, a) {
+			continue
+		}
+		b, e := fetchArtwork(p.Revision, a.Source)
 		if e != nil {
 			return e
 		}
@@ -222,7 +248,6 @@ func (l *library) acquire(id string) error {
 		if e = atomic(filepath.Join(stage, a.File), b); e != nil {
 			return e
 		}
-		rows = append(rows, strings.Join([]string{a.Blob, a.File, a.Source, a.Hash}, "\t"))
 	}
 	if err = os.Rename(stage, final); err != nil {
 		// Reuse a concurrent complete download, or repair missing files from the verified staging directory.
@@ -230,7 +255,7 @@ func (l *library) acquire(id string) error {
 		if statErr != nil || !info.IsDir() {
 			return err
 		}
-		for _, a := range p.Assets {
+		for _, a := range wanted {
 			target := filepath.Join(final, a.File)
 			if b, e := os.ReadFile(target); e == nil && sameBlob(b, a) {
 				continue

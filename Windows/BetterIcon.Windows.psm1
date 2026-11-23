@@ -337,9 +337,11 @@ function Get-WebpProblems([string]$PackPath) {
 function Select-PackArtwork([string[]]$Candidates, [hashtable]$Known) {
     # The first usable candidate, in the precedence order the caller gives. SVG, ICO and PNG are used as they are. A
     # WebP is usable when the download recorded no problem for it and the byte rule and a decoder allow it. With none
-    # usable: an object with no Path and the cause of the first WebP that could not be used.
+    # usable: an object with no Path and the cause of the first WebP that could not be used. A download fetches one of an
+    # icon's twins, so a candidate that is not on this computer is passed over without a cause.
     $first = $null
     foreach ($path in @($Candidates | Where-Object { $_ })) {
+        if (![IO.File]::Exists($path)) { continue }
         if ([IO.Path]::GetExtension($path) -ine '.webp') { return $path }
         $full = [IO.Path]::GetFullPath($path)
         $cause = if ($null -ne $Known -and $Known.ContainsKey($full)) { [string]$Known[$full] } else { Get-WebpProblem $path $false }

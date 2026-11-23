@@ -226,6 +226,14 @@ try {
     [IO.File]::WriteAllBytes($blobFile, $webpDamaged)
     $tampered = & $module { param($p, $a) Test-PackAsset $p $a } $blobFile ([pscustomobject]@{ Hash='-'; Blob=$webpApp.sha })
     Check ($verified -and !$tampered) 'Downloaded WebP rows verify by Git blob'
+    # One twin per icon: a PNG gives way to its WebP where the PC reads WebP, a WebP to its PNG where it can't. An icon in one
+    # format, WebP alone or SVG alone, is fetched either way.
+    $choiceLines = [string[]](@($seed) + @(& $module { param($items) ConvertTo-PackCatalogRows $items } @($webpApp, $pngApp, $webpFile, $pngFile,
+        (Item 'Craft-Icons-Webp/Set/FileTypes/FilmCraft-files.svg' 'svg alone'), (ItemBytes 'Craft-Icons-Webp/Set/FileTypes/WordCraft-files.webp' $webpRed))))
+    $choicePack = @((& $module { param($lines, $state) Read-PackSnapshot $lines $state } $choiceLines $env:BETTERICON_DOWNLOAD_STATE).Values)[0]
+    $chosenFiles = foreach ($readable in $true, $false) { (@(& $module { param($p, $w) Get-PackDownloadAssets $p $w } $choicePack $readable | ForEach-Object File | Sort-Object)) -join ',' }
+    Check ($chosenFiles[0] -ceq 'FileTypes/FilmCraft-files.svg,FileTypes/pcraft.webp,FileTypes/WordCraft-files.webp,PhotoCraft.webp' -and
+        $chosenFiles[1] -ceq 'FileTypes/FilmCraft-files.svg,FileTypes/pcraft.png,FileTypes/WordCraft-files.webp,PhotoCraft.png') 'A download fetches one twin per icon: the WebP where this PC reads WebP, else the PNG, and an icon in one format either way'
 
     # A downloaded PNG-only pack, then a published WebP twin.
     [IO.File]::WriteAllLines((Join-Path $win 'OnDemand.tsv'), $pngLines)
@@ -252,45 +260,70 @@ try {
     # Downloaded while this PC has no WebP decoder; one appears afterwards.
     $late = @((ItemBytes 'Craft-Icons-Webp/Late/PhotoCraft.webp' $webpDamaged), (Item 'Craft-Icons-Webp/Late/PhotoCraft.png' 'late png twin'),
         (ItemBytes 'Craft-Icons-Webp/Late/FileTypes/pcraft.webp' $webpDamaged), (Item 'Craft-Icons-Webp/Late/FileTypes/pcraft.png' 'late file twin'))
-    foreach ($entry in @($broken + $late)) {
+    # Light twins that decode: downloaded where this PC reads WebP, then read where it no longer can.
+    $light = @((ItemBytes 'Craft-Icons-Webp/Light/PhotoCraft.webp' $webpRed), (Item 'Craft-Icons-Webp/Light/PhotoCraft.png' 'light png twin'),
+        (ItemBytes 'Craft-Icons-Webp/Light/FileTypes/pcraft.webp' $webpRed), (Item 'Craft-Icons-Webp/Light/FileTypes/pcraft.png' 'light file twin'))
+    foreach ($entry in @($broken + $late + $light)) {
         $file = Join-Path $source $entry.path.Replace('/', '\')
         [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($file))
-        if ($entry.path.EndsWith('.webp')) { [IO.File]::WriteAllBytes($file, $webpDamaged) }
-        else { [IO.File]::WriteAllText($file, $(if ($entry.path -like '*Broken*') { 'broken png twin' } elseif ($entry.path -like '*Late/FileTypes*') { 'late file twin' } elseif ($entry.path -like '*Late*') { 'late png twin' } else { 'blocked png twin' })) }
+        if ($entry.path -like '*Light/*.webp') { [IO.File]::WriteAllBytes($file, $webpRed) }
+        elseif ($entry.path.EndsWith('.webp')) { [IO.File]::WriteAllBytes($file, $webpDamaged) }
+        else { [IO.File]::WriteAllText($file, $(if ($entry.path -like '*Broken*') { 'broken png twin' } elseif ($entry.path -like '*Late/FileTypes*') { 'late file twin' } elseif ($entry.path -like '*Late*') { 'late png twin' } elseif ($entry.path -like '*Light/FileTypes*') { 'light file twin' } elseif ($entry.path -like '*Light*') { 'light png twin' } else { 'blocked png twin' })) }
     }
     Remove-Item -LiteralPath (Join-Path $env:BETTERICON_DOWNLOAD_STATE 'pack-catalog') -Recurse -Force
-    [IO.File]::WriteAllLines((Join-Path $win 'OnDemand.tsv'), [string[]](@($seed) + @(& $module { param($items) ConvertTo-PackCatalogRows $items } @($broken + $late))))
+    [IO.File]::WriteAllLines((Join-Path $win 'OnDemand.tsv'), [string[]](@($seed) + @(& $module { param($items) ConvertTo-PackCatalogRows $items } @($broken + $late + $light))))
     & $module { $script:DownloadCatalog = $null; $script:AvailableCatalog = $null }
     $priorSource = $env:BETTERICON_PACK_SOURCE
     $env:BETTERICON_PACK_SOURCE = $source
     try {
-        if (!((& $module { Get-WebpArtworkType })::SystemDecoderAvailable)) { Write-Output 'SKIP A WebP that fails to decode after download is recorded and its PNG twin is used (no system WebP decoder)' }
+        function Pack-Files($Pack) { @(Get-ChildItem -LiteralPath $Pack.Path -File -Recurse | ForEach-Object { $_.FullName.Substring($Pack.Path.Length + 1).Replace('\', '/') } | Sort-Object) -join ',' }
+        function Fresh-Pack([string]$Id) { & $module { $script:DownloadCatalog = $null; $script:AvailableCatalog = $null }; @(Get-BetterIconTheme | Where-Object Id -eq $Id)[0] }
+        $priorDecoder = $env:BETTERICON_WEBP_DECODER
+        # Without a decoder a download fetches an icon's PNG twin alone. Once Windows' decoder is there, the pack stays complete
+        # and keeps its PNG files; the WebP twins, damaged here, are never fetched or chosen.
+        $env:BETTERICON_WEBP_DECODER = 'none'
+        try {
+            Install-BetterIconDownloadedPack -Theme 'Craft-Icons-Webp/Late'
+            $latePack = Fresh-Pack 'Craft-Icons-Webp/Late'
+            $withoutDecoder = @(Get-BetterIconThemeIcon -InputObject $latePack)
+        }
+        finally { $env:BETTERICON_WEBP_DECODER = $priorDecoder }
+        $lateLater = Fresh-Pack 'Craft-Icons-Webp/Late'
+        $withDecoder = @(Get-BetterIconThemeIcon -InputObject $lateLater)
+        $lateFiles = & $module { param($p) Resolve-PackFileArtwork $p } $lateLater
+        Check ($withoutDecoder.Count -eq 1 -and $withoutDecoder[0].Path.EndsWith('PhotoCraft.png') -and (Pack-Files $latePack) -ceq '.complete,FileTypes/pcraft.png,PhotoCraft.png' -and
+            $lateLater.Downloaded -and !$lateLater.UpdateAvailable -and $withDecoder.Count -eq 1 -and $withDecoder[0].Path.EndsWith('PhotoCraft.png') -and
+            $lateFiles.Formats['.pcraft'].EndsWith('pcraft.png') -and !$lateFiles.Problems.Count) 'Downloaded while this PC can''t read WebP, a pack fetches its PNG twins alone and stays complete with them once it can'
+
+        if (!((& $module { Get-WebpArtworkType })::SystemDecoderAvailable)) { Write-Output 'SKIP Twin downloads where this PC reads WebP (no system WebP decoder)' }
         else {
             Install-BetterIconDownloadedPack -Theme 'Craft-Icons-Webp/Broken'
-            $brokenPack = @(Get-BetterIconTheme | Where-Object Id -eq 'Craft-Icons-Webp/Broken')[0]
+            $brokenPack = Fresh-Pack 'Craft-Icons-Webp/Broken'
             $recorded = @([IO.File]::ReadAllLines((Join-Path $brokenPack.Path '.webp-problems')))
             $chosen = @(Get-BetterIconThemeIcon -InputObject $brokenPack)
-            Check ($recorded.Count -eq 1 -and $recorded[0] -ceq ('PhotoCraft.webp' + [char]9 + 'The WebP file is damaged or incomplete.') -and $chosen.Count -eq 1 -and $chosen[0].Path.EndsWith('PhotoCraft.png')) 'A WebP that fails to decode after download is recorded and its PNG twin is used'
+            Check ($recorded.Count -eq 1 -and $recorded[0] -ceq ('PhotoCraft.webp' + [char]9 + 'The WebP file is damaged or incomplete.') -and $chosen.Count -eq 1 -and $chosen[0].Path.EndsWith('PhotoCraft.png') -and
+                $brokenPack.Downloaded -and (Pack-Files $brokenPack) -ceq '.complete,.webp-problems,PhotoCraft.png,PhotoCraft.webp') 'A WebP that fails to decode after download is recorded and its PNG twin is fetched then and used'
 
-            # Without a decoder the download can't decode its WebP files. Once Windows' decoder (or WebP support) is
-            # there, they get that decode before anything chooses them, so the damaged WebP never displaces its PNG twin.
-            $priorDecoder = $env:BETTERICON_WEBP_DECODER
+            # Where this PC reads WebP, a download fetches the WebP twins alone, and the record keeps every row.
+            Install-BetterIconDownloadedPack -Theme 'Craft-Icons-Webp/Light'
+            $lightPack = Fresh-Pack 'Craft-Icons-Webp/Light'
+            $lightIcons = @(Get-BetterIconThemeIcon -InputObject $lightPack)
+            $lightFiles = & $module { param($p) Resolve-PackFileArtwork $p } $lightPack
+            $lightRecord = & $module { param($id) $state = Get-PackState; [IO.File]::ReadAllLines((Join-Path (Join-Path $state 'pack-catalog/installed') ((Get-PathId (Join-Path $state $id)) + '.tsv'))) } 'Craft-Icons-Webp/Light'
+            Check ($lightPack.Downloaded -and !$lightPack.UpdateAvailable -and (Pack-Files $lightPack) -ceq '.complete,FileTypes/pcraft.webp,PhotoCraft.webp' -and $lightIcons.Count -eq 1 -and
+                $lightIcons[0].Path.EndsWith('PhotoCraft.webp') -and $lightFiles.Formats['.pcraft'].EndsWith('pcraft.webp') -and $lightRecord.Count -eq 5) 'Where this PC reads WebP, a download fetches the WebP twins alone and its record keeps every row'
+
+            # The same pack where this PC no longer reads WebP: it needs its PNG twins, and a download fetches those alone.
             $env:BETTERICON_WEBP_DECODER = 'none'
             try {
-                Install-BetterIconDownloadedPack -Theme 'Craft-Icons-Webp/Late'
-                $latePack = @(Get-BetterIconTheme | Where-Object Id -eq 'Craft-Icons-Webp/Late')[0]
-                $withoutDecoder = @(Get-BetterIconThemeIcon -InputObject $latePack)
+                $lost = Fresh-Pack 'Craft-Icons-Webp/Light'
+                Install-BetterIconDownloadedPack -Theme 'Craft-Icons-Webp/Light'
+                $regained = Fresh-Pack 'Craft-Icons-Webp/Light'
+                $regainedIcons = @(Get-BetterIconThemeIcon -InputObject $regained)
             }
             finally { $env:BETTERICON_WEBP_DECODER = $priorDecoder }
-            $uncheckedFile = Join-Path $latePack.Path '.webp-unchecked'
-            $waited = @(if ([IO.File]::Exists($uncheckedFile)) { [IO.File]::ReadAllLines($uncheckedFile) })
-            $withDecoder = @(Get-BetterIconThemeIcon -InputObject $latePack)
-            $lateFiles = & $module { param($p) Resolve-PackFileArtwork $p } $latePack
-            $lateProblems = @(if ([IO.File]::Exists((Join-Path $latePack.Path '.webp-problems'))) { [IO.File]::ReadAllLines((Join-Path $latePack.Path '.webp-problems')) })
-            Check ($withoutDecoder.Count -eq 1 -and $withoutDecoder[0].Path.EndsWith('PhotoCraft.png') -and $waited.Count -eq 2 -and 'PhotoCraft.webp' -cin $waited -and 'FileTypes/pcraft.webp' -cin $waited -and
-                $withDecoder.Count -eq 1 -and $withDecoder[0].Path.EndsWith('PhotoCraft.png') -and $lateFiles.Formats['.pcraft'].EndsWith('pcraft.png') -and
-                ('PhotoCraft.webp' + [char]9 + 'The WebP file is damaged or incomplete.') -cin $lateProblems -and ('FileTypes/pcraft.webp' + [char]9 + 'The WebP file is damaged or incomplete.') -cin $lateProblems -and
-                -not [IO.File]::Exists($uncheckedFile)) 'A WebP downloaded while this PC had no decoder gets its full decode once a decoder exists, so its PNG twin stays in use'
+            Check ($lost.Status -eq 'Download' -and $regained.Downloaded -and (Pack-Files $regained) -ceq '.complete,FileTypes/pcraft.png,PhotoCraft.png' -and
+                $regainedIcons.Count -eq 1 -and $regainedIcons[0].Path.EndsWith('PhotoCraft.png')) 'A pack downloaded as WebP needs downloading again where this PC no longer reads WebP, and then fetches its PNG twins'
         }
         $blocked = & $module { (Get-DownloadCatalog)['Craft-Icons-Webp/Blocked'] }
         $parent = Split-Path -Parent $blocked.Path
@@ -330,6 +363,13 @@ try {
     $status = Get-SetupStatus
     Check ((@($status.AppPacks) -join ',') -ceq 'Craft-Icons-Setup/AppTwo' -and $status.AppBytes -eq 200 -and (@($status.FilePacks) -join ',') -ceq 'Craft-Icons-Setup/Files' -and $status.FileBytes -eq 300 -and
         $status.AppUnknown -eq 0 -and $status.FileUnknown -eq 0) 'Setup''s optional downloads offer only packs that are not on this computer, with the sizes the package measured'
+    # A table with a fourth column has the size of a download without WebP there, for a PC that can't read WebP.
+    $twinSizes = @($sizes[0], $sizes[1], ('Craft-Icons-Setup/AppOne' + [char]9 + '100' + [char]9 + '1' + [char]9 + '150'), ('Craft-Icons-Setup/AppTwo' + [char]9 + '200' + [char]9 + '1' + [char]9 + '250'), ('Craft-Icons-Setup/Files' + [char]9 + '300' + [char]9 + '1' + [char]9 + '350'))
+    [IO.File]::WriteAllLines((Join-Path $win 'PackSizes.tsv'), [string[]]$twinSizes)
+    $priorDecoder = $env:BETTERICON_WEBP_DECODER
+    $env:BETTERICON_WEBP_DECODER = 'none'
+    try { $plainStatus = Get-SetupStatus } finally { $env:BETTERICON_WEBP_DECODER = $priorDecoder }
+    Check ($plainStatus.AppBytes -eq 250 -and $plainStatus.FileBytes -eq 350 -and $plainStatus.AppUnknown -eq 0) 'Where this PC can''t read WebP, Setup offers the sizes of downloads without WebP'
     $sizes[1] = '#catalog' + [char]9 + ('0' * 64)
     [IO.File]::WriteAllLines((Join-Path $win 'PackSizes.tsv'), [string[]]$sizes)
     $stale = Get-SetupStatus

@@ -370,11 +370,76 @@ func (l *library) currentID(id string) string {
 	}
 	return id
 }
+// webpReadable reports whether the app running the helper reads WebP pack artwork: it sets BETTERICON_WEBP_READABLE to 1
+// when it does. The helper decodes nothing itself; downloads and the downloaded state follow this answer.
+func webpReadable() bool { return os.Getenv("BETTERICON_WEBP_READABLE") == "1" }
+
+// itemKey names the icon a file draws: files whose names differ only in their extension are one icon in several formats.
+func itemKey(file string) string { return strings.TrimSuffix(file, path.Ext(file)) }
+
+func isWebP(file string) bool { return strings.EqualFold(path.Ext(file), ".webp") }
+
+// twins lists the icons of a pack published as WebP and in another format too.
+func (p pack) twins() map[string]bool {
+	webp, other, both := map[string]bool{}, map[string]bool{}, map[string]bool{}
+	for _, a := range p.Assets {
+		if isWebP(a.File) {
+			webp[itemKey(a.File)] = true
+		} else {
+			other[itemKey(a.File)] = true
+		}
+	}
+	for key := range webp {
+		if other[key] {
+			both[key] = true
+		}
+	}
+	return both
+}
+
+// downloadAssets lists the files a download fetches: one twin per icon. Where the app reads WebP, a PNG gives way to its
+// WebP twin; where it can't, a WebP gives way to the other files of its icon. Every other file is fetched as it is.
+func (p pack) downloadAssets(webp bool) []asset {
+	twins := p.twins()
+	var wanted []asset
+	for _, a := range p.Assets {
+		if twins[itemKey(a.File)] {
+			ext := strings.ToLower(path.Ext(a.File))
+			if (webp && ext == ".png") || (!webp && ext == ".webp") {
+				continue
+			}
+		}
+		wanted = append(wanted, a)
+	}
+	return wanted
+}
+
+// present reports whether a downloaded file is there: a regular file, not empty.
+func present(file string) bool {
+	info, err := os.Lstat(file)
+	return err == nil && info.Mode().IsRegular() && info.Size() > 0
+}
+
+// filesPresent reports whether a download of the pack is complete. Of twins a download fetches one (downloadAssets), so
+// such an icon needs one of its other files, or its WebP where the app reads WebP. Every other file must be there.
 func (l *library) filesPresent(p pack) bool {
 	root := filepath.Join(l.state, "downloads", p.signature())
+	twins := p.twins()
+	usable, webp := map[string]bool{}, map[string]bool{}
 	for _, a := range p.Assets {
-		info, err := os.Lstat(filepath.Join(root, a.File))
-		if err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
+		here, key := present(filepath.Join(root, a.File)), itemKey(a.File)
+		if !twins[key] {
+			if !here {
+				return false
+			}
+			continue
+		}
+		usable[key] = usable[key] || (here && !isWebP(a.File))
+		webp[key] = webp[key] || (here && isWebP(a.File))
+	}
+	readable := webpReadable()
+	for key, ok := range usable {
+		if !ok && !(readable && webp[key]) {
 			return false
 		}
 	}
@@ -478,8 +543,12 @@ func (l *library) list() []view {
 				} else if a.Document {
 					files = v.FileIcons
 				}
-				// The first file of an item goes into its map. One file of each other format follows it, best first.
+				// The first file of an item goes into its map. One file of each other format follows it, best first. A
+				// download fetches one of an icon's twins, so only files on this computer are listed.
 				file := filepath.Join(local.root, filepath.FromSlash(a.File))
+				if !present(file) {
+					continue
+				}
 				chosen, taken := files[a.Key]
 				if !taken {
 					files[a.Key] = file

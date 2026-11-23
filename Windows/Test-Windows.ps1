@@ -77,7 +77,9 @@ try {
     }
     finally { $svgReader.Dispose() }
     [IO.File]::WriteAllBytes((Join-Path $svgFolder 'PhotoCraft.ico'), $svgBytes)
-    $rasterSource = @(Get-BetterIconThemeIcon -Theme Cardboard)[0].PreviewPath
+    # A PNG for the fixtures below. Cardboard's icons have WebP twins, which a pack folder shows first; the PNG is beside it.
+    $rasterSource = [IO.Path]::ChangeExtension(@(Get-BetterIconThemeIcon -Theme Cardboard)[0].PreviewPath, '.png')
+    Assert ([IO.File]::Exists($rasterSource)) 'Cardboard keeps a PNG beside each WebP twin'
     Copy-Item -LiteralPath $rasterSource -Destination (Join-Path $svgFolder 'PhotoCraft.png')
     Copy-Item -LiteralPath $rasterSource -Destination (Join-Path $svgFolder 'PhotoCraft alternate.png')
     $mixedIcons = @(Get-BetterIconThemeIcon -Repository $svgRepository -Theme 'Vectors/Only')
@@ -198,7 +200,7 @@ try {
     $fixtureRepository = Join-Path $testRoot 'fixture repository'
     $fixtureTheme = Join-Path $fixtureRepository 'Pack\Theme'
     $null = [IO.Directory]::CreateDirectory($fixtureTheme)
-    $sourceIcon = (Get-BetterIconThemeIcon -Theme Cardboard | Where-Object Application -eq 'PhotoCraft').Path
+    $sourceIcon = [IO.Path]::ChangeExtension((Get-BetterIconThemeIcon -Theme Cardboard | Where-Object Application -eq 'PhotoCraft').Path, '.png')
     $sourceBytes = Get-BetterIconBytes $sourceIcon
     [IO.File]::WriteAllBytes((Join-Path $fixtureTheme 'PhotoCraft.ico'), $sourceBytes)
     [IO.File]::WriteAllBytes((Join-Path $fixtureTheme 'PhotoCraft-other.ico'), $sourceBytes)

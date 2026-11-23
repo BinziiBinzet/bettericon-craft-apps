@@ -3457,6 +3457,52 @@ def unlisted_rules(project, types, art, other_art, folder, packs, made, keys):
     check(ok, "the helper's UnlistedFileIconApps reaches the file icons: a downloaded fixture pack with explicit art "
           "themes the type, its damaged WebP giving way to the PNG twin" + ("" if ok else f"; listed {listed}, "
                                                                              f"header {header}, unlisted {explicit.unlisted}"))
+    # One twin per icon, through the real helper and a local pack source: where this computer reads WebP, the WebP
+    # alone, and the PNG twin too when the WebP fails its full decode; where it can't, the PNG alone.
+    source, twin_base = folder / "pack source", "Craft-Icons-Bitwin"
+    twin_published = []
+    for name, body in (("Light", WEBP["A2"]), ("Broken", WEBP["A12"]), ("Plain", WEBP["A2"])):
+        for ext, content in ((".webp", body), (".png", art.read_bytes())):
+            published_path = f"{twin_base}/{name}/PhotoCraft{ext}"
+            twin_published.append((published_path, published_path, content))
+            (source / published_path).parent.mkdir(parents=True, exist_ok=True)
+            (source / published_path).write_bytes(content)
+    resources, twin_data = helper_fixture(folder / "twins", twin_published, [])
+
+    def fetched(name):
+        return sorted(p.name for p in (twin_data / "pack-cache/downloads").rglob("*")
+                      if p.is_file() and f"/{twin_base}/{name}/" in p.as_posix())
+    import webp
+    reads = webp.available()
+    os.environ["BETTERICON_PACK_SOURCE"] = str(source)
+    try:
+        twin_packs = Packs(resources, twin_data)
+        twin_packs.acquire(f"{twin_base}/Light")
+        rows = twin_packs.acquire(f"{twin_base}/Broken")
+        twin_packs.verify(rows)
+        twin_packs.use_catalog(rows)
+        broken_icon = twin_packs.all[f"{twin_base}/Broken"].icons.get("PhotoCraft")
+        os.environ["BETTERICON_WEBP_DECODER"] = "none"
+        try:
+            twin_packs.acquire(f"{twin_base}/Plain")
+        finally:
+            del os.environ["BETTERICON_WEBP_DECODER"]
+    finally:
+        del os.environ["BETTERICON_PACK_SOURCE"]
+    light, broken, plain = fetched("Light"), fetched("Broken"), fetched("Plain")
+    ok = (light == (["PhotoCraft.webp"] if reads else ["PhotoCraft.png"]) and plain == ["PhotoCraft.png"] and
+          broken == (["PhotoCraft.png", "PhotoCraft.webp"] if reads else ["PhotoCraft.png"]) and
+          broken_icon is not None and broken_icon.suffix == ".png")
+    check(ok, "a download fetches one twin per icon: the WebP where this computer reads WebP, its PNG twin too when "
+          "the WebP fails its full decode, and the PNG alone where it can't read WebP" +
+          ("" if ok else f"; reads WebP {reads}: {light} / {broken} / {broken_icon} / {plain}"))
+    from packs import pack_sizes
+    sizes = folder / "twin-sizes.tsv"
+    sizes.write_text("#catalog\tx\nCraft-Icons-Bitwin/Light\t100\t1\t250\nCraft-Icons-Bitwin/Old\t300\t1\n")
+    check(pack_sizes(sizes, True) == {"Craft-Icons-Bitwin/Light": 100, "Craft-Icons-Bitwin/Old": 300} and
+          pack_sizes(sizes, False) == {"Craft-Icons-Bitwin/Light": 250, "Craft-Icons-Bitwin/Old": 300},
+          "pack sizes are those of a download with WebP twins where this computer reads WebP, and without them where it "
+          "can't")
     # Personal imports for the same rule: format-labelled art and a mix of explicit and labelled twins.
     labelled_key = packs.import_from(zipped(folder / "Labelled.zip", {"FileTypes/TextureCraft-OBJ.png": art.read_bytes()}))
     mixed_key = packs.import_from(zipped(folder / "Mixed.zip", {"FileTypes/TextureCraft-files.webp": WEBP["A13"],
@@ -4361,10 +4407,18 @@ def core():
           sum(p.can_files for p in packs.builtin.values()) == 18 and sum(p.can_apps for p in packs.builtin.values()) == 28,
           "Komplett's five packs and Mike22's three file type sets are file type packs")
     both = "Craft-Icons-Mike22/CraftApps AIO November - Dark"
-    for wanted in ("Craft-Icons-Zach/Cardboard", "Craft-Icons-Komplett/Dunkel", both):
+    # Cardboard's PNG files serve as PNG art in the checks below, so it is fetched as a computer that can't read WebP
+    # fetches it. The other two come as this computer fetches them: an icon's WebP twin where it reads WebP.
+    packs.use_catalog(packs.run("acquire", "Craft-Icons-Zach/Cardboard", readable=False))
+    for wanted in ("Craft-Icons-Komplett/Dunkel", both):
         packs.use_catalog(packs.run("acquire", wanted))
     pack = packs.all["Craft-Icons-Zach/Cardboard"]
     dunkel = packs.all["Craft-Icons-Komplett/Dunkel"]
+    import webp
+    fetched = {p.suffix for p in (cat.data / "pack-cache/downloads").rglob("*") if p.is_file() and "/Craft-Icons-Komplett/Dunkel/" in p.as_posix()}
+    check({p.suffix for p in pack.icons.values()} == {".png"} and fetched == ({".webp"} if webp.available() else {".png"}) and
+          {p.suffix for p in dunkel.app_files.values()} == fetched,
+          "a published pack downloads one file per icon: its WebP twins where this computer reads WebP, its PNG files where it can't")
     dunkel_art, dunkel_tiles = packs.file_art(dunkel), packs.file_tiles(dunkel)
     check(not pack.can_files and not packs.file_art(pack) and len(dunkel.app_files) == 14 and len(dunkel_art) == 27 and
           dunkel_art[".psd"] == dunkel.app_files["PhotoCraft"] and ".anicraft" not in dunkel_art and len(dunkel_tiles) == 14 and
