@@ -1,5 +1,5 @@
 # Download size in bytes and file count of each pack in the installer's catalog. Written by macOS/pack-sizes.py.
-#catalog	1b367cba534d9fb782a7d15764da687498c728d5356707f8f8bf34482e2cf25a
+#catalog	3fcdfff470a31231f0cc01ef665e3d220c35b86100f335d1a587077ac160d8e8
 Craft-Icons-4NovemberKilo/Mascots	56021705	9
 Craft-Icons-Cryogenn/ArtCraft iconPackage - Dark	646862	8
 Craft-Icons-Cryogenn/ArtCraft iconPackage - Light	1044558	8
@@ -20,14 +20,23 @@ Craft-Icons-Mike22/CraftApps AIO November - Light	619111	29
 Craft-Icons-Mike22/CraftApps AIO November - Monochrome	482275	29
 Craft-Icons-VimiummuimiV/Modern Flat	1282181	13
 Craft-Icons-Zach/Cardboard	49152353	20
+Craft-Icons-Zach/Cardboard_filetypes	23762888	37
 Craft-Icons-Zach/Edgework	115446	20
+Craft-Icons-Zach/Edgework_filetypes	2009980	37
 Craft-Icons-Zach/Foldmark	229184	20
+Craft-Icons-Zach/Foldmark_filetypes	2315424	37
 Craft-Icons-Zach/HyGel	29965452	20
+Craft-Icons-Zach/HyGel_filetypes	9565830	37
 Craft-Icons-Zach/Ink	9905266	20
+Craft-Icons-Zach/Ink_filetypes	6035465	37
 Craft-Icons-Zach/Irridiant	35738135	20
+Craft-Icons-Zach/Irridiant_filetypes	5633155	37
 Craft-Icons-Zach/KnivesAndFeathers	48592627	20
+Craft-Icons-Zach/KnivesAndFeathers_filetypes	10964107	37
 Craft-Icons-Zach/NegativeSpace	26040943	20
+Craft-Icons-Zach/NegativeSpace_filetypes	7253314	37
 Craft-Icons-Zach/Pop	25333037	20
+Craft-Icons-Zach/Pop_filetypes	4999221	37
 Craft-Icons-circleb/Root	14802248	15
 Craft-Icons-kOdeNeRA/Minimal Symbols	1240023	11
 Craft-Icons-kristofp/Engraved Animals	6743421	3
