@@ -4161,12 +4161,12 @@ def offer_session(scenario):
                 js("el('launcherTab').click(); true")
                 usable = wait(lambda: js("page === 'launcher' && !el('offerProgress').hidden && !working"), 10)
                 js("el('manageTab').click(); true")
-                check(shown and busy and usable and prefs().get("offerPacks") is False and len(calls) < 8,
+                check(shown and busy and usable and prefs().get("offerPacks") is False and len(calls) < 17,
                       "the chosen packs download one after another through the helper's acquire while the window "
                       "stays usable, with their progress under the tabs and on the status line")
                 ended = wait(lambda: js("!el('offerClose').hidden"), 60)
                 summary = js("el('offerProgressText').textContent")
-                want = ("Downloaded 6 of 8 icon packs. Couldn’t download Getoent / Komplett: GitHub answered with HTTP "
+                want = ("Downloaded 15 of 17 icon packs. Couldn’t download Getoent / Komplett: GitHub answered with HTTP "
                         "404. Couldn’t download CraftApps AIO November - Light / Mike22: its artwork didn’t match the "
                         "published checksum. Choose a pack to try it again.")
                 files = [p.id for p in sorted((p for p in app.packs.all.values() if not p.personal and
@@ -4176,7 +4176,7 @@ def offer_session(scenario):
                 js("el('offerClose').click(); true")
                 closed = wait(lambda: js("el('offer').hidden && el('status').textContent === "
                                          f"{json.dumps(desktop.IDLE)}"), 10)
-                check(ended and summary == want and calls == files and downloaded == 6 and want in statusline and
+                check(ended and summary == want and calls == files and downloaded == 15 and want in statusline and
                       closed and prefs().get("pendingPacks") == [],
                       "a pack that fails is named with its cause and the others still download, and Close takes the "
                       "outcome away" + ("" if summary == want else f"; {summary!r}"))
