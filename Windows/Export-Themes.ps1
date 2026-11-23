@@ -15,7 +15,9 @@ $styles = $assembly.GetType('BetterIcon.Tray.AppBranding', $true).GetField('Styl
 # The names the shared interface uses for each color.
 $names = [ordered]@{ surface = 'Surface'; background = 'Background'; input = 'Input'; inactive = 'InactiveTab'; selection = 'Selection'
     pressed = 'Pressed'; border = 'Border'; ink = 'Text'; muted = 'Muted'; accent = 'Accent'; accentHover = 'AccentHover'
-    accentPressed = 'AccentPressed'; accentInk = 'AccentText'; warn = 'Error' }
+    accentPressed = 'AccentPressed'; accentInk = 'AccentText'; warn = 'Error'
+    # A loading bar's track, and the scroll bars, as the Windows app draws them.
+    controlFace = 'ControlFace'; scrollTrack = 'ScrollTrack'; scrollThumb = 'ScrollThumb' }
 $lines = [Collections.Generic.List[string]]::new()
 foreach ($style in $styles) {
     $modes = foreach ($mode in 'Dark', 'Light') {

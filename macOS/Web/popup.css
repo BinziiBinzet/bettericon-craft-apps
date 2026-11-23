@@ -21,9 +21,19 @@
   --inactive: #d3d7cc;
   --pressed: #c4c8bc;
   --warn: #b22222;
+  --control-face: #d8dad2;
+  --scroll-track: #f5f6f2;
+  --scroll-thumb: #a2a49e;
   --size: 48px;
   --cell: 112px;
   --row: 98px;
+}
+/* On the Mac, scroll bars take the theme's colors where the system's web view can color them. They keep the system's
+   own shape and behavior, so they still show only while scrolling. WebKitGTK shades a colored thumb by itself, lighter
+   under the pointer and darker while it is dragged, which lands on the track's color in these schemes, so the Linux
+   app (data-gtk) keeps WebKitGTK's own scroll bars. */
+:root:not([data-gtk]) {
+  scrollbar-color: var(--scroll-thumb) var(--scroll-track);
 }
 :root[data-dark="true"] {
   color-scheme: dark;
@@ -41,6 +51,53 @@
   --inactive: #46544a;
   --pressed: #627062;
   --warn: #ffa19a;
+  --control-face: #6b7570;
+  --scroll-track: #293630;
+  --scroll-thumb: #6b7570;
+}
+/* A loading bar in the theme's colors, as on Windows: the button gray with an accent chunk, which moves across while
+   the bar has no value. The system would draw it in its own accent color. */
+progress {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border: 0;
+  background-color: var(--control-face);
+}
+progress::-webkit-progress-bar {
+  background: transparent;
+}
+progress::-webkit-progress-value {
+  background: var(--accent);
+}
+progress:indeterminate {
+  background-image: linear-gradient(var(--accent), var(--accent));
+  background-size: 25% 100%;
+  background-repeat: no-repeat;
+  animation: loading 1.4s linear infinite;
+}
+@keyframes loading {
+  from {
+    background-position: -33.4% 0;
+  }
+  to {
+    background-position: 133.4% 0;
+  }
+}
+/* With reduced motion nothing sweeps: the whole bar takes the accent and fades in and out, so it still shows work. */
+@keyframes loading-still {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.4;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  progress:indeterminate {
+    background-size: 100% 100%;
+    animation: loading-still 1.4s ease-in-out infinite alternate;
+  }
 }
 * {
   box-sizing: border-box;
@@ -261,7 +318,7 @@ nav button[aria-selected="true"]:hover {
 #offerBar {
   flex: 0 1 120px;
   min-width: 40px;
-  accent-color: var(--accent);
+  height: 6px;
 }
 button.link {
   min-height: 0;

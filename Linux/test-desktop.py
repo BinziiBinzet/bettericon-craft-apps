@@ -5046,6 +5046,31 @@ def gui():
     check(wait(lambda: js("model.prefs.color==='clay' && model.prefs.theme==='Light' && model.dark===false")) and
           js(scheme) == ["#ebe1d8", "#ebe1d8", True, True, "false"],
           "choosing Clay Light gives the app that icon's light color scheme with readable text")
+    # The loading bars, which the system would draw in its own colors, take the scheme's too, as on Windows: the button
+    # gray with an accent chunk a quarter of the bar wide that moves across. Where the system asks for less motion the
+    # whole bar takes the accent and fades instead. The chunk is the bar's own background picture, which shows only
+    # while the page keeps WebKit's own inner bar transparent; a page loaded from a file can't read its style sheet
+    # back, so that rule is looked for in the file. The scroll bars stay WebKitGTK's own: it shades a colored thumb
+    # by itself, which hides the thumb under the pointer or while it is dragged in these schemes.
+    chrome = js("""(() => {
+        const css = getComputedStyle(document.documentElement), value = name => css.getPropertyValue('--' + name).trim();
+        const hex = color => '#' + color.match(/\\d+/g).slice(0, 3).map(v => Number(v).toString(16).padStart(2, '0')).join('');
+        const stops = image => (image.match(/rgba?\\([^)]*\\)/g) || []).map(hex).join(' ');
+        const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+        const bars = [el('busy').querySelector('progress'), el('offerBar')].map(bar => getComputedStyle(bar));
+        return [value('control-face'), value('scroll-thumb'), value('scroll-track'),
+            bars.map(look => hex(look.backgroundColor) + ' ' + look.animationName).join('|'),
+            bars.map(look => stops(look.backgroundImage) + ' ' + look.backgroundSize + ' ' + look.backgroundRepeat).join('|'),
+            value('accent'), still, document.documentElement.dataset.gtk, css.scrollbarColor || 'auto'];
+    })()""")
+    move, chunk = ("loading-still", "100% 100%") if chrome[6] else ("loading", "25% 100%")
+    drawn = f"{chrome[5]} {chrome[5]} {chunk} no-repeat"
+    sheet = (payload / "Web/popup.css").read_text(encoding="utf8")
+    ok = (chrome[:5] == ["#dbd1c9", "#a49e97", "#f6f2ed", f"#dbd1c9 {move}|#dbd1c9 {move}", f"{drawn}|{drawn}"] and
+          re.fullmatch(r"#[0-9a-f]{6}", chrome[5]) and chrome[5] != "#dbd1c9" and chrome[7:] == ["true", "auto"] and
+          re.search(r"progress::-webkit-progress-bar \{\s*background: transparent;\s*\}", sheet))
+    check(ok, "the loading bars take Clay Light's colors too, the button gray with an accent chunk that moves, or fades "
+          "where the system asks for less motion, and the scroll bars stay WebKitGTK's own" + ("" if ok else f"; {chrome}"))
     choose_icon("Sage Light")
     wait(lambda: js("model.prefs.color==='sage' && model.prefs.variant==='light'"))
     choose_icon("Match app theme")

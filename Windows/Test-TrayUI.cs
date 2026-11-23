@@ -733,6 +733,8 @@ static class TrayTests
                     LinkLabel shortcutLink = (LinkLabel)typeof(LauncherForm).GetField("launcherShortcut", instance).GetValue(form);
                     Check(shortcutLink.Enabled && shortcutLink.Text.EndsWith(unavailable + " (unavailable)"),
                         "Startup identifies a saved shortcut held by another window and keeps the editor accessible");
+                    // This is the thread's second message loop: scroll bar skins must still follow their bars in it.
+                    AppearanceTests.CheckSkinsInLaterLoop(Check);
                     stop.Set();
                 }
                 catch (Exception error) { failure = error; timer.Stop(); context.ExitThread(); }

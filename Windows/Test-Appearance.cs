@@ -41,6 +41,129 @@ static class AppearanceTests
     static double Channel(byte c) { double n = c / 255.0; return n <= 0.04045 ? n / 12.92 : Math.Pow((n + 0.055) / 1.055, 2.4); }
     static double Light(Color c) { return Channel(c.R) * 0.2126 + Channel(c.G) * 0.7152 + Channel(c.B) * 0.0722; }
     static double Contrast(Color a, Color b) { double x = Light(a), y = Light(b); return (Math.Max(x, y) + 0.05) / (Math.Min(x, y) + 0.05); }
+    static bool Same(Color a, Color b) { return a.ToArgb() == b.ToArgb(); }
+    static bool Near(Color a, Color b, int levels) { return Math.Abs(a.R - b.R) <= levels && Math.Abs(a.G - b.G) <= levels && Math.Abs(a.B - b.B) <= levels; }
+    // True when a color lies on the straight line from one color toward another, within rounding.
+    static bool Along(Color from, Color to, Color color)
+    {
+        int[] a = { from.R, from.G, from.B }, b = { to.R, to.G, to.B }, c = { color.R, color.G, color.B };
+        int channel = Enumerable.Range(0, 3).OrderByDescending(i => Math.Abs(b[i] - a[i])).First();
+        if (b[channel] == a[channel]) return Enumerable.Range(0, 3).All(i => c[i] == a[i]);
+        double t = (c[channel] - a[channel]) / (double)(b[channel] - a[channel]);
+        return t >= 0 && t <= 1 && Enumerable.Range(0, 3).All(i => Math.Abs(c[i] - (a[i] + t * (b[i] - a[i]))) <= 1.5);
+    }
+    [StructLayout(LayoutKind.Sequential)] struct NativeRect { public int Left, Top, Right, Bottom; }
+    [DllImport("user32.dll", EntryPoint = "SendMessageW")] static extern IntPtr SendRect(IntPtr window, int message, IntPtr wParam, ref NativeRect rect);
+    [StructLayout(LayoutKind.Sequential)] struct BarInfo
+    {
+        public int Size; public NativeRect Bar; public int Button, ThumbTop, ThumbBottom, Reserved;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 6)] public int[] States;
+    }
+    [StructLayout(LayoutKind.Sequential)] struct ComboInfo { public int Size; public NativeRect Item, Button; public int ButtonState; public IntPtr Combo, Edit, List; }
+    [DllImport("user32.dll")] static extern bool GetScrollBarInfo(IntPtr window, int id, ref BarInfo info);
+    [DllImport("user32.dll")] static extern bool GetComboBoxInfo(IntPtr combo, ref ComboInfo info);
+    [DllImport("user32.dll")] static extern bool PrintWindow(IntPtr window, IntPtr device, uint flags);
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr window);
+    [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr window, int command);
+    [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr window, int flags);
+    // The scroll bar skin AppAppearance keeps for a control, or null.
+    static ScrollSkin SkinOf(Control control)
+    {
+        object table = typeof(AppAppearance).GetField("hooks", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
+        object[] call = { control, null };
+        if (!(bool)table.GetType().GetMethod("TryGetValue").Invoke(table, call) || call[1] == null) return null;
+        return (ScrollSkin)call[1].GetType().GetField("Skin").GetValue(call[1]);
+    }
+    static Bitmap PrintHandle(IntPtr window, Size size)
+    {
+        Bitmap image = new Bitmap(Math.Max(1, size.Width), Math.Max(1, size.Height));
+        using (Graphics canvas = Graphics.FromImage(image)) { IntPtr device = canvas.GetHdc(); try { PrintWindow(window, device, 0); } finally { canvas.ReleaseHdc(device); } }
+        return image;
+    }
+    // Problems with the skin over one scroll bar of a window, or null: shown, exactly over the bar, above it, letting the
+    // mouse through to it, and drawn with the theme's track and thumb.
+    static string SkinProblems(Control owner, IntPtr target, int id, int slot, AppearancePalette p)
+    {
+        ScrollSkin skin = SkinOf(owner);
+        if (skin == null || skin.Handle != target) return "no skin watches the window";
+        BarInfo info = new BarInfo { States = new int[6] }; info.Size = Marshal.SizeOf(typeof(BarInfo));
+        if (!GetScrollBarInfo(target, id, ref info) || (info.States[0] & 0x8000) != 0) return "the scroll bar is hidden";
+        Rectangle bar = Rectangle.FromLTRB(info.Bar.Left, info.Bar.Top, info.Bar.Right, info.Bar.Bottom);
+        IntPtr overlay = skin.SkinHandles()[slot]; Rectangle bounds = skin.SkinBounds()[slot];
+        if (overlay == IntPtr.Zero || !IsWindowVisible(overlay)) return "the skin is not shown";
+        if (bounds != bar) return "the skin covers " + bounds + " but the bar is at " + bar;
+        // The skin lies above the window it covers: walking down from the skin (GW_HWNDNEXT) reaches it. A dropdown and its
+        // popup skin are both windows of the desktop, so the same walk holds for them.
+        bool above = false;
+        for (IntPtr window = GetWindow(overlay, 2); window != IntPtr.Zero && !above; window = GetWindow(window, 2)) above = window == target;
+        if (!above) return "the skin is not above the window it covers";
+        if (SendMessage(overlay, 0x0084, IntPtr.Zero, new IntPtr(((bar.Y + 3) << 16) | ((bar.X + 3) & 0xFFFF))).ToInt64() != -1) return "the skin takes the mouse instead of the bar beneath";
+        bool vertical = id == -5 || (id == -4 && bar.Height > bar.Width);
+        int length = vertical ? bar.Height : bar.Width, thickness = vertical ? bar.Width : bar.Height;
+        int trackAt = info.ThumbBottom + 6 < length - info.Button ? (info.ThumbBottom + length - info.Button) / 2 : info.Button + (info.ThumbTop - info.Button) / 2;
+        Point track = vertical ? new Point(1, trackAt) : new Point(trackAt, 1);
+        Point thumb = vertical ? new Point(thickness / 2, (info.ThumbTop + info.ThumbBottom) / 2) : new Point((info.ThumbTop + info.ThumbBottom) / 2, thickness / 2);
+        using (Bitmap image = PrintHandle(overlay, bar.Size)) {
+            Color t = image.GetPixel(track.X, track.Y), m = image.GetPixel(thumb.X, thumb.Y);
+            if (!Same(t, p.ScrollTrack)) return "track pixel " + track + " was " + t + ", expected " + p.ScrollTrack;
+            if (!Same(m, p.ScrollThumb) && !Same(m, p.ScrollThumbHot) && !Same(m, p.ScrollThumbPressed)) return "thumb pixel " + thumb + " was " + m + ", expected " + p.ScrollThumb;
+        }
+        return null;
+    }
+    // True when no skin of the control is shown, as in high contrast.
+    static bool SkinsHidden(Control owner)
+    {
+        ScrollSkin skin = SkinOf(owner);
+        return skin == null || skin.SkinHandles().All(handle => handle == IntPtr.Zero || !IsWindowVisible(handle));
+    }
+    static Bitmap Render(Control control)
+    {
+        Bitmap image = new Bitmap(control.Width, control.Height);
+        control.Refresh(); control.DrawToBitmap(image, new Rectangle(Point.Empty, control.Size));
+        return image;
+    }
+    // Problems with a list's dropdown button against the palette, or null. The geometry is WinForms' flat combo's.
+    // With a picture, that picture is checked in place of a fresh print of the list: the one a list sent to the screen.
+    static string ListButtonProblems(ComboBox list, AppearancePalette p, Bitmap picture = null)
+    {
+        int width = list.ClientSize.Width, height = list.ClientSize.Height;
+        int button = SystemInformation.GetHorizontalScrollBarArrowWidthForDpi(list.DeviceDpi), left = width - button - 1;
+        Point arrow = new Point(left + button / 2 + button % 2, 1 + (height - 2) / 2);
+        Color glyph = list.Enabled ? p.ControlGlyph : Color.FromArgb((p.ControlGlyph.R + p.ControlFace.R) / 2, (p.ControlGlyph.G + p.ControlFace.G) / 2, (p.ControlGlyph.B + p.ControlFace.B) / 2);
+        if (list.ClientSize != list.Size) return "the list has a nonclient frame";
+        if (picture != null && picture.Size != list.ClientSize) return "the picture is " + picture.Width + "x" + picture.Height + ", the list " + width + "x" + height;
+        using (Bitmap image = picture == null ? Render(list) : new Bitmap(picture)) {
+            var expected = new[] {
+                new { X = left + 3, Y = 3, Color = p.ControlFace, Part = "face" }, new { X = width - 3, Y = height - 4, Color = p.ControlFace, Part = "face" },
+                new { X = left, Y = height / 2, Color = p.ControlLight, Part = "line beside the text" },
+                new { X = width - 1, Y = height / 2, Color = p.ControlOutline, Part = "outline" }, new { X = left + 3, Y = 0, Color = p.ControlOutline, Part = "outline" }, new { X = left + 3, Y = height - 1, Color = p.ControlOutline, Part = "outline" },
+                new { X = 0, Y = height / 2, Color = p.Border, Part = "border" }, new { X = left - 4, Y = 0, Color = p.Border, Part = "border" },
+                new { X = 1, Y = height / 2, Color = p.Input, Part = "inner frame" }, new { X = 2, Y = height / 2, Color = p.Input, Part = "inner frame" }, new { X = left - 1, Y = height / 2, Color = p.Input, Part = "inner frame" } };
+            foreach (var point in expected) if (!Same(image.GetPixel(point.X, point.Y), point.Color)) return point.Part + " pixel " + point.X + "," + point.Y + " was " + image.GetPixel(point.X, point.Y) + ", expected " + point.Color;
+            if (!Near(image.GetPixel(arrow.X, arrow.Y), glyph, 1)) return "arrow pixel " + arrow.X + "," + arrow.Y + " was " + image.GetPixel(arrow.X, arrow.Y) + ", expected " + glyph;
+        }
+        return null;
+    }
+    // Problems with the slider's channel against the palette, or null.
+    static string ChannelProblems(TrackBar slider, AppearancePalette p)
+    {
+        NativeRect channel = new NativeRect(), thumb = new NativeRect();
+        SendRect(slider.Handle, 0x041A, IntPtr.Zero, ref channel); SendRect(slider.Handle, 0x0419, IntPtr.Zero, ref thumb); // TBM_GETCHANNELRECT, TBM_GETTHUMBRECT
+        int middle = (channel.Top + channel.Bottom) / 2, early = channel.Left + 2, late = channel.Right - 3;
+        // The thumb can stand at either end; sample each side that it leaves free.
+        bool before = thumb.Left > early + 1, after = thumb.Right < late - 1;
+        if (channel.Bottom - channel.Top < 3 || !(before || after)) return "the channel (" + channel.Left + "," + channel.Top + "," + channel.Right + "," + channel.Bottom + ") leaves no room to sample beside the thumb";
+        using (Bitmap image = Render(slider)) {
+            var expected = new[] {
+                new { Check = before, X = early, Y = middle, Color = p.ControlFace, Part = "face before the thumb" }, new { Check = after, X = late, Y = middle, Color = p.ControlFace, Part = "face after the thumb" },
+                new { Check = before, X = early, Y = channel.Top, Color = p.ChannelEdgeBefore, Part = "edge before the thumb" }, new { Check = before, X = early, Y = channel.Bottom - 1, Color = p.ChannelEdgeBefore, Part = "edge before the thumb" },
+                new { Check = before, X = channel.Left, Y = middle, Color = p.ChannelEdgeBefore, Part = "start" },
+                new { Check = after, X = late, Y = channel.Top, Color = p.ChannelEdge, Part = "edge after the thumb" }, new { Check = after, X = late, Y = channel.Bottom - 1, Color = p.ChannelEdge, Part = "edge after the thumb" },
+                new { Check = after, X = channel.Right - 1, Y = middle, Color = p.ChannelEdge, Part = "end" } };
+            foreach (var point in expected) if (point.Check && !Same(image.GetPixel(point.X, point.Y), point.Color)) return point.Part + " pixel " + point.X + "," + point.Y + " was " + image.GetPixel(point.X, point.Y) + ", expected " + point.Color;
+        }
+        return null;
+    }
     static Color PaintedBackground(IconGridView grid)
     {
         using (Bitmap bitmap = new Bitmap(grid.Width, grid.Height)) {
@@ -332,6 +455,400 @@ static class AppearanceTests
             holder.Close();
         }
     }
+    // A list's dropdown button and the slider's channel take the theme's colors in Dark and Light, enabled and disabled,
+    // and stay Windows' own in high contrast. A scrolling panel's scroll bar takes Windows' dark style in Dark.
+    static void CheckControlChrome(LauncherForm owner, Action<bool, string> check)
+    {
+        foreach (string mode in new[] { "Dark", "Light", "High contrast" }) {
+            bool contrast = mode == "High contrast";
+            AppearancePalette p = contrast ? AppAppearance.Resolve("Dark", false, true) : AppAppearance.Resolve(mode, null, false, "stone");
+            using (Form holder = new Form { Text = "[TEST] Themed list, slider and scroll bar", ClientSize = new Size(440, 250), ShowInTaskbar = false, StartPosition = FormStartPosition.Manual, Location = new Point(owner.Left + 40, owner.Top + 40) })
+            using (AppearanceComboBox list = new AppearanceComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 300, Location = new Point(12, 12) })
+            using (ThemedTrackBar slider = new ThemedTrackBar { Minimum = 0, Maximum = 100, Value = 25, TickStyle = TickStyle.None, AutoSize = false, Width = 400, Height = 28, Location = new Point(12, 60) })
+            using (TrackBar plain = new TrackBar { Minimum = 0, Maximum = 100, Value = 25, TickStyle = TickStyle.None, AutoSize = false, Width = 400, Height = 28, Location = new Point(12, 100) })
+            using (Panel scrolling = new Panel { AutoScroll = true, AutoScrollMinSize = new Size(0, 2000), Location = new Point(12, 140), Size = new Size(200, 100) })
+            using (ComboBox flat = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, FlatStyle = FlatStyle.Flat, DrawMode = DrawMode.OwnerDrawFixed, ItemHeight = 24, Width = 300, Location = new Point(220, 140) }) {
+                foreach (ComboBox each in new[] { list, flat }) { each.Items.AddRange(new object[] { "First", "Second" }); each.SelectedIndex = 0; }
+                holder.Controls.AddRange(new Control[] { list, slider, plain, scrolling, flat });
+                AppAppearance.Apply(holder, p); holder.Show(owner); Application.DoEvents();
+                foreach (bool enabled in new[] { true, false }) {
+                    list.Enabled = flat.Enabled = enabled; Application.DoEvents();
+                    string state = enabled ? "" : " while the list is disabled";
+                    if (contrast) {
+                        // Inside the border, the themed list's button matches a plain flat list's, pixel for pixel.
+                        int width = list.ClientSize.Width, height = list.ClientSize.Height, left = width - SystemInformation.GetHorizontalScrollBarArrowWidthForDpi(list.DeviceDpi) - 1;
+                        using (Bitmap image = Render(list)) using (Bitmap native = Render(flat))
+                            check(list.Size == flat.Size && Enumerable.Range(left, width - 1 - left).All(x => Enumerable.Range(1, height - 2).All(y => Same(image.GetPixel(x, y), native.GetPixel(x, y)))),
+                                "High contrast leaves the list's dropdown button to Windows" + state);
+                    }
+                    else { string problem = ListButtonProblems(list, p); check(problem == null, mode + " draws the list's dropdown button in the theme's colors" + state + (problem == null ? "" : ": " + problem)); }
+                }
+                list.Enabled = flat.Enabled = true;
+                if (contrast) {
+                    NativeRect channel = new NativeRect(); SendRect(slider.Handle, 0x041A, IntPtr.Zero, ref channel);
+                    using (Bitmap image = Render(slider)) using (Bitmap native = Render(plain)) {
+                        bool same = channel.Right - channel.Left > 10 && Enumerable.Range(channel.Left, channel.Right - channel.Left).All(x => Enumerable.Range(channel.Top, channel.Bottom - channel.Top).All(y => Same(image.GetPixel(x, y), native.GetPixel(x, y))));
+                        check(same, "High contrast leaves the slider's channel to Windows");
+                    }
+                }
+                else { string problem = ChannelProblems(slider, p); check(problem == null, mode + " draws the slider's channel in the theme's colors, with its own edges before and after the thumb" + (problem == null ? "" : ": " + problem)); }
+                using (Bitmap image = Render(scrolling)) {
+                    double light = Light(image.GetPixel(scrolling.Width - SystemInformation.VerticalScrollBarWidth / 2 - 1, scrolling.Height - SystemInformation.VerticalScrollBarArrowHeight - 8));
+                    check(scrolling.VerticalScroll.Visible && (p.Dark && !p.HighContrast ? light < 0.06 : light > 0.4), mode + " gives a scrolling panel's scroll bar Windows' " + (p.Dark && !p.HighContrast ? "dark" : "light") + " style (track luminance " + light.ToString("0.000") + ")");
+                }
+                holder.Close();
+            }
+        }
+    }
+    // The rest of the parts Windows draws in its own colors: check boxes, the slider's thumb, the loading bar, the borders of
+    // text boxes, lists and tables, a details list's grid lines, a table's buttons, and every scroll bar, through skins.
+    // High contrast leaves them all to Windows.
+    static void CheckThemedParts(LauncherForm owner, Action<bool, string> check)
+    {
+        foreach (string mode in new[] { "Dark", "Light", "High contrast" }) {
+            bool contrast = mode == "High contrast";
+            AppearancePalette p = contrast ? AppAppearance.Resolve("Dark", false, true) : AppAppearance.Resolve(mode, null, false, "stone");
+            using (Form holder = new Form { Text = "[TEST] Themed parts", ClientSize = new Size(940, 720), ShowInTaskbar = false, StartPosition = FormStartPosition.Manual, Location = new Point(owner.Left + 20, owner.Top + 20) })
+            using (CheckBox on = new CheckBox { Text = "Checked", Checked = true, AutoSize = true, Location = new Point(12, 12) })
+            using (CheckBox off = new CheckBox { Text = "Unchecked", AutoSize = true, Location = new Point(160, 12) })
+            using (ThemedTrackBar slider = new ThemedTrackBar { Minimum = 0, Maximum = 100, Value = 50, TickStyle = TickStyle.None, AutoSize = false, Width = 300, Height = 28, Location = new Point(12, 44) })
+            using (TrackBar plain = new TrackBar { Minimum = 0, Maximum = 100, Value = 50, TickStyle = TickStyle.None, AutoSize = false, Width = 300, Height = 28, Location = new Point(330, 44) })
+            using (ThemedProgressBar progress = new ThemedProgressBar { Style = ProgressBarStyle.Marquee, MarqueeAnimationSpeed = 0, Location = new Point(12, 84), Size = new Size(400, 14) })
+            using (TextBox single = new TextBox { BorderStyle = BorderStyle.FixedSingle, Text = "128", Location = new Point(12, 110), Width = 120 })
+            using (TextBox sunken = new TextBox { Text = "Pack name", Location = new Point(150, 110), Width = 160 })
+            using (ListView rows = new ListView { View = View.Details, GridLines = true, FullRowSelect = true, Location = new Point(12, 150), Size = new Size(440, 220) })
+            using (DataGridView table = new DataGridView { Location = new Point(470, 150), Size = new Size(440, 220), RowHeadersVisible = false, AllowUserToAddRows = false })
+            using (Panel scrolling = new Panel { AutoScroll = true, AutoScrollMinSize = new Size(0, 2000), Location = new Point(12, 390), Size = new Size(200, 200) })
+            using (AppearanceComboBox list = new AppearanceComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 300, MaxDropDownItems = 8, Location = new Point(240, 390) }) {
+                rows.Columns.Add("Status", 100); rows.Columns.Add("Shortcut", 300);
+                for (int i = 0; i < 40; i++) rows.Items.Add(new ListViewItem(new[] { "Changes", "Shortcut " + i }));
+                table.Columns.Add("App", "App"); table.Columns.Add(new DataGridViewButtonColumn { Name = "Choose", Text = "Choose...", UseColumnTextForButtonValue = true, Width = 90 });
+                for (int i = 0; i < 60; i++) table.Rows.Add("App " + i);
+                for (int i = 0; i < 60; i++) list.Items.Add("Pack " + i);
+                list.SelectedIndex = 0;
+                holder.Controls.AddRange(new Control[] { on, off, slider, plain, progress, single, sunken, rows, table, scrolling, list });
+                AppAppearance.Apply(holder, p); holder.Show(owner);
+                for (int i = 0; i < 10; i++) Application.DoEvents();
+                // Check boxes: a rounded square in the accent once checked, in the input color with the border color around it otherwise.
+                Size glyph; using (Graphics g = on.CreateGraphics()) glyph = CheckBoxRenderer.GetGlyphSize(g, System.Windows.Forms.VisualStyles.CheckBoxState.UncheckedNormal);
+                Func<CheckBox, Point> inside = box => new Point(box.Padding.Left + glyph.Width * 3 / 10, (box.ClientSize.Height - glyph.Height) / 2 + glyph.Height * 3 / 10);
+                using (Bitmap checkedImage = Render(on)) using (Bitmap uncheckedImage = Render(off)) {
+                    Color a = checkedImage.GetPixel(inside(on).X, inside(on).Y), b = uncheckedImage.GetPixel(off.Padding.Left + glyph.Width / 2, (off.ClientSize.Height - glyph.Height) / 2 + glyph.Height / 2);
+                    if (!contrast) check(Same(a, p.Accent) && Same(b, p.Input), mode + " draws check boxes in the theme's colors (checked " + a + ", unchecked " + b + ")");
+                    else check(!Same(a, AppAppearance.Resolve("Dark", null, false, "stone").Accent), "High contrast leaves check boxes to Windows");
+                }
+                // The slider's thumb: the accent.
+                NativeRect thumb = new NativeRect(); SendRect(slider.Handle, 0x0419, IntPtr.Zero, ref thumb);
+                Point middle = new Point((thumb.Left + thumb.Right) / 2, (thumb.Top + thumb.Bottom) / 2);
+                using (Bitmap image = Render(slider)) using (Bitmap native = Render(plain)) {
+                    Color c = image.GetPixel(middle.X, middle.Y);
+                    if (!contrast) check(Same(c, p.Accent) || Same(c, p.AccentHover), mode + " draws the slider's thumb in the theme's accent (" + c + ")");
+                    else check(Same(c, native.GetPixel(middle.X, middle.Y)), "High contrast leaves the slider's thumb to Windows");
+                }
+                // The loading bar: the button's gray, with an accent chunk while it runs.
+                progress.MarqueeAnimationSpeed = 30;
+                bool chunk = false; int track = 0;
+                for (int attempt = 0; attempt < 40 && !chunk; attempt++) {
+                    for (int i = 0; i < 5; i++) { Application.DoEvents(); System.Threading.Thread.Sleep(10); }
+                    using (Bitmap image = Render(progress)) {
+                        int y = progress.Height / 2;
+                        chunk = Enumerable.Range(0, progress.Width).Any(x => Same(image.GetPixel(x, y), p.Accent));
+                        track = Enumerable.Range(0, progress.Width).Count(x => Same(image.GetPixel(x, y), p.ControlFace));
+                    }
+                }
+                bool running = progress.MarqueeRunning;
+                progress.MarqueeAnimationSpeed = 0; Application.DoEvents();
+                bool stopped;
+                using (Bitmap image = Render(progress)) stopped = !progress.MarqueeRunning && Enumerable.Range(0, progress.Width).All(x => Same(image.GetPixel(x, progress.Height / 2), p.ControlFace));
+                check(running && chunk && track > 0 && stopped, mode + " gives the loading bar the button's gray and a moving accent chunk, which stops with the bar");
+                // Borders of text boxes, the details list and the table: the border color, a sunken border's inner line the background.
+                if (!contrast) {
+                    using (Bitmap a = Render(single)) using (Bitmap b = Render(sunken)) using (Bitmap c = Render(rows)) using (Bitmap d = Render(table)) {
+                        bool borders = Same(a.GetPixel(0, single.Height / 2), p.Border) && Same(b.GetPixel(0, sunken.Height / 2), p.Border) && Same(b.GetPixel(1, sunken.Height / 2), sunken.BackColor)
+                            && Same(c.GetPixel(0, rows.Height / 2), p.Border) && Same(d.GetPixel(0, table.Height / 2), p.Border);
+                        check(borders, mode + " draws the borders of text boxes, a list and a table in the theme's border color (" + a.GetPixel(0, single.Height / 2) + ", " + b.GetPixel(0, sunken.Height / 2) + ", " + c.GetPixel(0, rows.Height / 2) + ", " + d.GetPixel(0, table.Height / 2) + ")");
+                        // Grid lines and a table's button cells.
+                        Rectangle row = rows.GetItemRect(0);
+                        Color gridLine = c.GetPixel(2 + rows.Columns[0].Width / 2, 2 + row.Bottom - 1);
+                        Rectangle cell = table.GetCellDisplayRectangle(1, 0, false);
+                        Color face = d.GetPixel(cell.Left + 4, cell.Top + cell.Height / 2), edge = d.GetPixel(cell.Left + 2, cell.Top + cell.Height / 2);
+                        check(!rows.GridLines && Same(gridLine, p.Border) && table.ColumnHeadersBorderStyle == DataGridViewHeaderBorderStyle.Single && Same(face, p.Surface) && Same(edge, p.Border),
+                            mode + " draws a details list's grid lines and a table's buttons in the theme's colors (line " + gridLine + ", button " + face + " in " + edge + ")");
+                    }
+                    CheckPartStates(holder, owner, rows, table, p, mode, check);
+                }
+                else check(rows.GridLines, "High contrast gives a details list Windows' own grid lines back");
+                // Scroll bars: a skin over each, or none in high contrast.
+                ScrollBar tableBar = table.Controls.OfType<VScrollBar>().First();
+                list.DroppedDown = true;
+                for (int i = 0; i < 20; i++) { Application.DoEvents(); System.Threading.Thread.Sleep(10); }
+                ComboInfo combo = new ComboInfo { Size = Marshal.SizeOf(typeof(ComboInfo)) }; GetComboBoxInfo(list.Handle, ref combo);
+                if (!contrast) {
+                    var bars = new[] {
+                        new { Name = "a scrolling panel", Problem = SkinProblems(scrolling, scrolling.Handle, -5, 0, p) },
+                        new { Name = "a details list", Problem = SkinProblems(rows, rows.Handle, -5, 0, p) },
+                        new { Name = "a table", Problem = SkinProblems(tableBar, tableBar.Handle, -4, 0, p) },
+                        new { Name = "a list's open dropdown", Problem = SkinProblems(list, combo.List, -5, 0, p) } };
+                    foreach (var bar in bars) check(bar.Problem == null, mode + " lays a themed skin over the scroll bar of " + bar.Name + (bar.Problem == null ? "" : ": " + bar.Problem));
+                    CheckSkinFollows(scrolling, p, mode, check);
+                }
+                else check(SkinsHidden(scrolling) && SkinsHidden(rows) && SkinsHidden(tableBar) && SkinsHidden(list), "High contrast shows Windows' own scroll bars, with no skins");
+                list.DroppedDown = false; Application.DoEvents();
+                if (!contrast) check(SkinOf(list) != null && SkinOf(list).SkinHandles().All(handle => handle == IntPtr.Zero || !IsWindowVisible(handle)), mode + " hides the dropdown's skin when the dropdown closes");
+                holder.Close();
+            }
+        }
+    }
+    // The states Windows' own drawing showed and the themed drawing must keep: the pointer over a table's button and a
+    // press on it, the keyboard focus on a table's current button, and the focus rectangle around a details list's row.
+    static void CheckPartStates(Form holder, Form other, ListView rows, DataGridView table, AppearancePalette p, string mode, Action<bool, string> check)
+    {
+        // WM_CHANGEUISTATE: UIS_CLEAR (2) or UIS_SET (1) of UISF_HIDEFOCUS. Windows hides focus marks until the keyboard is used.
+        Action<bool> keyboard = inUse => { SendMessage(holder.Handle, 0x0127, (IntPtr)((1 << 16) | (inUse ? 2 : 1)), IntPtr.Zero); Application.DoEvents(); };
+        Rectangle button = table.GetCellDisplayRectangle(1, 0, false);
+        // Inside the button's face, clear of its text, its border and the focus rectangle.
+        Point inside = new Point(button.Left + 8, button.Top + button.Height / 2);
+        Func<Color> tone = () => { using (Bitmap image = Render(table)) return image.GetPixel(inside.X, inside.Y); };
+        // The table's own handling of the mouse messages, which raises its cell events as a real pointer does.
+        Action<string, EventArgs> mouse = (name, args) => typeof(DataGridView).GetMethod(name, instance, null, new[] { args.GetType() }, null).Invoke(table, new object[] { args });
+        MouseEventArgs move = new MouseEventArgs(MouseButtons.None, 0, inside.X, inside.Y, 0), press = new MouseEventArgs(MouseButtons.Left, 1, inside.X, inside.Y, 0);
+        keyboard(false);
+        Color rest = tone();
+        mouse("OnMouseMove", move); Color over = tone();
+        mouse("OnMouseDown", press); Color held = tone();
+        mouse("OnMouseUp", press); Color released = tone();
+        mouse("OnMouseLeave", EventArgs.Empty); Color left = tone();
+        check(Same(rest, p.Surface) && Same(over, p.Selection) && Same(held, p.Pressed) && Same(released, p.Selection) && Same(left, p.Surface),
+            mode + " shows the pointer over a table's button and a press on it (" + rest + ", then " + over + ", " + held + ", " + released + ", " + left + ")");
+        // The focus rectangle's left edge lies two pixels inside the button's face.
+        Func<int> marks = () => {
+            using (Bitmap image = Render(table)) {
+                Color face = image.GetPixel(inside.X, inside.Y);
+                return Enumerable.Range(button.Top + 5, Math.Max(0, button.Height - 12)).Count(y => !Same(image.GetPixel(button.Left + 4, y), face));
+            }
+        };
+        SetActiveWindow(holder.Handle); table.Focus(); table.CurrentCell = table[1, 0]; Application.DoEvents();
+        keyboard(true); int shown = marks();
+        keyboard(false); int hidden = marks();
+        table.CurrentCell = table[0, 0]; keyboard(true); int elsewhere = marks();
+        check(table.Focused && shown >= 2 && hidden == 0 && elsewhere == 0,
+            mode + " marks a table's current button with the keyboard focus once the keyboard is in use (" + shown + " dots; " + hidden + " while Windows hides the focus; " + elsewhere + " on another cell; focused " + table.Focused + ")");
+        // Space holds the current button down. When another window takes the focus, Space's release goes there, so the
+        // table lets go of the button then.
+        table.CurrentCell = table[1, 0]; keyboard(false);
+        mouse("OnKeyDown", new KeyEventArgs(Keys.Space)); Color down = tone();
+        SetActiveWindow(other.Handle); Application.DoEvents();
+        SetActiveWindow(holder.Handle); table.Focus(); Application.DoEvents();
+        Color back = tone();
+        mouse("OnKeyUp", new KeyEventArgs(Keys.Space));
+        check(table.Focused && Same(down, p.Pressed) && Same(back, p.Surface),
+            mode + " shows Space holding a table's button down, and lets go of it when another window takes the focus (" + down + ", then " + back + "; focused " + table.Focused + ")");
+        // A details list: the rectangle runs along the top of the second column and down the row's right side too.
+        rows.Focus(); rows.Items[1].Focused = true; Application.DoEvents();
+        Rectangle row = rows.GetItemRect(1);
+        Func<int[]> around = () => {
+            using (Bitmap image = Render(rows)) {
+                int first = 2 + rows.Columns[0].Width + 8, right = 2 + row.Right - 2;
+                return new[] {
+                    Enumerable.Range(first, Math.Min(200, right - 4 - first)).Count(x => !Same(image.GetPixel(x, 2 + row.Top), rows.BackColor)),
+                    Enumerable.Range(2 + row.Top + 2, Math.Max(0, row.Height - 6)).Count(y => !Same(image.GetPixel(right, y), rows.BackColor)) };
+            }
+        };
+        keyboard(true); int[] visible = around();
+        keyboard(false); int[] none = around();
+        check(rows.Focused && visible[0] >= 40 && visible[1] >= 2 && none[0] == 0 && none[1] == 0,
+            mode + " draws a details list's focus rectangle around the whole row once the keyboard is in use (" + visible[0] + " dots along the second column's top, " + visible[1] + " down the right side; " + none[0] + " and " + none[1] + " while Windows hides the focus; focused " + rows.Focused + ")");
+    }
+    // Where a skin's picture shows its thumb along a vertical bar: the first and last row in a thumb color, or -1.
+    static int[] DrawnThumb(Control owner, AppearancePalette p)
+    {
+        ScrollSkin skin = SkinOf(owner);
+        BarInfo info = new BarInfo { States = new int[6] }; info.Size = Marshal.SizeOf(typeof(BarInfo));
+        if (skin == null || !GetScrollBarInfo(owner.Handle, -5, ref info)) return new[] { -1, -1 };
+        Size size = new Size(info.Bar.Right - info.Bar.Left, info.Bar.Bottom - info.Bar.Top);
+        using (Bitmap image = PrintHandle(skin.SkinHandles()[0], size)) {
+            int[] thumb = Enumerable.Range(0, size.Height).Where(y => { Color c = image.GetPixel(size.Width / 2, y); return Same(c, p.ScrollThumb) || Same(c, p.ScrollThumbHot) || Same(c, p.ScrollThumbPressed); }).ToArray();
+            return thumb.Length == 0 ? new[] { -1, -1 } : new[] { thumb.First(), thumb.Last() };
+        }
+    }
+    // A scrolling panel's bar changes without a message to the panel when the program gives it a new range or place:
+    // Windows redraws the real bar itself, under the skin. The skin catches up when the thread runs out of messages.
+    static void CheckSkinFollows(Panel scrolling, AppearancePalette p, string mode, Action<bool, string> check)
+    {
+        Func<int[]> real = () => { BarInfo info = new BarInfo { States = new int[6] }; info.Size = Marshal.SizeOf(typeof(BarInfo)); GetScrollBarInfo(scrolling.Handle, -5, ref info); return new[] { info.ThumbTop, info.ThumbBottom }; };
+        // The thumb is drawn one pixel inside its place, with rounded ends.
+        Func<int[], int[], bool> matches = (drawn, bar) => drawn[0] >= 0 && Math.Abs(drawn[0] - (bar[0] + 1)) <= 4 && Math.Abs(drawn[1] - (bar[1] - 2)) <= 4;
+        scrolling.AutoScrollMinSize = new Size(0, 500);
+        for (int i = 0; i < 5; i++) Application.DoEvents();
+        Application.RaiseIdle(EventArgs.Empty);
+        int[] large = real(), drawnLarge = DrawnThumb(scrolling, p);
+        scrolling.AutoScrollMinSize = new Size(0, 5000);
+        for (int i = 0; i < 5; i++) Application.DoEvents();
+        int[] small = real(); bool stale = !matches(DrawnThumb(scrolling, p), small);
+        Application.RaiseIdle(EventArgs.Empty);
+        int[] drawnSmall = DrawnThumb(scrolling, p);
+        scrolling.AutoScrollPosition = new Point(0, 2500);
+        for (int i = 0; i < 5; i++) Application.DoEvents();
+        Application.RaiseIdle(EventArgs.Empty);
+        int[] moved = real(), drawnMoved = DrawnThumb(scrolling, p);
+        scrolling.AutoScrollPosition = Point.Empty; scrolling.AutoScrollMinSize = new Size(0, 2000);
+        for (int i = 0; i < 5; i++) Application.DoEvents();
+        Application.RaiseIdle(EventArgs.Empty);
+        bool shorter = small[1] - small[0] < large[1] - large[0] - 8, lower = moved[0] > small[0] + 8;
+        check(matches(drawnLarge, large) && shorter && matches(drawnSmall, small) && lower && matches(drawnMoved, moved),
+            mode + " keeps a scroll bar's skin in step when the program changes the bar's range or place without a message to its window (thumb " + large[0] + "-" + large[1] + " drawn " + drawnLarge[0] + "-" + drawnLarge[1]
+            + "; then " + small[0] + "-" + small[1] + " drawn " + drawnSmall[0] + "-" + drawnSmall[1] + "; then " + moved[0] + "-" + moved[1] + " drawn " + drawnMoved[0] + "-" + drawnMoved[1] + "; out of step before the thread went idle: " + stale + ")");
+    }
+    // The same in a later message loop on one thread. WinForms keeps a thread's Idle handlers with its message loop and
+    // drops them when Application.Run returns, so a skin made in a later loop has to ask for them again.
+    public static void CheckSkinsInLaterLoop(Action<bool, string> check)
+    {
+        AppearancePalette p = AppAppearance.Resolve("Dark", null, false, "stone");
+        using (Form holder = new Form { Text = "[TEST] Later loop", ClientSize = new Size(260, 260), ShowInTaskbar = false, StartPosition = FormStartPosition.Manual, Location = new Point(40, 40) })
+        using (Panel scrolling = new Panel { AutoScroll = true, AutoScrollMinSize = new Size(0, 2000), Location = new Point(12, 12), Size = new Size(200, 200) }) {
+            holder.Controls.Add(scrolling);
+            AppAppearance.Apply(holder, p); holder.Show();
+            for (int i = 0; i < 10; i++) Application.DoEvents();
+            CheckSkinFollows(scrolling, p, "A later message loop on the same thread", check);
+            holder.Close();
+        }
+    }
+    [DllImport("gdi32.dll")] static extern int GetObjectType(IntPtr handle);
+    [DllImport("gdi32.dll")] static extern int GetRgnBox(IntPtr region, out NativeRect box);
+    [DllImport("user32.dll")] static extern bool GetUpdateRect(IntPtr window, out NativeRect area, bool erase);
+    [DllImport("user32.dll")] static extern bool UpdateWindow(IntPtr window);
+    [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr window, out NativeRect area);
+    // Sees what a window is asked to paint after BetterIcon's own border drawing has had its say: attached to the window
+    // before BetterIcon's drawing is, it stands between that and Windows.
+    sealed class PaintSpy : NativeWindow
+    {
+        public bool SawFrame, SawPaint; public IntPtr FrameParameter; public NativeRect FrameRegion, ClientUpdate;
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == 0x0085) { SawFrame = true; FrameParameter = m.WParam; long region = m.WParam.ToInt64(); if (region != 0 && region != 1) GetRgnBox(m.WParam, out FrameRegion); } // WM_NCPAINT
+            if (m.Msg == 0x000F && m.WParam == IntPtr.Zero) { SawPaint = true; GetUpdateRect(Handle, out ClientUpdate, false); }                   // WM_PAINT
+            base.WndProc(ref m);
+        }
+    }
+    // Each themed part reaches the screen in one step. Painted in two, Windows' own colors and then the theme's over them,
+    // a part flickers whenever it repaints, as most do while the pointer moves over them.
+    static void CheckSinglePaint(LauncherForm owner, Action<bool, string> check)
+    {
+        AppearancePalette p = AppAppearance.Resolve("Dark", null, false, "stone");
+        using (Form holder = new Form { Text = "[TEST] Painted once", ClientSize = new Size(700, 420), ShowInTaskbar = false, StartPosition = FormStartPosition.Manual, Location = new Point(owner.Left + 20, owner.Top + 20) })
+        using (AppearanceComboBox list = new AppearanceComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 300, Location = new Point(12, 12) })
+        using (TextBox single = new TextBox { BorderStyle = BorderStyle.FixedSingle, Text = "128", Location = new Point(12, 60), Width = 120 })
+        using (TextBox sunken = new TextBox { Text = "Pack name", Location = new Point(150, 60), Width = 160 })
+        using (ListView rows = new ListView { View = View.Details, GridLines = true, Location = new Point(12, 100), Size = new Size(300, 160) })
+        using (DataGridView table = new DataGridView { Location = new Point(330, 100), Size = new Size(300, 160) })
+        using (ThemedTrackBar slider = new ThemedTrackBar { Minimum = 0, Maximum = 100, Value = 50, TickStyle = TickStyle.None, AutoSize = false, Width = 300, Height = 28, Location = new Point(12, 280) }) {
+            list.Items.Add("Pack"); list.SelectedIndex = 0; rows.Columns.Add("Status", 100);
+            holder.Controls.AddRange(new Control[] { list, single, sunken, rows, table, slider });
+            holder.Show(owner);
+            for (int i = 0; i < 5; i++) Application.DoEvents();
+            PaintSpy singleSpy = new PaintSpy(), sunkenSpy = new PaintSpy();
+            singleSpy.AssignHandle(single.Handle); sunkenSpy.AssignHandle(sunken.Handle);
+            AppAppearance.Apply(holder, p);
+            for (int i = 0; i < 10; i++) Application.DoEvents();
+            try {
+                // A pack list: its item is drawn to a memory device (OBJ_MEMDC), and nothing is erased on the screen first.
+                int device = 0;
+                list.DrawItem += delegate(object sender, DrawItemEventArgs e) { IntPtr hdc = e.Graphics.GetHdc(); try { device = GetObjectType(hdc); } finally { e.Graphics.ReleaseHdc(hdc); } };
+                PropertyInfo keeps = typeof(AppearanceComboBox).GetProperty("KeepsPictures", BindingFlags.Static | BindingFlags.NonPublic);
+                keeps.SetValue(null, true, null);
+                string picture; Color itemColor;
+                try {
+                    list.Invalidate(); list.Update();
+                    Bitmap sent = (Bitmap)typeof(AppearanceComboBox).GetProperty("Picture", instance).GetValue(list, null);
+                    picture = sent == null ? "no picture was kept" : ListButtonProblems(list, p, sent);
+                    // Well right of the item's text and left of the button: the item's own background, selected while the list has the focus.
+                    itemColor = sent == null ? Color.Empty : sent.GetPixel(sent.Width - SystemInformation.GetHorizontalScrollBarArrowWidthForDpi(list.DeviceDpi) - 14, sent.Height / 2);
+                }
+                finally { keeps.SetValue(null, false, null); }
+                IntPtr erased = SendMessage(list.Handle, 0x0014, IntPtr.Zero, IntPtr.Zero);
+                check(device == 10 && erased == (IntPtr)1, "A pack list paints into a buffer and reaches the screen once, so its button does not flash Windows' light gray (device type " + device + ", erase " + erased + ")");
+                check(picture == null && (Same(itemColor, p.Input) || Same(itemColor, p.Selection)), "The picture a pack list sends to the screen has the themed button, frames and item background" + (picture == null ? "" : ": " + picture) + " (item " + itemColor + ")");
+                // A sunken text box: Windows is given the frame's inside to paint, never the frame.
+                NativeRect window; GetWindowRect(sunken.Handle, out window);
+                sunkenSpy.SawFrame = false;
+                RedrawWindow(sunken.Handle, IntPtr.Zero, IntPtr.Zero, 0x0001 | 0x0400 | 0x0100); // RDW_INVALIDATE | RDW_FRAME | RDW_UPDATENOW
+                NativeRect given = sunkenSpy.FrameRegion; IntPtr parameter = sunkenSpy.FrameParameter;
+                bool inside = sunkenSpy.SawFrame && parameter.ToInt64() != 0 && parameter.ToInt64() != 1 && given.Left >= window.Left + 2 && given.Top >= window.Top + 2 && given.Right <= window.Right - 2 && given.Bottom <= window.Bottom - 2;
+                check(inside, "A text box's frame is drawn once, in the theme's color: Windows paints only inside it (given " + given.Left + "," + given.Top + "," + given.Right + "," + given.Bottom + " of " + window.Left + "," + window.Top + "," + window.Right + "," + window.Bottom + ")");
+                // A single-border text box draws its border in its client area: those four lines are kept from Windows.
+                singleSpy.SawPaint = false;
+                single.Invalidate(); single.Update();
+                NativeRect left = singleSpy.ClientUpdate;
+                bool kept = singleSpy.SawPaint && left.Left >= 1 && left.Top >= 1 && left.Right <= single.Width - 1 && left.Bottom <= single.Height - 1;
+                check(kept, "A single-border text box's border is drawn once: Windows paints only inside it (" + left.Left + "," + left.Top + "," + left.Right + "," + left.Bottom + " of " + single.Width + "x" + single.Height + ")");
+                // A details list and a table paint through a buffer (LVM_GETEXTENDEDLISTVIEWSTYLE, LVS_EX_DOUBLEBUFFER).
+                bool listBuffered = (SendMessage(rows.Handle, 0x1037, IntPtr.Zero, IntPtr.Zero).ToInt64() & 0x10000) != 0;
+                bool tableBuffered = (bool)typeof(Control).GetProperty("DoubleBuffered", instance).GetValue(table, null);
+                check(listBuffered && tableBuffered, "A details list and a table paint through a buffer, so their rows do not flicker under the pointer");
+                // The slider: the pointer reaching the thumb repaints the thumb alone, and erases nothing.
+                for (int i = 0; i < 5; i++) Application.DoEvents();
+                UpdateWindow(slider.Handle);
+                NativeRect thumb = new NativeRect(); SendRect(slider.Handle, 0x0419, IntPtr.Zero, ref thumb);
+                int x = (thumb.Left + thumb.Right) / 2, y = (thumb.Top + thumb.Bottom) / 2;
+                SendMessage(slider.Handle, 0x0200, IntPtr.Zero, (IntPtr)((y << 16) | (x & 0xFFFF))); // WM_MOUSEMOVE
+                NativeRect dirty; bool any = GetUpdateRect(slider.Handle, out dirty, false);
+                bool onlyThumb = any && dirty.Left >= thumb.Left - 2 && dirty.Top >= thumb.Top - 2 && dirty.Right <= thumb.Right + 2 && dirty.Bottom <= thumb.Bottom + 2;
+                check(onlyThumb, "The pointer reaching the slider's thumb repaints the thumb alone (" + dirty.Left + "," + dirty.Top + "," + dirty.Right + "," + dirty.Bottom + " for a thumb at " + thumb.Left + "," + thumb.Top + "," + thumb.Right + "," + thumb.Bottom + ")");
+            }
+            finally { singleSpy.ReleaseHandle(); sunkenSpy.ReleaseHandle(); }
+            holder.Close();
+        }
+    }
+    // The app's own lists and slider use those colors, also while an operation disables them.
+    static void CheckFormControls(LauncherForm form, Action<bool, string> check)
+    {
+        TabControl pages = (TabControl)Field(form, "pages");
+        ComboBox[] lists = { (ComboBox)Field(form, "themes"), (ComboBox)Field(form, "fileThemes") };
+        TrackBar slider = (TrackBar)Field(form, "iconSizeSlider");
+        Panel scroll = (Panel)Field(form, "settingsScroll");
+        Size savedSize = form.Size;
+        check(slider is ThemedTrackBar && lists.All(list => list is AppearanceComboBox) && Field(form, "loadingProgress") is ThemedProgressBar, "The icon size slider, both pack lists and the loading bar are the themed controls");
+        // A small window gives Manage Icons a scroll bar; each theme switch must give it the new theme's style.
+        form.Size = new Size(790, 420);
+        typeof(Form).GetMethod("OnResizeEnd", instance).Invoke(form, new object[] { EventArgs.Empty });
+        try {
+            foreach (string mode in new[] { "Dark", "Light", "Dark" }) {
+                SelectMode(form, mode); pages.SelectedIndex = 1; form.PerformLayout(); Application.DoEvents();
+                AppearancePalette palette = (AppearancePalette)Field(form, "appearancePalette");
+                if (!scroll.VerticalScroll.Visible) { Console.WriteLine("SKIP: Manage Icons needs no scroll bar at 790x420 on this display"); break; }
+                using (Bitmap image = Render(scroll)) {
+                    double light = Light(image.GetPixel(scroll.Width - SystemInformation.VerticalScrollBarWidth / 2 - 1, scroll.Height - SystemInformation.VerticalScrollBarArrowHeight - 8));
+                    check(palette.Dark ? light < 0.06 : light > 0.4, "After switching to " + mode + ", Windows' Manage Icons scroll bar beneath the skin has its " + (palette.Dark ? "dark" : "light") + " style (track luminance " + light.ToString("0.000") + ")");
+                }
+                string skin = SkinProblems(scroll, scroll.Handle, -5, 0, palette);
+                check(skin == null, "After switching to " + mode + ", the Manage Icons scroll bar has the theme's skin" + (skin == null ? "" : ": " + skin));
+                foreach (IconGridView grid in new[] { (IconGridView)Field(form, "packPreview"), (IconGridView)Field(form, "filePreview") }) {
+                    BarInfo info = new BarInfo { States = new int[6] }; info.Size = Marshal.SizeOf(typeof(BarInfo));
+                    if (!grid.Visible || !GetScrollBarInfo(grid.Handle, -5, ref info) || (info.States[0] & 0x8000) != 0) continue;
+                    string own = SkinProblems(grid, grid.Handle, -5, 0, palette);
+                    check(own == null, "After switching to " + mode + ", " + grid.AccessibleName + " has the theme's scroll bar skin" + (own == null ? "" : ": " + own));
+                }
+            }
+        }
+        finally {
+            form.Size = savedSize;
+            typeof(Form).GetMethod("OnResizeEnd", instance).Invoke(form, new object[] { EventArgs.Empty });
+            form.PerformLayout(); Application.DoEvents();
+        }
+        foreach (string mode in new[] { "Dark", "Light" }) {
+            SelectMode(form, mode); pages.SelectedIndex = 1; form.PerformLayout(); Application.DoEvents();
+            AppearancePalette p = (AppearancePalette)Field(form, "appearancePalette");
+            string problem = lists.Select(list => ListButtonProblems(list, p)).FirstOrDefault(found => found != null) ?? ChannelProblems(slider, p);
+            check(problem == null, mode + " draws both pack lists' dropdown buttons and the icon size slider's channel in the theme's colors" + (problem == null ? "" : ": " + problem));
+            Invoke(form, "SetBusy", true, "Saving test artwork...");
+            try {
+                Application.DoEvents();
+                string busy = lists.Select(list => ListButtonProblems(list, p)).FirstOrDefault(found => found != null) ?? ChannelProblems(slider, p);
+                check(problem == null && busy == null && lists.All(list => !list.Enabled) && !slider.Enabled, mode + " keeps those colors while an operation disables the lists and the slider" + (busy == null ? "" : ": " + busy));
+            }
+            finally { Invoke(form, "SetBusy", false, null); }
+        }
+    }
     public static void Run(LauncherForm form, string preferencesPath, string sourceFolder, Action<bool, string> check)
     {
         JavaScriptSerializer json = new JavaScriptSerializer();
@@ -360,6 +877,40 @@ static class AppearanceTests
             "An unnamed or unknown icon falls back to Sage, and different icons give different schemes");
         AppearancePalette high = AppAppearance.Resolve("Dark", false, true, "slate");
         check(high.HighContrast && high.Text == SystemColors.WindowText && high.Selection == SystemColors.Highlight && high.SelectionText == SystemColors.HighlightText && high.AccentText == SystemColors.HighlightText, "Windows high contrast colors take precedence over every icon scheme");
+        check(high.ControlFace == SystemColors.Control && high.ControlLight == SystemColors.Window && high.ControlOutline == SystemColors.WindowText && high.ControlGlyph == SystemColors.ControlText
+            && high.ChannelEdgeBefore == SystemColors.ControlDark && high.ChannelEdge == SystemColors.ControlDark, "High contrast gives the dropdown button and slider channel the system's colors");
+        // Windows draws a list's dropdown button and the slider's channel light gray in every theme. Each scheme gives them
+        // its background lightened (Dark) or darkened (Light), in that order, keeping the background's tint.
+        foreach (string style in AppBranding.Styles) foreach (string mode in new[] { "Dark", "Light" }) {
+            AppearancePalette p = AppAppearance.Resolve(mode, null, false, style);
+            bool dark = mode == "Dark", strong = style == "contrast";
+            Color[] parts = strong ? new[] { p.ControlFace } : dark ? new[] { p.ControlOutline, p.ControlFace, p.ControlLight, p.ChannelEdgeBefore, p.ChannelEdge } : new[] { p.ControlFace, p.ChannelEdgeBefore, p.ChannelEdge };
+            bool ordered = new[] { p.Surface }.Concat(parts).Zip(parts, (before, after) => dark ? Light(after) > Light(before) : Light(after) < Light(before)).All(step => step);
+            bool tinted = parts.All(part => Along(p.Surface, dark ? Color.White : Color.Black, part));
+            bool framed = strong ? new[] { p.ControlOutline, p.ControlLight, p.ChannelEdgeBefore, p.ChannelEdge }.All(part => part == p.Border) : dark || (p.ControlOutline == p.Border && p.ControlLight == p.Input);
+            check(ordered && tinted && framed && Contrast(p.ControlGlyph, p.ControlFace) >= 3,
+                AppBranding.Title(style) + " " + mode + " gives the dropdown button and the slider channel its background's tint, with a readable arrow (" + Contrast(p.ControlGlyph, p.ControlFace).ToString("0.0") + ")");
+        }
+        // Scroll bars: the input color as the track and the background's tint in the thumb, stronger under the pointer and
+        // while dragged. The black and white scheme draws its thumb in its border color.
+        foreach (string style in AppBranding.Styles) foreach (string mode in new[] { "Dark", "Light" }) {
+            AppearancePalette p = AppAppearance.Resolve(mode, null, false, style);
+            bool dark = mode == "Dark";
+            Color[] thumbs = { p.ScrollThumb, p.ScrollThumbHot, p.ScrollThumbPressed };
+            bool shaded = style == "contrast" ? p.ScrollTrack == p.Surface && thumbs.All(thumb => thumb == p.Border)
+                : p.ScrollTrack == p.Input && thumbs.All(thumb => Along(p.Surface, dark ? Color.White : Color.Black, thumb))
+                    && (dark ? Light(p.ScrollThumb) < Light(p.ScrollThumbHot) && Light(p.ScrollThumbHot) < Light(p.ScrollThumbPressed)
+                             : Light(p.ScrollThumb) > Light(p.ScrollThumbHot) && Light(p.ScrollThumbHot) > Light(p.ScrollThumbPressed));
+            check(shaded && Contrast(p.ScrollThumb, p.ScrollTrack) >= 2,
+                AppBranding.Title(style) + " " + mode + " gives its scroll bars a track in the input color and a thumb that stands out (" + Contrast(p.ScrollThumb, p.ScrollTrack).ToString("0.0") + ")");
+        }
+        check(high.ScrollTrack == SystemColors.Control && high.ScrollThumb == SystemColors.ControlDark && high.ScrollThumbHot == SystemColors.ControlDarkDark && high.ScrollThumbPressed == SystemColors.Highlight,
+            "High contrast gives scroll bars the system's colors");
+        AppearancePalette stone = AppAppearance.Resolve("Dark", null, false, "stone");
+        Func<Color, int, bool> mockup = (color, rgb) => Near(color, Color.FromArgb((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255), 3);
+        check(Same(stone.Surface, Color.FromArgb(0x36, 0x35, 0x31)) && mockup(stone.ControlFace, 0x72706D) && mockup(stone.ControlFace, 0x6F6F6B) && mockup(stone.ControlLight, 0x797874)
+            && mockup(stone.ControlOutline, 0x65635D) && mockup(stone.ChannelEdgeBefore, 0x91908E) && mockup(stone.ChannelEdge, 0x9D9D9B) && Same(stone.ControlGlyph, Color.Black),
+            "Stone Dark's dropdown button and slider channel match the user's color mock-up within three levels, with a black arrow");
         string[] resources = typeof(AppBranding).Assembly.GetManifestResourceNames();
         check(AppBranding.Styles.Length == 10 && resources.Count(name => name.StartsWith("BetterIcon.AppIcons.", StringComparison.Ordinal)) == 20 && AppBranding.Styles.All(style => new[] { "dark", "light" }.All(variant => resources.Contains(AppBranding.ResourceName(style, variant)))), "The built executable embeds all ten Dark and Light icon pairs, including Grayscale and High contrast");
         Func<string, string, bool> neutral = (style, variant) => AppBranding.Tones(style, variant).All(tone => Math.Abs(tone.R - tone.G) <= 1 && Math.Abs(tone.G - tone.B) <= 1);
@@ -454,6 +1005,7 @@ static class AppearanceTests
             check(shortcutLink.Enabled, "The launcher shortcut editor becomes available when the operation finishes");
 
             CheckChrome(form, check); CheckBusyThemes(form, check); CheckGridInput(form, check);
+            CheckControlChrome(form, check); CheckThemedParts(form, check); CheckSinglePaint(form, check); CheckFormControls(form, check);
             foreach (string mode in new[] { "Dark", "Light" }) {
                 SelectMode(form, mode);
                 AppearancePalette p = (AppearancePalette)Field(form, "appearancePalette");

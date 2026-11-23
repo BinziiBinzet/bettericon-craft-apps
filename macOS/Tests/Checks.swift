@@ -1068,6 +1068,39 @@ import WebKit
         try await until("model.prefs.color==='clay'&&model.prefs.variant==='dark'&&model.prefs.theme==='Dark'&&model.dark===true")
         let clay = try await schemeMatches("#4b3832", dark: true)
         try check(clay, "choosing Clay Dark gives the app that icon's dark color scheme with readable text")
+        // The loading bars, which the system would draw in its own colors, take the scheme's too, as on Windows: the
+        // button gray with an accent chunk a quarter of the bar wide that moves across. With Reduce Motion on, the whole
+        // bar takes the accent and fades instead. The chunk is the bar's own background picture, which shows only while
+        // the page keeps WebKit's own inner bar transparent; a page loaded from a file can't read its style sheet back,
+        // so that rule is looked for in the file. The scroll bars take the scheme's colors where this WebKit can color
+        // them.
+        let chrome = try await js("""
+            (() => {
+              const css = getComputedStyle(document.documentElement), value = name => css.getPropertyValue('--' + name).trim();
+              const hex = color => '#' + color.match(/\\d+/g).slice(0, 3).map(v => Number(v).toString(16).padStart(2, '0')).join('');
+              const stops = image => (image.match(/rgba?\\([^)]*\\)/g) || []).map(hex).join(' ');
+              const bars = [el('busy').querySelector('progress'), el('offerBar')].map(bar => getComputedStyle(bar));
+              return {
+                face: value('control-face'), thumb: value('scroll-thumb'), track: value('scroll-track'), accent: value('accent'),
+                bars: bars.map(look => hex(look.backgroundColor) + ' ' + look.animationName).join('|'),
+                drawn: bars.map(look => stops(look.backgroundImage) + ' ' + look.backgroundSize + ' ' + look.backgroundRepeat).join('|'),
+                still: String(matchMedia('(prefers-reduced-motion: reduce)').matches),
+                scroll: CSS.supports('scrollbar-color', 'red blue')
+                  ? (css.scrollbarColor.match(/rgba?\\([^)]*\\)/g) || []).map(hex).join(' ') : 'not colored',
+              };
+            })()
+            """) as? [String: String]
+        let accent = chrome?["accent"] ?? ""
+        let (move, chunk) = chrome?["still"] == "true" ? ("loading-still", "100% 100%") : ("loading", "25% 100%")
+        let drawn = "\(accent) \(accent) \(chunk) no-repeat"
+        let sheet = try String(contentsOf: install.resources.appendingPathComponent("Web/popup.css"), encoding: .utf8)
+        let inner = sheet.range(of: #"progress::-webkit-progress-bar \{\s*background: transparent;\s*\}"#, options: .regularExpression) != nil
+        try check(
+            chrome?["face"] == "#7f726d" && chrome?["thumb"] == "#7f726d" && chrome?["track"] == "#42312c"
+                && chrome?["bars"] == "#7f726d \(move)|#7f726d \(move)" && accent.count == 7 && accent != "#7f726d"
+                && chrome?["drawn"] == "\(drawn)|\(drawn)" && inner
+                && ["#7f726d #42312c", "not colored"].contains(chrome?["scroll"] ?? ""),
+            "the loading bars take Clay Dark's colors too, the button gray with an accent chunk that moves, or fades with Reduce Motion on, and the scroll bars take them where this WebKit can color them")
         _ = try await js("el('new').click();true")
         try await until("el('editor').open&&el('assignments').children.length===57")
         let fileRows = try await js("""
@@ -3932,14 +3965,18 @@ import WebKit
             return all.filter { $0.path.contains("/Craft-Icons-Checks/\(name)/") }.map(\.lastPathComponent).sorted()
         }
         let light = try downloads.list("acquire", id: "Craft-Icons-Checks/Light").first { $0.id == "Craft-Icons-Checks/Light" }
-        let unreadable = try downloads.list("acquire", id: "Craft-Icons-Checks/Unreadable")
-            .first { $0.id == "Craft-Icons-Checks/Unreadable" }
+        let afterUnreadable = try downloads.list("acquire", id: "Craft-Icons-Checks/Unreadable")
+        let unreadable = afterUnreadable.first { $0.id == "Craft-Icons-Checks/Unreadable" }
+        let lightAfter = afterUnreadable.first { $0.id == "Craft-Icons-Checks/Light" }
         unsetenv("BETTERICON_PACK_SOURCE")
         try check(
             fetched("Light") == ["PhotoCraft.webp"] && light?.icons["PhotoCraft"]?.pathExtension == "webp"
                 && fetched("Unreadable") == ["PhotoCraft.png", "PhotoCraft.webp"]
                 && unreadable?.icons["PhotoCraft"]?.pathExtension == "png" && unreadable?.leftOut.isEmpty == true,
             "a download fetches an icon's WebP twin alone, and its PNG twin too when the Mac can't read the WebP")
+        try check(
+            light?.status == "Downloaded" && lightAfter?.status == "Downloaded" && lightAfter?.icons["PhotoCraft"]?.pathExtension == "webp",
+            "after one pack's PNG files were fetched for a WebP the Mac can't read, a pack downloaded as WebP alone still counts as downloaded")
         let stripPack = try PublishedPacks.packs(from: JSONSerialization.data(withJSONObject: [entry(["PhotoCraft": path("Strip/PhotoCraft.webp")])]))
         let strip = try stripPack.first.flatMap { try published.preview($0) }
         let tile = strip.flatMap { NSBitmapImageRep(data: (try? Data(contentsOf: $0)) ?? Data()) }?.colorAt(x: 32, y: 32)?

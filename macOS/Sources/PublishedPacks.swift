@@ -164,9 +164,12 @@ struct PublishedPacks {
         let args = [action] + (id.map { [$0] } ?? [])
         let packs = try Self.packs(from: run(args, readsWebP: readsWebP))
         // A WebP twin that can't be read leaves its icon out, because the download left out its PNG twin. Fetch the
-        // pack's PNG twins then; the helper keeps the files it has, so only those are fetched.
+        // pack's PNG twins then; the helper keeps the files it has, so only those are fetched. The list is then read
+        // again as the Mac reads packs: one made without WebP would show every pack downloaded as WebP alone as not
+        // downloaded.
         if readsWebP, action == "acquire", let id, packs.contains(where: { ($0.id == id || $0.previousIDs.contains(id)) && !$0.leftOut.isEmpty }) {
-            return try Self.packs(from: run(args, readsWebP: false))
+            _ = try run(args, readsWebP: false)
+            return try Self.packs(from: run(["list"]))
         }
         return packs
     }
