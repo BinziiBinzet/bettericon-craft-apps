@@ -5,29 +5,41 @@
     BlinkMacSystemFont,
     sans-serif;
   color-scheme: light;
-  --surface: #fff;
-  --input: #fff;
-  --ink: #1a273a;
-  --muted: #4b5b70;
-  --border: #8a9aae;
-  --accent: #2964d0;
-  --selection: #d5e5fa;
-  --inactive: #cdd8e8;
-  --warn: #a52825;
+  /* The app takes its colors from the chosen BetterIcon app icon (Catalog/themes.json).
+     These are Sage, the icon of a fresh install, until the first update arrives. */
+  --surface: #e8eae2;
+  --background: #dfe2d9;
+  --input: #f5f6f2;
+  --ink: #2e3329;
+  --muted: #535d4a;
+  --border: #a0a898;
+  --accent: #66725b;
+  --accent-ink: #ffffff;
+  --accent-hover: #57614d;
+  --accent-pressed: #475040;
+  --selection: #d3d7cc;
+  --inactive: #d3d7cc;
+  --pressed: #c4c8bc;
+  --warn: #b22222;
   --size: 48px;
   --cell: 112px;
   --row: 98px;
 }
 :root[data-dark="true"] {
   color-scheme: dark;
-  --surface: #1f2730;
-  --input: #181e26;
-  --ink: #eaf0f8;
-  --muted: #b1c0d1;
-  --border: #4e5e71;
-  --accent: #3164ba;
-  --selection: #304c75;
-  --inactive: #394555;
+  --surface: #2f3d36;
+  --background: #27322c;
+  --input: #293630;
+  --ink: #edf0ea;
+  --muted: #bbc6b2;
+  --border: #657264;
+  --accent: #afbca4;
+  --accent-ink: #2f3d36;
+  --accent-hover: #c1cbb8;
+  --accent-pressed: #cfd7c8;
+  --selection: #536155;
+  --inactive: #46544a;
+  --pressed: #627062;
   --warn: #ffa19a;
 }
 * {
@@ -65,15 +77,22 @@ button {
 button:hover:enabled {
   background: var(--selection);
 }
+button:active:enabled {
+  background: var(--pressed);
+}
 button:disabled {
   opacity: 0.5;
 }
 button.primary {
   background: var(--accent);
-  color: white;
+  border-color: var(--accent);
+  color: var(--accent-ink);
 }
 button.primary:hover:enabled {
-  filter: brightness(1.15);
+  background: var(--accent-hover);
+}
+button.primary:active:enabled {
+  background: var(--accent-pressed);
 }
 :focus-visible {
   outline: 2px solid var(--accent);
@@ -87,6 +106,20 @@ button.primary:hover:enabled {
   display: flex;
   flex-direction: column;
   padding: 8px;
+}
+/* Where the desktop does not round the window, the page draws the rounded frame itself
+   and the window is transparent outside it. The Linux app sets data-rounded. */
+:root[data-rounded="true"] body {
+  background: transparent;
+}
+:root[data-rounded="true"] #popup {
+  background: var(--surface);
+  border-radius: 32px;
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+:root[data-rounded="true"] dialog::backdrop {
+  border-radius: 32px;
 }
 #resizeGrip {
   position: fixed;
@@ -149,37 +182,42 @@ nav button[aria-selected="true"]:hover {
   flex: 1;
   min-height: 0;
   overflow: auto;
+  display: flex;
+  flex-direction: column;
 }
+/* The settings fill the page. The previews take what the controls leave, and the page scrolls only when
+   the window is too short for the controls and a strip of previews. The status line stays in view. */
 .settings {
   display: flex;
   flex-direction: column;
+  flex: 1 0 auto;
   padding: 26px 32px 8px;
-  min-height: 100%;
-  height: max(100%, calc(var(--row) + 310px));
   gap: 0;
 }
-.pack > label,
-.pack > select {
-  display: block;
+/* The app pack and its actions take the left half and the file type pack the right. */
+.halves {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
 }
-.pack > label {
+.picker > label {
+  display: block;
   margin-bottom: 8px;
 }
-.pack select {
-  width: 100%;
-  height: 32px;
-  background: var(--input);
-  padding: 2px 8px;
-}
-#detail {
+.detail {
   margin: 5px 0 10px;
+  min-height: 19px;
 }
+/* Buttons share the row equally while every label fits. A row too narrow for its labels wraps. */
 .actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 .actions button {
-  flex: 1;
+  flex: 1 1 0;
+  min-width: max-content;
+  white-space: nowrap;
 }
 .pack {
   margin-bottom: 10px;
@@ -191,6 +229,133 @@ nav button[aria-selected="true"]:hover {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+.display .check + .check {
+  margin-top: 10px;
+}
+/* Notes for the Mac under the tabs, which both tabs show: the offer of a new installation until it is answered, then how
+   its downloads go, and where to allow BetterIcon to open at login. */
+.notice {
+  flex: none;
+  margin: 10px 18px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--background);
+}
+#offer p {
+  margin: 0 0 8px;
+}
+#loginNotice,
+#offerProgress,
+.offer-slim {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+}
+#offerProgressText {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+#offerBar {
+  flex: 0 1 120px;
+  min-width: 40px;
+  accent-color: var(--accent);
+}
+button.link {
+  min-height: 0;
+  padding: 2px 4px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  text-decoration: underline;
+  white-space: nowrap;
+}
+.offer-slim,
+.notice .slim {
+  display: none;
+}
+/* A small Launcher keeps its first row of apps: each note takes one line, the offer leads to Manage Icons for the whole
+   choice, the download line ends in an ellipsis, and the login note waits while the offer is shown. */
+@media (max-width: 499px), (max-height: 419px) {
+  body[data-page="launcher"] .notice {
+    margin: 6px 18px 0;
+    padding: 3px 10px;
+  }
+  body[data-page="launcher"] .offer-full,
+  body[data-page="launcher"] .notice .full,
+  body[data-page="launcher"] #offerBar,
+  body.hasOffer[data-page="launcher"] #loginNotice {
+    display: none;
+  }
+  body[data-page="launcher"] .notice .slim {
+    display: inline-block;
+  }
+  body[data-page="launcher"] .offer-slim,
+  body[data-page="launcher"] #loginNotice,
+  body[data-page="launcher"] #offerProgress {
+    display: flex;
+    flex-wrap: nowrap;
+    white-space: nowrap;
+  }
+  body[data-page="launcher"] .notice > *,
+  body[data-page="launcher"] .offer-slim > *,
+  body[data-page="launcher"] #offerProgressText {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  body.hasOffer[data-page="launcher"] #launcher,
+  body.hasLoginNote[data-page="launcher"] #launcher {
+    padding-top: 8px;
+    padding-bottom: 12px;
+  }
+}
+/* A short Manage Icons window keeps its status line in view: the login note and the download line take one line there,
+   the status line holds their whole text, and the previews give way to them down to a strip. */
+@media (max-height: 719px) {
+  body.hasOffer[data-page="manage"] .previews,
+  body.hasLoginNote[data-page="manage"] .previews {
+    flex-basis: min(var(--row), 24px);
+  }
+  body[data-page="manage"] .notice {
+    margin-top: 6px;
+    padding: 4px 10px;
+  }
+  body[data-page="manage"] #loginNotice,
+  body[data-page="manage"] #offerProgress {
+    flex-wrap: nowrap;
+    white-space: nowrap;
+  }
+  body[data-page="manage"] #loginNoticeText,
+  body[data-page="manage"] #offerProgressText {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  body[data-page="manage"] #offerBar {
+    display: none;
+  }
+}
+.offer-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+.offer-choices {
+  flex: 1 1 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.offer-buttons {
+  display: flex;
+  gap: 8px;
+}
+.offer-buttons button {
+  white-space: nowrap;
 }
 .check input {
   margin: 0;
@@ -236,9 +401,14 @@ nav button[aria-selected="true"]:hover {
 .grid:focus-visible {
   outline: none;
 }
-#preview {
-  flex: 1;
-  min-height: var(--row);
+.previews {
+  flex: 1 0 min(var(--row), 96px);
+  min-height: 0;
+  display: flex;
+  gap: 12px;
+}
+.previews .grid {
+  flex: 1 1 0;
 }
 .tile {
   width: var(--cell);
@@ -285,22 +455,15 @@ nav button[aria-selected="true"]:hover {
 #apps:not(.pointer) .tile[aria-selected="true"] img {
   filter: invert(1) brightness(0.7) invert(1);
 }
+/* While the mouse button is held, the artwork is slightly smaller and darker. It returns on release. */
+#apps .tile.pressed img,
+#apps.pointer .tile.hovered.pressed img,
+#apps:not(.pointer) .tile[aria-selected="true"].pressed img {
+  transform: scale(0.92);
+  filter: brightness(0.82);
+}
 body.iconOnly .tile span {
   display: none;
-}
-#packs {
-  appearance: none;
-  border-radius: 0;
-  padding-right: 28px;
-  background-color: var(--input);
-  background-image:
-    linear-gradient(45deg, transparent 45%, var(--ink) 46% 65%, transparent 66%),
-    linear-gradient(-45deg, transparent 45%, var(--ink) 46% 65%, transparent 66%);
-  background-position:
-    calc(100% - 13px) 53%,
-    calc(100% - 9px) 53%;
-  background-size: 5px 7px;
-  background-repeat: no-repeat;
 }
 .check input {
   appearance: none;
@@ -311,14 +474,14 @@ body.iconOnly .tile span {
   place-content: center;
 }
 .check input:checked {
-  background: #0078d4;
-  border-color: #0078d4;
+  background: var(--accent);
+  border-color: var(--accent);
 }
 .check input:checked::after {
   content: "";
   height: 7px;
   width: 4px;
-  border: solid white;
+  border: solid var(--accent-ink);
   border-width: 0 2px 2px 0;
   transform: translateY(-1px) rotate(45deg);
 }
@@ -326,7 +489,7 @@ body.iconOnly .tile span {
   appearance: none;
   height: 6px;
   border-radius: 4px;
-  background: linear-gradient(to right, #0078d4 0 var(--fraction, 0%), #c6cbd1 var(--fraction, 0%) 100%);
+  background: linear-gradient(to right, var(--accent) 0 var(--fraction, 0%), var(--border) var(--fraction, 0%) 100%);
 }
 #slider::-webkit-slider-thumb {
   appearance: none;
@@ -334,7 +497,7 @@ body.iconOnly .tile span {
   height: 15px;
   border: 0;
   border-radius: 100%;
-  background: #0078d4;
+  background: var(--accent);
 }
 footer {
   display: flex;
@@ -432,7 +595,7 @@ dialog {
   margin: auto;
   width: min(650px, 90vw);
   max-height: 86vh;
-  background: var(--surface);
+  background: var(--background);
   color: var(--ink);
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -517,6 +680,7 @@ dialog p {
 }
 
 .pack-choice {display:flex; align-items:center; justify-content:space-between; width:100%; min-height:32px; text-align:left; background:var(--input)}
+.pack-choice span {min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
 .pack-choice::after {content:"▾"; margin-left:8px}
 .pack-choice-row {
   display: grid;
@@ -545,16 +709,9 @@ dialog p {
   border-radius: 50%;
   background: var(--accent);
 }
-.project-pack {margin-top:14px}
-.project-pack .actions {margin-top:6px}
 #packOptions {position:fixed; z-index:5; overflow:auto; padding:4px; border:1px solid var(--border); background:var(--surface); border-radius:7px; box-shadow:0 8px 24px #0004}
 #packOptions [role=option] {display:flex; justify-content:space-between; align-items:center; gap:12px; padding:5px 8px; border-radius:4px; cursor:default}
 #packOptions [role=option]:hover, #packOptions [aria-selected=true], #packOptions .keyboard-choice {background:var(--selection)}
 #packOptions [role=option] span {font-size:12px; color:var(--muted); white-space:nowrap}
 #hoverPreview {position:fixed; z-index:6; width:214px; height:74px; object-fit:contain; padding:4px; background:var(--surface); border:1px solid var(--border); border-radius:6px; box-shadow:0 4px 14px #0004; pointer-events:none}
-.settings {height:max(100%,calc(var(--row) + 400px))}
 #busy {flex:none; order:3; background:var(--surface)}
-
-#fileSamples {display:flex; gap:12px; overflow-x:auto; margin:6px 0}
-#fileSamples span {display:inline-flex; align-items:center; gap:4px; font-size:12px; color:var(--muted)}
-#fileSamples img {width:22px; height:22px; object-fit:contain}

@@ -1,10 +1,16 @@
 """The two-tab WebKit window and its screen-space divider."""
 import json
+import os
 from pathlib import Path
 
 from gi.repository import Gdk, Gio, GLib, Gtk, WebKit2
 
 from catalog import MINIMUM, PROJECT, frame_at, larger, tab_size
+
+# The app runs as an X11 client. In a Wayland session that is XWayland.
+WAYLAND = os.environ.get("XDG_SESSION_TYPE") == "wayland" or bool(os.environ.get("WAYLAND_DISPLAY"))
+TRANSPARENT = Gtk.CssProvider()
+TRANSPARENT.load_from_data(b"window { background-color: rgba(0, 0, 0, 0); }")
 
 
 class Popup:
@@ -16,8 +22,16 @@ class Popup:
         self.desired = self.remember = None
         self.drag = None
         self.assets = {}
+        self.probe = None
         self.win = Gtk.ApplicationWindow(application=app, title="BetterIcon for ArtCraft")
         self.win.set_decorated(False)
+        # With a compositor the window is transparent and the page draws its own rounded frame.
+        screen = self.win.get_screen()
+        self.rounded = screen.is_composited() and screen.get_rgba_visual() is not None
+        if self.rounded:
+            self.win.set_visual(screen.get_rgba_visual())
+            self.win.set_app_paintable(True)
+            self.win.get_style_context().add_provider(TRANSPARENT, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
         self.win.set_skip_taskbar_hint(True)
         self.win.set_keep_above(True)
         self.win.connect("delete-event", lambda *_: self.hide())
@@ -35,7 +49,13 @@ class Popup:
         manager = WebKit2.UserContentManager()
         manager.register_script_message_handler("betterIcon")
         manager.connect("script-message-received::betterIcon", self.message)
+        if self.rounded:
+            manager.add_script(WebKit2.UserScript.new(
+                "document.documentElement.dataset.rounded = 'true';", WebKit2.UserContentInjectedFrames.TOP_FRAME,
+                WebKit2.UserScriptInjectionTime.START, None, None))
         self.web = WebKit2.WebView(web_context=context, user_content_manager=manager, settings=settings)
+        if self.rounded:
+            self.web.set_background_color(Gdk.RGBA(0, 0, 0, 0))
         self.web.connect("decide-policy", self.navigation)
         overlay = Gtk.Overlay()
         overlay.add(self.web)
@@ -188,9 +208,62 @@ class Popup:
         self.place(tab, join, self.limit(join))
         self.js("tab", tab)
 
+    def locate(self, found):
+        """Call found(x, y) with the pointer's position.
+
+        Under XWayland the X server learns the position only while the pointer is over one of its
+        windows, so a query can return the place where the pointer last was. A transparent window
+        across the monitors makes the compositor report the position. It closes at the first report.
+        """
+        display = Gdk.Display.get_default()
+        pointer = display.get_default_seat().get_pointer()
+        screen = self.win.get_screen()
+        if not WAYLAND or not screen.is_composited() or screen.get_rgba_visual() is None:
+            _, x, y = pointer.get_position()
+            found(x, y)
+            return
+        boxes = [display.get_monitor(i).get_geometry() for i in range(display.get_n_monitors())]
+        left, top = min(b.x for b in boxes), min(b.y for b in boxes)
+        right, bottom = max(b.x + b.width for b in boxes), max(b.y + b.height for b in boxes)
+        probe = self.probe = Gtk.Window(type=Gtk.WindowType.POPUP)
+        probe.set_visual(screen.get_rgba_visual())
+        probe.get_style_context().add_provider(TRANSPARENT, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        probe.add_events(Gdk.EventMask.POINTER_MOTION_MASK)
+
+        def finish(position=None):
+            if self.probe is not probe:
+                return
+            self.probe = None
+            probe.destroy()
+            if position is None:
+                _, x, y = pointer.get_position()
+            else:
+                x, y = position
+            found(int(x), int(y))
+
+        def moved(_widget, event):
+            # The first crossing event can still carry the old position. A motion event is current.
+            if self.probe is probe:
+                GLib.source_remove(timer)
+                finish((event.x_root, event.y_root))
+            return True
+
+        def expired():
+            finish()
+            return False
+
+        probe.connect("motion-notify-event", moved)
+        timer = GLib.timeout_add(150, expired)
+        # One pixel short of each edge, so the compositor does not treat it as a fullscreen window.
+        probe.move(left + 1, top + 1)
+        probe.resize(max(1, right - left - 2), max(1, bottom - top - 2))
+        probe.show()
+
     def open(self, source="launcher", tray_rect=None, orientation=None):
         if self.modal or self.native:
             self.win.present()
+            return
+        if self.probe is not None:
             return
         self.flush_resize()
         if source == "tray" and self.win.get_visible():
@@ -198,11 +271,13 @@ class Popup:
             return
         if self.web is None:
             self.create_web_view()
-        tab = larger(self.catalog.prefs) if source == "tray" else ("manage" if source == "manage" else "launcher")
-        pt = Gdk.Display.get_default().get_default_seat().get_pointer().get_position()
-        x, y = pt.x, pt.y
         if tray_rect:
-            x, y = tray_rect.x + tray_rect.width // 2, tray_rect.y + tray_rect.height // 2
+            self.show_at(source, orientation, tray_rect.x + tray_rect.width // 2, tray_rect.y + tray_rect.height // 2)
+        else:
+            self.locate(lambda x, y: self.show_at(source, orientation, x, y))
+
+    def show_at(self, source, orientation, x, y):
+        tab = larger(self.catalog.prefs) if source == "tray" else ("manage" if source == "manage" else "launcher")
         bx, by, bw, bh = work = self.limit((x, y))
         _, h = tab_size(self.catalog.prefs, tab)
         if source == "tray" and orientation != Gtk.Orientation.VERTICAL:

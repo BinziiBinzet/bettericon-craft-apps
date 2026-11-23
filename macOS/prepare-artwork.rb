@@ -13,7 +13,7 @@ if zip && Digest::SHA256.file(input).hexdigest != "2c8b96b10bce341e1e939f03278fb
   abort "The supplied ZIP does not match the Windows 1.21.0 release."
 end
 rows = File.readlines(File.join(__dir__, "Artwork.tsv"), chomp: true).map { |line| line.split("\t") }
-abort "Incomplete BetterIcon artwork inventory" unless rows.size == 297
+abort "Incomplete BetterIcon artwork inventory" unless rows.size == 305
 rows.each do |sha, packaged, path|
   brand = packaged.start_with?("Windows/Assets/AppIcons/")
   relative = brand ? "Brand/" + packaged.delete_prefix("Windows/Assets/AppIcons/") : "Packs/" + packaged
@@ -39,4 +39,4 @@ rows.each do |sha, packaged, path|
   abort "Missing or incorrect artwork for #{packaged}; supply the current artwork checkout." unless bytes && Digest::SHA256.hexdigest(bytes.b) == sha
   File.binwrite(destination, bytes)
 end
-puts "Verified 265 pack images and 32 BetterIcon images."
+puts "Verified 265 pack images and 40 BetterIcon images."

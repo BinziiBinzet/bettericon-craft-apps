@@ -1,4 +1,7 @@
-"""Stage the approved pack catalog, branding and optional offline artwork for both installers."""
+"""Stage the approved pack catalog, branding and hover strips for the Mac and Linux installers.
+
+Packs are not staged. The apps download a pack when the user picks it.
+"""
 import argparse
 import hashlib
 import shutil
@@ -9,14 +12,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def prepare(resources, source, edition):
+def prepare(resources, source):
     catalog = resources / "Catalog"
     catalog.mkdir(parents=True)
-    manifest = ROOT / "Windows/PackCatalog.tsv"
     previews = ROOT / "PackPreviews/catalog.tsv"
-    shutil.copyfile(manifest, catalog / "packs.tsv")
+    shutil.copyfile(ROOT / "Windows/PackCatalog.tsv", catalog / "packs.tsv")
     shutil.copyfile(ROOT / "Windows/ProjectFileTypes.json", catalog / "ProjectFileTypes.json")
-    (catalog / "edition").write_text(edition + "\n")
+    # One color scheme per BetterIcon app icon, exported from the Windows app.
+    shutil.copyfile(ROOT / "Shared/themes.json", catalog / "themes.json")
     preview_revision = (ROOT / "Windows/PreviewArtworkRevision.txt").read_bytes().strip()
     (catalog / "previews.tsv").write_bytes(preview_revision + b"\n" + previews.read_bytes())
     with ExitStack() as stack:
@@ -37,19 +40,15 @@ def prepare(resources, source, edition):
             sha, rel, original = line.split("\t")
             if rel.startswith("Windows/Assets/AppIcons/"):
                 copy(rel, "Brand/" + rel.split("AppIcons/")[1], sha, original)
-        if edition == "Bundled":
-            for line in manifest.read_text(encoding="utf8").splitlines()[1:]:
-                _, rel, original, sha = line.split("\t")
-                copy(rel, "Packs/" + rel, sha, original)
-            for line in previews.read_text(encoding="utf8").splitlines():
-                _, filename, sha, _, _ = line.split("\t")
-                copy("PackPreviews/" + filename, "Previews/" + filename, sha)
+        # The hover strips are small. Every installer carries them, so a rollover needs no download.
+        for line in previews.read_text(encoding="utf8").splitlines():
+            _, filename, sha, _, _ = line.split("\t")
+            copy("PackPreviews/" + filename, "Previews/" + filename, sha)
 
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("resources", type=Path)
-    p.add_argument("source", type=Path)
-    p.add_argument("edition", choices=("Bundled", "OnDemand"))
+    p.add_argument("source", type=Path, help="the BetterIcon checkout, or a ZIP of its branding and hover strips")
     args = p.parse_args()
-    prepare(args.resources, args.source, args.edition)
+    prepare(args.resources, args.source)

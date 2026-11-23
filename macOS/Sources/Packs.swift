@@ -11,16 +11,23 @@ private struct Personal: Codable {
     let uuid: UUID, revision: UUID
     let name: String, author: String
     let files: [String: String]
+    /// Each app's art for the file types outside BetterIcon's list that it opens by default: app to file. Only art
+    /// imported under the name FileTypes/<App>-files, and kept since. Earlier versions store none and ignore the key, so a
+    /// pack they stored never starts drawing those types.
+    var unlisted: [String: String]? = nil
 }
 private struct LibraryIndex: Codable {
     var hidden = Set<String>()
     var personal = [Personal]()
 }
+// Marks imported artwork for all of one app's file types until it is expanded per format. A pack's art for the file types
+// outside the list goes by the same mark, as "*PhotoCraft", when it is stored or edited.
+let sharedFileArt = "*"
 
 final class PackLibrary {
     let root: URL
-    var projectKeys = Set<String>()
-    var projectApps = Set<String>()
+    var formats = [ProjectFormat]() { didSet { projectKeys = Set(formats.map(\.Key)) } }
+    private(set) var projectKeys = Set<String>()
     private var index: LibraryIndex
     init(_ root: URL) throws {
         self.root = root
@@ -34,19 +41,19 @@ final class PackLibrary {
     func visible(_ builtins: [Pack]) -> [Pack] {
         let personal = index.personal.map { p -> Pack in
             let dir = root.appendingPathComponent(p.uuid.uuidString).appendingPathComponent(p.revision.uuidString)
-            let urls = p.files.compactMapValues { file -> URL? in
+            func stored(_ file: String) -> URL? {
                 guard file == (file as NSString).lastPathComponent else { return nil }
                 return dir.appendingPathComponent(file)
             }
+            let urls = p.files.compactMapValues(stored)
+            let unlisted = (p.unlisted ?? [:]).filter { Craft.names.contains($0.key) }.compactMapValues(stored)
             return Pack(
                 id: "User/" + p.uuid.uuidString, name: p.name, author: p.author, icons: urls.filter { !$0.key.hasPrefix(".") }, personal: true,
                 documents: urls.filter { $0.key.hasPrefix(".") }, canApps: urls.keys.contains { !$0.hasPrefix(".") },
-                canFiles: urls.keys.contains { projectKeys.contains($0) || projectApps.contains($0) })
+                canFiles: urls.keys.contains { projectKeys.contains($0) } || !unlisted.isEmpty, unlisted: unlisted)
         }
         return [.defaults]
-            + (builtins.filter { !index.hidden.contains($0.id) } + personal).sorted {
-                $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
-            }
+            + (builtins.filter { !index.hidden.contains($0.id) } + personal).sorted(by: Pack.listed)
     }
     func remove(_ pack: Pack) throws {
         guard !pack.isDefault else { throw Problem("Select a personal or built-in pack.") }
@@ -109,23 +116,32 @@ final class PackLibrary {
         try fm.createDirectory(at: dir, withIntermediateDirectories: true)
         var published = false
         defer { if !published { try? fm.removeItem(at: dir) } }
-        var files = [String: String]()
+        var files = [String: String](), unlisted = [String: String]()
         for (craft, (ext, bytes)) in items {
-            guard Craft.names.contains(craft) || projectKeys.contains(craft) else { throw Problem("Unknown ArtCraft app.") }
+            // "*PhotoCraft" is PhotoCraft's art for the file types outside the list.
+            let app = craft.hasPrefix(sharedFileArt) ? String(craft.dropFirst()) : nil
+            guard app.map(Craft.names.contains) ?? (Craft.names.contains(craft) || projectKeys.contains(craft)) else {
+                throw Problem("Unknown ArtCraft app.")
+            }
             try Artwork.validate(bytes, ext: ext)
-            let file = (craft.hasPrefix(".") ? "project-" + String(craft.dropFirst()) : craft) + "." + ext
-            try bytes.write(to: dir.appendingPathComponent(file), options: .atomic)
-            files[craft] = file
+            let (kind, image) = try Artwork.stored(bytes, ext: ext)
+            let file = (app.map { $0 + "-files" } ?? (craft.hasPrefix(".") ? "project-" + String(craft.dropFirst()) : craft)) + "." + kind
+            try image.write(to: dir.appendingPathComponent(file), options: .atomic)
+            if let app { unlisted[app] = file } else { files[craft] = file }
         }
         var next = index
         next.personal.removeAll { $0.uuid == uuid }
-        next.personal.append(Personal(uuid: uuid, revision: revision, name: name, author: author, files: files))
+        next.personal.append(Personal(
+            uuid: uuid, revision: revision, name: name, author: author, files: files, unlisted: unlisted.isEmpty ? nil : unlisted))
         try persist(next)
         published = true
         return "User/" + uuid.uuidString
     }
     func importPack(_ url: URL) throws -> String {
         var choices = [String: [(String, Data)]]()
+        // Whether every file of an app's art for all its files is named FileTypes/<App>-files, which opts the app in to
+        // the file types outside the list, as the pack helper decides it for a published pack.
+        var explicit = [String: Bool]()
         var metadata: SharedPack?
         var count = 0
         var size = 0
@@ -153,10 +169,17 @@ final class PackLibrary {
             let stem = (base as NSString).deletingPathExtension
             let key = "." + stem.trimmingCharacters(in: CharacterSet(charactersIn: ".")).lowercased()
             let doc = parts.dropLast().contains { $0.lowercased() == "filetypes" }
-            guard Artwork.formats.contains(ext), let craft = doc ? (projectKeys.contains(key) ? key : nil) : Craft.canonical(stem)
-            else { return }
+            // In FileTypes, an extension names one format. A name that starts with an app,
+            // such as PhotoCraft-PSD, is that app's icon for every file type it opens.
+            let named = Craft.canonical(stem)
+            let target: String? = !doc ? named : projectKeys.contains(key) ? key : named.map { sharedFileArt + $0 }
+            guard Artwork.formats.contains(ext), let craft = target else { return }
             guard length <= Artwork.maxBytes else { throw Problem("One of the icons exceeds 16 MB.") }
             choices[craft, default: []].append((ext, try read()))
+            if craft.hasPrefix(sharedFileArt) {
+                // Art named for a format, such as PhotoCraft-PSD, stays with the app's listed formats.
+                explicit[craft] = explicit[craft, default: true] && Craft.allFilesApp(stem) == named
+            }
         }
         let src = try url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
         guard src.isSymbolicLink != true else {
@@ -193,15 +216,31 @@ final class PackLibrary {
         }
         var items = [String: (String, Data)]()
         for (craft, candidates) in choices {
+            let name = craft.hasPrefix(sharedFileArt) ? String(craft.dropFirst()) + " files" : craft
+            // The formats in order of preference. The first file that can be used is kept, WebP as PNG.
+            var cause: String?
             for ext in Artwork.formats {
                 let matches = candidates.filter { $0.0 == ext }
                 guard matches.count <= 1 else {
-                    throw Problem("Multiple \(ext.uppercased()) files match \(craft). Import one theme at a time.")
+                    throw Problem("Multiple \(ext.uppercased()) files match \(name). Import one theme at a time.")
                 }
-                if let match = matches.first {
-                    items[craft] = match
+                guard let match = matches.first else { continue }
+                do {
+                    try Artwork.validate(match.1, ext: ext)
+                    items[craft] = try Artwork.stored(match.1, ext: ext)
                     break
+                } catch {
+                    if cause == nil { cause = error.localizedDescription }
                 }
+            }
+            if items[craft] == nil, let cause { throw Problem("\(name): \(cause)") }
+        }
+        // A personal pack stores one image per format, so each can later be replaced on its own. Art named
+        // FileTypes/<App>-files also stays as the app's art for the file types outside the list.
+        for (shared, art) in items where shared.hasPrefix(sharedFileArt) {
+            if explicit[shared] != true { items[shared] = nil }
+            for format in formats where format.Application == String(shared.dropFirst()) && items[format.Key] == nil {
+                items[format.Key] = art
             }
         }
         return try publish(
@@ -255,11 +294,19 @@ final class PackLibrary {
         try save(SharedPack(Name: pack.name, Author: pack.author), at: dir.appendingPathComponent(meta))
         var names = [meta]
         var byteCount = try Data(contentsOf: dir.appendingPathComponent(meta)).count
-        for (craft, file) in pack.icons.merging(pack.documents, uniquingKeysWith: { _, doc in doc }).sorted(by: { $0.key < $1.key }) {
+        // An app's art for the file types outside the list goes out as FileTypes/<App>-files, which opts it in again
+        // when the ZIP is imported. Its listed formats go out with their own copies. An import also gives that art to the
+        // app's listed formats that have no art of their own, so a format cleared in the editor takes it again there.
+        var entries = pack.icons.merging(pack.documents, uniquingKeysWith: { _, doc in doc }).sorted(by: { $0.key < $1.key })
+            .map { (stem: $0.key.hasPrefix(".") ? "FileTypes/" + String($0.key.dropFirst()) : $0.key, craft: $0.key, file: $0.value) }
+        entries += pack.unlisted.sorted(by: { $0.key < $1.key }).map {
+            (stem: "FileTypes/" + $0.key + "-files", craft: $0.key + " files", file: $0.value)
+        }
+        for (stem, craft, file) in entries {
             // Windows accepts PNG, ICO and SVG. Convert Mac-only sources on export.
             let icns = file.pathExtension == "icns"
-            let name = (craft.hasPrefix(".") ? "FileTypes/" + String(craft.dropFirst()) : craft) + "." + (icns ? "png" : file.pathExtension)
-            if craft.hasPrefix(".") {
+            let name = stem + "." + (icns ? "png" : file.pathExtension)
+            if stem.hasPrefix("FileTypes/") {
                 try fm.createDirectory(at: dir.appendingPathComponent("FileTypes"), withIntermediateDirectories: true)
             }
             if icns {

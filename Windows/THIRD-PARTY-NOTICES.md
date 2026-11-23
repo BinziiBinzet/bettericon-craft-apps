@@ -25,6 +25,24 @@ hashes in `SvgDependencies.json`. No separate SVG software is required at runtim
 | SixLabors.ImageSharp | 2.1.13 | Apache-2.0 | https://github.com/SixLabors/ImageSharp |
 
 ImageSharp's license and attribution notices accompany the installers in `Licenses/ImageSharp.txt` and `Licenses/ImageSharp-NOTICES.txt`.
+ImageSharp decodes only BetterIcon's own pack preview strips. WebP artwork in packs and
+personal packs is read by Windows (WIC), or by the optional WebP support below.
+
+## WebP support (optional download)
+
+BetterIcon's **WebP support** is Google's [libwebp](https://chromium.googlesource.com/webm/libwebp)
+1.6.0 decoder (`libwebpdecoder.dll`), copyright Google Inc., under the BSD 3-Clause
+license with Google's additional patent grant. It is not part of the installer. It is
+downloaded only when you choose it, in Setup or in BetterIcon, as
+`BetterIcon-libwebp-1.6.0-<x86|x64|arm64>.zip` from BetterIcon's GitHub release, and
+BetterIcon checks every file against the SHA-256 values pinned in `LibWebP.ini` before it
+installs or loads it.
+
+The DLLs are built locally from the signed upstream release tarball with the unmodified
+`Makefile.vc` (`LibWebP/Build-LibWebP.ps1`, which records the source, signature check and
+build options in `manifest.json`). Each download carries libwebp's `COPYING`, `PATENTS`
+and `AUTHORS` files and a `README.txt`, and BetterIcon installs them beside the DLL in
+`%LOCALAPPDATA%\BetterIcon-Craft Apps\libwebp\1.6.0\<architecture>`.
 
 SVG.NET copyright 2009 Microsoft, 2011 vvvv Group, 2021 SVG.NET Contributors.
 ExCSS copyright 2024 Tyler Brinks. System libraries copyright Microsoft

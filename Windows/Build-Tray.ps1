@@ -22,8 +22,10 @@ $projectSources = @((Join-Path $PSScriptRoot 'BetterIcon.ProjectFiles.cs'),(Join
 foreach ($dependency in $svgDependencies) { $resources += "/resource:$($dependency.Path),BetterIcon.Dependencies.$($dependency.Name).dll" }
 $svgReference = ($svgDependencies | Where-Object Name -EQ 'Svg').Path
 $projectSources += (Join-Path $PSScriptRoot 'BetterIcon.PackPreviews.cs')
+# WebP artwork through Windows' decoder or BetterIcon's libwebp, and the optional downloads that bring them.
+$projectSources += @((Join-Path $PSScriptRoot 'BetterIcon.WebP.cs'), (Join-Path $PSScriptRoot 'BetterIcon.Downloads.UI.cs'))
 $resources += '/reference:' + ($svgDependencies | Where-Object Name -EQ 'SixLabors.ImageSharp').Path
-foreach ($style in @('clay','copper','mauve','ochre','sage','slate','stone','teal')) {
+foreach ($style in @('clay','copper','mauve','ochre','sage','slate','stone','teal','grayscale','contrast')) {
     foreach ($mode in @('dark','light')) {
         $png = Join-Path $PSScriptRoot ('Assets\AppIcons\betterIcon_icon_' + $style + '_' + $mode + '.png')
         if (-not (Test-Path -LiteralPath $png -PathType Leaf)) { throw "Missing approved app icon: $png" }

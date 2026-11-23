@@ -1,17 +1,17 @@
 #Requires -Version 5.1
 <# .SYNOPSIS
-Build the tray launcher and a Windows ZIP locally. Convert PNG assets into ICOs
-in the package; leave shared repository artwork unchanged.
+Build the tray launcher and the Windows ZIP locally. The package carries the pack
+catalog, the app icons and the hover strips. Pack artwork is not packaged: the app
+downloads a pack when it is picked.
 #>
 [CmdletBinding()]
-param([Parameter(Mandatory)][string]$OutputDirectory, [switch]$OnDemand)
+param([Parameter(Mandatory)][string]$OutputDirectory)
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'BetterIcon.Windows.psm1') -Force
 Add-Type -AssemblyName System.IO.Compression,System.IO.Compression.FileSystem
 $output = [IO.Path]::GetFullPath($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputDirectory))
 $null = [IO.Directory]::CreateDirectory($output)
-$edition = if ($OnDemand) { '-OnDemand' } else { '' }
-$name = 'BetterIcon-Craft-Apps-Windows-' + (Get-BetterIconVersion) + $edition + '.zip'
+$name = 'BetterIcon-Craft-Apps-Windows-' + (Get-BetterIconVersion) + '.zip'
 $destination = Join-Path $output $name
 if (Test-Path -LiteralPath $destination) { throw "Package already exists: $destination. Choose another output directory." }
 $files = @('install.ps1','uninstall.ps1','BetterIcon.Windows.psm1','BetterIcon.ShellLink.cs',
@@ -24,10 +24,11 @@ $files = @('install.ps1','uninstall.ps1','BetterIcon.Windows.psm1','BetterIcon.S
 $repository = Get-BetterIconRepository
 $files += @('BetterIcon.ProjectFiles.cs','BetterIcon.ProjectFiles.UI.cs','ProjectFileTypes.json','BetterIcon.OnDemand.ps1','BetterIcon.Catalog.ps1','ArtworkRevision.txt',
     'Test-ProjectFileIcons.ps1','Test-PackEditions.ps1','Test-PackEditions.cs','BetterIcon.PackPreviews.cs',
-    'PreviewArtworkRevision.txt','Licenses/ImageSharp.txt','Licenses/ImageSharp-NOTICES.txt','Test-HoverPreviews.cs','Test-PackCatalog.ps1')
+    'PreviewArtworkRevision.txt','Licenses/ImageSharp.txt','Licenses/ImageSharp-NOTICES.txt','Test-HoverPreviews.cs','Test-PackCatalog.ps1','Test-FileTypes.cs',
+    'BetterIcon.WebP.cs','BetterIcon.Downloads.UI.cs','LibWebP.ini','Test-WebP.cs')
 $buildDirectory = Join-Path $output ('build-' + [guid]::NewGuid().ToString('N'))
 $build = & (Join-Path $PSScriptRoot 'Build-Tray.ps1') -OutputDirectory $buildDirectory
-$fileCount = 0; $iconCount = 0; $previewCount = 0; $appIconCount = 0
+$fileCount = 0; $appIconCount = 0
 $temporary = Join-Path $output ('.bettericon-package-' + [guid]::NewGuid().ToString('N') + '.zip')
 try {
     $archive = [IO.Compression.ZipFile]::Open($temporary, [IO.Compression.ZipArchiveMode]::Create)
@@ -44,7 +45,7 @@ try {
             $parts = $row.Split([char]9)
             if ($parts.Count -ne 5 -or $parts[1] -cnotmatch '^[A-Za-z0-9-]+\.webp$' -or
                 (Get-FileHash -LiteralPath (Join-Path $previewDir $parts[1])).Hash -ine $parts[2]) { throw 'Invalid hover preview artwork.' }
-            if (!$OnDemand) { $previewFiles += $parts[1] }
+            $previewFiles += $parts[1]
         }
         foreach ($file in $previewFiles) {
             [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive,(Join-Path $previewDir $file),('PackPreviews/'+$file))
@@ -65,41 +66,38 @@ try {
         $catalog = Join-Path $PSScriptRoot 'PackCatalog.tsv'
         $rows = [IO.File]::ReadAllLines($catalog)
         if ($rows[0] -cne ([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'ArtworkRevision.txt'))).Trim()) { throw 'Incorrect seed artwork revision.' }
+        # The download size of each pack comes from the artwork checked here, so it always matches this catalog.
+        $packBytes = [Collections.Generic.SortedDictionary[string,long]]::new([StringComparer]::Ordinal)
+        $packFiles = @{}
         foreach ($row in $rows[1..($rows.Count-1)]) {
             $parts = $row.Split([char]9)
-            if ($parts.Count -ne 4 -or (Get-FileHash -LiteralPath (Join-Path $repository $parts[2]) -Algorithm SHA256).Hash -ine $parts[3]) { throw "Artwork mismatch: $row" }
+            if ($parts.Count -ne 4) { throw "Artwork mismatch: $row" }
+            $artwork = Join-Path $repository $parts[2]
+            if ((Get-FileHash -LiteralPath $artwork -Algorithm SHA256).Hash -ine $parts[3]) { throw "Artwork mismatch: $row" }
+            $asset = & (Get-Module BetterIcon.Windows) { param($path) Get-CatalogAsset $path } $parts[2]
+            $group = if ($asset.Group -eq 'Craft-Icons-OmegaDarling') { 'Craft-Icons-Zach' } else { $asset.Group }
+            $id = $group + '/' + $asset.Name
+            $packBytes[$id] = $(if ($packBytes.ContainsKey($id)) { $packBytes[$id] } else { [long]0 }) + ([IO.FileInfo]::new($artwork)).Length
+            $packFiles[$id] = [int]$packFiles[$id] + 1
         }
-        $catalogName = if ($OnDemand) { 'OnDemand.tsv' } else { 'Included.tsv' }
-        [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive,$catalog,('Windows/' + $catalogName))
+        # OnDemand.tsv tells the app that no pack artwork is installed beside it.
+        [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive,$catalog,'Windows/OnDemand.tsv')
         $fileCount++
-        foreach ($theme in @(if (!$OnDemand) { Get-BetterIconTheme -LocalArtworkOnly })) {
-            $folder = $theme.Path.Substring($repository.TrimEnd('\','/').Length).TrimStart('\','/').Replace('\','/')
-            foreach ($project in $theme.FileIcons.GetEnumerator()) {
-                $file = $folder + '/FileTypes/' + $project.Key.Substring(1) + [IO.Path]::GetExtension($project.Value)
-                [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $project.Value, $file)
-                $fileCount++
-            }
-            foreach ($icon in @(Get-BetterIconThemeIcon -InputObject $theme)) {
-                # Preserve the repository's public directory names independently
-                # of stable Windows preference IDs.
-                $folder = $theme.Path.Substring($repository.TrimEnd('\','/').Length).TrimStart('\','/').Replace('\','/')
-                $entry = $archive.CreateEntry($folder + '/' + $icon.Application + '.ico', [IO.Compression.CompressionLevel]::Optimal)
-                $stream = $entry.Open()
-                try { $bytes = Get-BetterIconBytes $icon.Path; $stream.Write($bytes, 0, $bytes.Length) }
-                finally { $stream.Dispose() }
-                $fileCount++; $iconCount++
-                $previewExtension = [IO.Path]::GetExtension($icon.PreviewPath).ToLowerInvariant()
-                if ($previewExtension -in '.png','.svg') {
-                    $null = [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $icon.PreviewPath, $folder + '/' + $icon.Application + $previewExtension, [IO.Compression.CompressionLevel]::Optimal)
-                    $fileCount++; $previewCount++
-                }
-            }
-        }
+        # PackSizes.tsv: the sizes Setup's optional downloads page and the app show. Same columns as macOS/PackSizes.tsv;
+        # its #catalog line names the SHA-256 of the exact catalog bytes packaged as OnDemand.tsv.
+        $sha = [Security.Cryptography.SHA256]::Create()
+        try { $catalogHash = ([BitConverter]::ToString($sha.ComputeHash([IO.File]::ReadAllBytes($catalog)))).Replace('-','').ToLowerInvariant() } finally { $sha.Dispose() }
+        $sizeLines = @('# Download size in bytes and file count of each pack in OnDemand.tsv. Written by Build-WindowsPackage.ps1 from the artwork it checked.', ('#catalog' + [char]9 + $catalogHash)) +
+            @(foreach ($id in $packBytes.Keys) { $id + [char]9 + $packBytes[$id] + [char]9 + $packFiles[$id] })
+        $sizeEntry = $archive.CreateEntry('Windows/PackSizes.tsv', [IO.Compression.CompressionLevel]::Optimal)
+        $sizeStream = $sizeEntry.Open()
+        try { $sizeBytes = [Text.UTF8Encoding]::new($false).GetBytes(($sizeLines -join "`n") + "`n"); $sizeStream.Write($sizeBytes, 0, $sizeBytes.Length) } finally { $sizeStream.Dispose() }
+        $fileCount++
     }
     finally { $archive.Dispose() }
     [IO.File]::Move($temporary, $destination)
     $hash = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()
     [IO.File]::WriteAllText($destination + '.sha256', "$hash  $name" + [Environment]::NewLine)
-    [pscustomobject]@{ Package = $destination; Files = $fileCount; Icons = $iconCount; PreviewImages = $previewCount; AppIconImages = $appIconCount; SHA256 = $hash; ExecutableSHA256 = $build.SHA256 }
+    [pscustomobject]@{ Package = $destination; Files = $fileCount; HoverStrips = $previewFiles.Count - 1; AppIconImages = $appIconCount; SHA256 = $hash; ExecutableSHA256 = $build.SHA256 }
 }
 finally { if (Test-Path -LiteralPath $temporary) { [IO.File]::Delete($temporary) } }

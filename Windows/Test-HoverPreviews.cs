@@ -34,8 +34,10 @@ static partial class PackEditionTests
             if (watch.Elapsed.TotalSeconds > 22) throw new Exception("Timed out: " + description);
         }
     }
-    static void HoverPack(ComboBox combo, ThemeEntry target, string state, string source, bool lean, bool scroll = false)
+    // Rolls over one row and returns a description of the strip it showed. key names the strip's row in the preview index.
+    static string HoverPack(ComboBox combo, ThemeEntry target, string state, string source, bool lean, bool scroll = false, string key = null)
     {
+        string shown = null;
         var before = File.ReadAllBytes(Path.Combine(state, "tray-preferences.json"));
         var previous = combo.SelectedItem;
         bool needed = target.NeedsDownload;
@@ -53,15 +55,16 @@ static partial class PackEditionTests
             var popup = Field<Form>(hover, "popup");
             var art = Field<Bitmap>(popup, "art");
             Check(art != null, "The preview retains its decoded artwork while the native dropdown is open");
+            shown = String.Join(",", Enumerable.Range(0, 51).Select(i => art.GetPixel(i * 4, 32).ToArgb().ToString("x8")));
             Check(art.Size == new Size(204, 64) && popup.AccessibleName == target.DisplayName + " preview" &&
                   combo.DroppedDown && !popup.ContainsFocus, "The correct three-icon preview appears beside the open dropdown without taking focus");
             using (var shot = new Bitmap(popup.Width, popup.Height)) {
                 popup.DrawToBitmap(shot, new Rectangle(Point.Empty, shot.Size));
                 shot.Save(Path.Combine(state, "hover-window.png"));
             }
-            var entry = File.ReadLines(Path.Combine(source, "..", "PackPreviews", "catalog.tsv")).Select(l => l.Split('\t')).Single(f => f[0] == target.Id);
+            var entry = File.ReadLines(Path.Combine(source, "..", "PackPreviews", "catalog.tsv")).Select(l => l.Split('\t')).Single(f => f[0] == (key ?? target.Id));
             var cache = Path.Combine(state, "pack-previews", entry[2] + ".webp");
-            Check(lean ? new FileInfo(cache).Length == Int32.Parse(entry[3]) : !File.Exists(cache), "The appropriate edition reads the tiny WebP from its own artwork source");
+            Check(File.Exists(Path.Combine(source, "..", "PackPreviews", entry[1])) && !File.Exists(cache), "A rollover reads the strip that ships with the app and downloads nothing");
             if (scroll) {
                 int top = SendMessage(pointer.List, 0x018E, IntPtr.Zero, IntPtr.Zero).ToInt32();
                 SendMessage(pointer.List, 0x0197, (IntPtr)(top > 1 ? top - 1 : top + 1), IntPtr.Zero);
@@ -81,6 +84,7 @@ static partial class PackEditionTests
             Application.RemoveMessageFilter(pointer); combo.DroppedDown = false;
             if (scroll) { combo.DropDownHeight = oldHeight; combo.IntegralHeight = integral; }
         }
+        return shown;
     }
     static void TrayHover(LauncherForm form, ThemeEntry target)
     {
@@ -121,6 +125,21 @@ static partial class PackEditionTests
         }
         pack.Icons = new ThemeIcon[0]; pack.FileIcons = new Dictionary<string, string> { { ".fcproj", film.Path } };
         using (var preview = load()) Check(preview.Width == 64 && preview.GetPixel(32, 32).ToArgb() == Color.Blue.ToArgb(), "A file-only personal pack previews its own local artwork");
+        // The file type list previews a pack's file artwork, never its app icons.
+        pack.Icons = new[] { icon("CADCraft", Color.Red) };
+        Func<Bitmap> loadFiles = () => (Bitmap)store.GetType().GetMethod("LoadFiles").Invoke(store, new object[] { pack, CancellationToken.None });
+        using (var apps = load()) using (var files = loadFiles())
+            Check(apps.Width == 64 && apps.GetPixel(32, 32).ToArgb() == Color.Red.ToArgb() && files.Width == 64 && files.GetPixel(32, 32).ToArgb() == Color.Blue.ToArgb(),
+                "A personal pack previews its app icons in the app list and its file artwork in the file type list");
+        // A pack the preview index does not list draws its own artwork, WebP included (fixture A1: an opaque red centre).
+        if (!WebpArtwork.SystemDecoderAvailable) { Console.WriteLine("SKIP A local preview draws WebP artwork (no system WebP decoder)"); return; }
+        string webp = Path.Combine(state, "PhotoCraft.webp");
+        File.WriteAllBytes(webp, Convert.FromBase64String("UklGRoYAAABXRUJQVlA4WAoAAAAQAAAAHwAAHwAAQUxQSBQAAAABUNq2AZP/nw4sHCwiJoAZGv+td1ZQOCBMAAAA0AMAnQEqIAAgAADAEiWgAgAvwH4AfsB/gDK+UsIF+KQ22wf7OtcAAP7+ex//8gr//H8n//jjOf//azf//7eqPCwi1MICOKos6fgAAA=="));
+        var unlisted = new ThemeEntry { Id = "Craft-Icons-Fixture/Unlisted WebP", Name = "Unlisted WebP", Pack = "Craft-Icons-Fixture", Icons = new[] { new ThemeIcon { Application = "PhotoCraft", Path = webp, PreviewPath = webp } } };
+        using (var preview = (Bitmap)store.GetType().GetMethod("Load").Invoke(store, new object[] { unlisted, CancellationToken.None })) {
+            Color centre = preview.GetPixel(32, 32);
+            Check(preview.Width == 64 && centre.A == 255 && centre.R > 200 && centre.G < 90 && centre.B < 70, "A local preview draws WebP artwork");
+        }
     }
     static void HoverRaces(LauncherForm form, ThemeEntry target, ThemeEntry other, string state, string source, bool lean)
     {
@@ -132,7 +151,8 @@ static partial class PackEditionTests
         Directory.CreateDirectory(Path.Combine(tmp, "PackPreviews"));
         File.Copy(catalog, Path.Combine(tmp, "PackPreviews", "catalog.tsv"));
         string[] entry = File.ReadLines(catalog).Select(l => l.Split('\t')).Single(f => f[0] == target.Id);
-        string good = lean ? Path.Combine(state, "pack-previews", entry[2] + ".webp") : Path.Combine(Path.GetDirectoryName(catalog), entry[1]);
+        // The strip that ships with the app stands in for the server's answer.
+        string good = Path.Combine(Path.GetDirectoryName(catalog), entry[1]);
         string isolated = Path.Combine(tmp, "state"), cache = Path.Combine(isolated, "pack-previews");
         var asm = typeof(LauncherForm).Assembly;
         using (var began = new ManualResetEventSlim()) using (var release = new ManualResetEventSlim()) {

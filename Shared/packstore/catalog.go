@@ -21,9 +21,10 @@ type format struct {
 	Key, Application string
 	Aliases          []string
 }
+// A Document draws one file format. AppFiles draws every file type its app opens.
 type asset struct {
 	Blob, File, Source, Hash, Key string
-	Document                      bool
+	Document, AppFiles            bool
 }
 type pack struct {
 	ID, Name, Author, Revision string
@@ -44,16 +45,33 @@ type library struct {
 	seed, latest     snapshot
 	previewRev       string
 	previews         map[string]preview
-	bundled          bool
 }
 type view struct {
-	ID, Name, Author, Status      string
-	PreviousIDs                   []string `json:",omitempty"`
-	Icons, FileIcons              map[string]string
-	CanApps, CanFiles, HasPreview bool
+	ID, Name, Author, Status       string
+	PreviousIDs                    []string `json:",omitempty"`
+	Icons, FileIcons, AppFileIcons map[string]string
+	CanApps, CanFiles, HasPreview  bool
+	// The artwork in a pack's FileTypes folder has a strip of its own for the file type list.
+	HasFilePreview bool
+	// A file chosen in Icons, FileIcons or AppFileIcons lists one file for each other format of its item, best first.
+	Fallbacks map[string][]string `json:",omitempty"`
+	// The ArtCraft apps, sorted, whose AppFileIcons art may also draw a file type outside ProjectFileTypes.json when the
+	// app is that type's real default opener. Only art in a FileTypes folder whose published name is <App><sep>files.<ext>
+	// opts in: the app's name as identify reads it, exactly one ASCII space, underscore, dot or hyphen, then "files", with
+	// letters in any case, as in PhotoCraft-files.png, "ArtCraft Launcher_files.webp" or texturecraft.FILES.svg.
+	// allFilesNames has the exact pattern. Art named for a format, such as FileTypes/PhotoCraft-PSD.png, and a Komplett
+	// pack's app icons stay with the app's listed formats, although AppFileIcons lists them too. When an app's art comes
+	// in several files, such as a WebP and a PNG, every one must be named so. A pack that is not downloaded yet tells what
+	// its published files will give.
+	UnlistedFileIconApps []string `json:",omitempty"`
 }
 
+// The preview index lists the strip for a pack's file type artwork under the pack's ID and this suffix.
+const fileSet = "/FileTypes"
 const modernFlat = "Craft-Icons-VimiummuimiV/Modern Flat"
+
+// Komplett draws each app as a document. Its packs theme the files those apps open.
+const documentPacks = "Craft-Icons-Komplett/"
 
 var modernFlatVariants = func() []string {
 	var ids []string
@@ -71,16 +89,47 @@ var previewName = regexp.MustCompile("^[A-Za-z0-9-]+[.]webp$")
 var badPart = regexp.MustCompile("[<>:\"/\\\\|?*\\x00-\\x1f]|[. ]$")
 var excluded = regexp.MustCompile("(?i)(^|[\\W_])(uninstall|uninstaller|remove|setup|help|documentation)([\\W_]|$)")
 var craftNames = strings.Fields("AniCraft ArtCraftLauncher CADCraft CraftAnything DeckCraft DesignCraft EffectCraft FigCraft FilmCraft GridCraft LightCraft MailCraft MaterialCraft PdfCraft PhotoCraft SolidCraft SoundCraft TextureCraft VectorCraft WordCraft")
+
+// craftSpelling is the pattern of an app's name as artists write it. ArtCraft Launcher and Craft Anything may be split by
+// spaces, underscores or hyphens.
+func craftSpelling(name string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(name, "ArtCraftLauncher", "ArtCraft[[:space:]_-]*Launcher"), "CraftAnything", "Craft[[:space:]_-]*Anything")
+}
+
 var craftPatterns = func() []*regexp.Regexp {
 	var patterns []*regexp.Regexp
 	for _, name := range craftNames {
-		s := strings.ReplaceAll(strings.ReplaceAll(name, "ArtCraftLauncher", "ArtCraft[[:space:]_-]*Launcher"), "CraftAnything", "Craft[[:space:]_-]*Anything")
-		patterns = append(patterns, regexp.MustCompile("(?i)^"+s+"(?:[[:space:]_.-].*)?$"))
+		patterns = append(patterns, regexp.MustCompile("(?i)^"+craftSpelling(name)+"(?:[[:space:]_.-].*)?$"))
+	}
+	return patterns
+}()
+
+// allFilesNames has each app's pattern for the published name, without its extension, of FileTypes art that draws every
+// file type the app opens, listed or not. Ignoring case, and in any regular expression syntax, it is ^<App>[ _.-]files$.
+// <App> is the app's name as craftName reads it: the name itself, or ArtCraft[ _-]*Launcher and Craft[ _-]*Anything for
+// the two names artists may split. So exactly one ASCII space, underscore, dot or hyphen comes before the label "files".
+// A format label, as in PhotoCraft-PSD, does not match, nor does a second separator, as in "PhotoCraft - files". Windows
+// reads the catalog's source names itself and must match the same names.
+var allFilesNames = func() map[string]*regexp.Regexp {
+	patterns := map[string]*regexp.Regexp{}
+	for _, name := range craftNames {
+		patterns[name] = regexp.MustCompile("(?i)^" + craftSpelling(name) + "[ _.-]files$")
 	}
 	return patterns
 }()
 
 func checksum(b []byte) string { v := sha256.Sum256(b); return hex.EncodeToString(v[:]) }
+func craftName(stem string) string {
+	if excluded.MatchString(stem) {
+		return ""
+	}
+	for i, re := range craftPatterns {
+		if re.MatchString(stem) {
+			return craftNames[i]
+		}
+	}
+	return ""
+}
 func (l *library) identify(source string) (pack, asset, bool) {
 	parts := strings.Split(source, "/")
 	if len(parts) < 2 || len(parts) > 4 || !strings.HasPrefix(parts[0], "Craft-Icons-") || len(parts[0]) <= 12 {
@@ -94,13 +143,14 @@ func (l *library) identify(source string) (pack, asset, bool) {
 	filename := parts[len(parts)-1]
 	suffix := path.Ext(filename)
 	ext := strings.ToLower(suffix)
-	if ext != ".png" && ext != ".svg" && ext != ".ico" {
+	if ext != ".png" && ext != ".svg" && ext != ".ico" && ext != ".webp" {
 		return pack{}, asset{}, false
 	}
 	stem := strings.TrimSuffix(filename, suffix)
 	doc := parts[len(parts)-2] == "FileTypes"
 	depth := len(parts)
 	key := ""
+	appFiles := false
 	if doc {
 		depth--
 		k := "." + strings.ToLower(strings.TrimLeft(stem, "."))
@@ -110,13 +160,14 @@ func (l *library) identify(source string) (pack, asset, bool) {
 				break
 			}
 		}
-	} else if !excluded.MatchString(stem) {
-		for i, re := range craftPatterns {
-			if re.MatchString(stem) {
-				key = craftNames[i]
-				break
-			}
+		// In FileTypes, an extension names one format. Any other name that starts with an
+		// app, such as PhotoCraft-PSD, is that app's icon for every file type it opens.
+		if key == "" {
+			key = craftName(stem)
+			appFiles = true
 		}
+	} else {
+		key = craftName(stem)
 	}
 	if key == "" || depth < 2 || depth > 3 {
 		return pack{}, asset{}, false
@@ -130,8 +181,43 @@ func (l *library) identify(source string) (pack, asset, bool) {
 	if group == "Craft-Icons-OmegaDarling" {
 		group = "Craft-Icons-Zach"
 	}
-	canonical := path.Join(path.Dir(source), strings.TrimPrefix(key, ".")+ext)
-	return pack{ID: group + "/" + name, Name: name, Author: author}, asset{Source: source, Key: key, File: canonical, Document: doc}, true
+	file := strings.TrimPrefix(key, ".")
+	if appFiles {
+		file += "-files"
+	}
+	canonical := path.Join(path.Dir(source), file+ext)
+	return pack{ID: group + "/" + name, Name: name, Author: author}, asset{Source: source, Key: key, File: canonical, Document: doc, AppFiles: appFiles}, true
+}
+
+// appLevel reports whether list puts a file in AppFileIcons: an app's art in FileTypes, or an app icon of a Komplett pack.
+func (a asset) appLevel(documents bool) bool { return a.AppFiles || (documents && !a.Document) }
+
+// allFiles reports whether this file opts its app in: art for the app in FileTypes, published under the name
+// allFilesNames gives, such as PhotoCraft-files.png.
+func (a asset) allFiles() bool {
+	name := path.Base(a.Source)
+	re, ok := allFilesNames[a.Key]
+	return a.AppFiles && ok && re.MatchString(strings.TrimSuffix(name, path.Ext(name)))
+}
+
+// unlistedFileIconApps lists, sorted, the apps whose app-level file art opts in (see allFiles) in every file, whatever
+// its format. Files left out of AppFileIcons, such as a second PNG of two merged folders, count too.
+func unlistedFileIconApps(assets []asset, documents bool) []string {
+	explicit := map[string]bool{}
+	for _, a := range assets {
+		if a.appLevel(documents) {
+			all, seen := explicit[a.Key]
+			explicit[a.Key] = a.allFiles() && (all || !seen)
+		}
+	}
+	var apps []string
+	for app, all := range explicit {
+		if all {
+			apps = append(apps, app)
+		}
+	}
+	sort.Strings(apps)
+	return apps
 }
 func lines(b []byte) []string {
 	return strings.Split(strings.TrimSpace(strings.ReplaceAll(string(b), "\r\n", "\n")), "\n")
@@ -224,11 +310,6 @@ func openLibrary(resources, state string) (*library, error) {
 			l.previews = p
 		}
 	}
-	edition, err := os.ReadFile(filepath.Join(folder, "edition"))
-	if err != nil {
-		return nil, err
-	}
-	l.bundled = strings.TrimSpace(string(edition)) == "Bundled"
 	return l, nil
 }
 
@@ -240,7 +321,7 @@ func (l *library) visiblePacks(packs map[string]pack) map[string]pack {
 	if !merged {
 		return packs
 	}
-	// Keep the seed intact: its original paths identify the bundled files.
+	// Keep the seed intact. Its entries name the files as they are published.
 	visible := maps.Clone(packs)
 	visible[modernFlat] = flat
 	for _, id := range modernFlatVariants {
@@ -336,9 +417,6 @@ func (l *library) localArtwork(target pack, previous []string, saved map[string]
 		if p, ok := saved[id]; ok {
 			copies = append(copies, localPack{p, filepath.Join(l.state, "downloads", p.signature()), "Downloaded"})
 		}
-		if p, ok := l.seed.Packs[id]; l.bundled && ok {
-			copies = append(copies, localPack{p, filepath.Join(l.resources, "Packs"), "Included"})
-		}
 		for _, copy := range copies {
 			if target.sameArtwork(copy.pack) {
 				return copy
@@ -355,11 +433,6 @@ func (l *library) localArtwork(target pack, previous []string, saved map[string]
 func (l *library) list() []view {
 	saved := l.acquired()
 	available := map[string]pack{}
-	if l.bundled {
-		for id, p := range l.seed.Packs {
-			available[id] = p
-		}
-	}
 	for id, p := range saved {
 		available[id] = p
 	}
@@ -371,41 +444,66 @@ func (l *library) list() []view {
 		if l.currentID(id) != id {
 			continue
 		}
-		v := view{ID: id, Name: p.Name, Author: p.Author, Status: "Download", Icons: map[string]string{}, FileIcons: map[string]string{}}
+		v := view{ID: id, Name: p.Name, Author: p.Author, Status: "Download", Icons: map[string]string{}, FileIcons: map[string]string{}, AppFileIcons: map[string]string{}}
 		if _, merged := l.latest.Packs[modernFlat]; id == modernFlat && merged {
 			v.PreviousIDs = modernFlatVariants
 		}
 		_, v.HasPreview = l.previews[id]
+		_, v.HasFilePreview = l.previews[id+fileSet]
+		// A pack is listed for apps when it draws app icons and for files when it draws file artwork.
+		documents := strings.HasPrefix(id, documentPacks)
 		for _, a := range p.Assets {
-			if a.Document {
+			if a.Document || documents {
 				v.CanFiles = true
 			} else {
 				v.CanApps = true
-				for _, f := range l.formats {
-					if a.Key == f.Application {
-						v.CanFiles = true
-						break
-					}
-				}
 			}
 		}
 		local := l.localArtwork(p, v.PreviousIDs, saved)
 		if local.root != "" {
 			v.Status = local.status
-			// Prefer PNG when an artist supplies several formats.
-			for _, ext := range []string{".ico", ".svg", ".png"} {
-				for _, a := range local.Assets {
-					if path.Ext(a.File) != ext {
-						continue
-					}
-					files := v.Icons
-					if a.Document {
-						files = v.FileIcons
-					}
-					files[a.Key] = filepath.Join(local.root, filepath.FromSlash(a.File))
+			// Prefer WebP, then PNG, then SVG, then ICO when an artist supplies several formats.
+			rank := map[string]int{".webp": 0, ".png": 1, ".svg": 2, ".ico": 3}
+			assets := slices.Clone(local.Assets)
+			// Of two files in one format, the one listed last wins, as before.
+			slices.Reverse(assets)
+			slices.SortStableFunc(assets, func(a, b asset) int { return rank[path.Ext(a.File)] - rank[path.Ext(b.File)] })
+			for _, a := range assets {
+				if _, ok := rank[path.Ext(a.File)]; !ok {
+					continue
 				}
+				files := v.Icons
+				if a.appLevel(documents) {
+					files = v.AppFileIcons
+				} else if a.Document {
+					files = v.FileIcons
+				}
+				// The first file of an item goes into its map. One file of each other format follows it, best first.
+				file := filepath.Join(local.root, filepath.FromSlash(a.File))
+				chosen, taken := files[a.Key]
+				if !taken {
+					files[a.Key] = file
+					continue
+				}
+				// A second file in a format the key already has is left out, as before. Two packs merged
+				// under one name, or a Komplett app icon beside its app's file art, can share a key.
+				sameFormat := func(other string) bool { return filepath.Ext(other) == filepath.Ext(file) }
+				if sameFormat(chosen) || slices.ContainsFunc(v.Fallbacks[chosen], sameFormat) {
+					continue
+				}
+				if v.Fallbacks == nil {
+					v.Fallbacks = map[string][]string{}
+				}
+				v.Fallbacks[chosen] = append(v.Fallbacks[chosen], file)
 			}
 		}
+		// The opt-in is a file's published name, which a download's signature leaves out. So the catalog answers, unless
+		// the download is older: AppFileIcons then lists the downloaded files, under the names they were published with.
+		named := p.Assets
+		if v.Status == "Update available" {
+			named = local.Assets
+		}
+		v.UnlistedFileIconApps = unlistedFileIconApps(named, documents)
 		result = append(result, v)
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })

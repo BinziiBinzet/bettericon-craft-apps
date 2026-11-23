@@ -2,12 +2,18 @@
 
 let packAnchor, hoverRow, hoverTimer, hoverToken = 0, pointerPosition;
 
+// The default pack keeps each app's own icons. In the file type list it keeps each file type's own.
+function packTitle(pack, group) {
+  return group === "files" && pack.default ? "Original file icons" : pack.title;
+}
 function setPackButtons(state) {
-  for (const [key, pack] of [["packs", state.pack], ["filePacks", state.filePack]]) {
-    const button = el(key);
+  for (const [key, pack, group] of [["packs", state.pack, "apps"], ["filePacks", state.filePack, "files"]]) {
+    const button = el(key), label = document.createElement("span");
     button.value = pack.id;
     const row = state.packs.find(item => item.id === pack.id) || pack;
-    button.textContent = row.title + (row.status ? "  ·  " + row.status : "");
+    label.textContent = packTitle(row, group) + (row.status ? "  ·  " + row.status : "");
+    button.title = label.textContent;
+    button.replaceChildren(label);
   }
 }
 function clearPackHover() {
@@ -35,7 +41,7 @@ function requestPackPreview(row) {
   hoverRow = row;
   if (row.dataset.preview !== "true") return;
   const token = hoverToken;
-  hoverTimer = setTimeout(() => send("previewPack", { id: row.dataset.id, token }), 180);
+  hoverTimer = setTimeout(() => send("previewPack", { id: row.dataset.id, token, group: row.dataset.group }), 180);
 }
 function packPreview(id, token, url) {
   if (token !== hoverToken || !hoverRow || hoverRow.dataset.id !== id || el("packOptions").hidden) return;
@@ -71,8 +77,10 @@ function openPackPicker(group) {
     row.setAttribute("role", "option");
     row.setAttribute("aria-selected", String(anchor.value === pack.id));
     row.dataset.id = pack.id;
-    row.dataset.preview = String(pack.hasPreview);
-    row.append(document.createTextNode(pack.title));
+    // The file type list previews a pack's file artwork, not its app icons.
+    row.dataset.group = group;
+    row.dataset.preview = String(group === "files" ? pack.hasFilePreview : pack.hasPreview);
+    row.append(document.createTextNode(packTitle(pack, group)));
     const flag = document.createElement("span");
     flag.textContent = pack.status;
     row.append(flag);
@@ -83,7 +91,7 @@ function openPackPicker(group) {
     return row;
   }));
   if (!list.children.length) return;
-  list.setAttribute("aria-label", group === "files" ? "Project file icon packs" : "App icon packs");
+  list.setAttribute("aria-label", group === "files" ? "File type icon packs" : "App icon packs");
   const pos = anchor.getBoundingClientRect();
   const below = innerHeight - pos.bottom - 8, above = pos.top - 8, up = below < 160 && above > below;
   const width = Math.min(Math.max(260, pos.width), 480, innerWidth - 12);
@@ -139,7 +147,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
   document.addEventListener("pointerdown", e => {
-    if (!list.hidden && !list.contains(e.target) && e.target !== packAnchor) closePackPicker();
+    if (!list.hidden && !list.contains(e.target) && !packAnchor.contains(e.target)) closePackPicker();
   });
   window.addEventListener("resize", () => closePackPicker());
 });

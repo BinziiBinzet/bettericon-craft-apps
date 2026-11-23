@@ -15,27 +15,71 @@ function Test-PackPathPart([string]$Part) {
     $Part.Length -gt 0 -and $Part.Length -le 120 -and $Part -notmatch '[<>:"/\\|?*\x00-\x1f]|[. ]$|^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\.|$)'
 }
 
+function Test-UnlistedFileArtName([string]$Stem, [string]$App) {
+    # Whether FileTypes art for an app opts in to file types outside the index: the stem of its published file name is the
+    # app's name as the catalog reads it, then exactly one ASCII space, underscore, dot or hyphen, then "files". This is the
+    # shared helper's allFilesNames, ^<App>[ _.-]files$ ignoring case, with ArtCraft[ _-]*Launcher and Craft[ _-]*Anything
+    # for the two names artists may split. Letters match as Go folds them, which also takes the Kelvin sign for k and the long
+    # s for s and nothing else beyond ASCII. Never \s: in .NET it also takes Unicode spaces, which the helper refuses. The
+    # personal-pack import has the same test (PackLibrary.UnlistedFileArtName).
+    if (!$Stem -or $App -cnotin $script:Applications) { return $false }
+    $spelling = if ($App -ceq 'ArtCraftLauncher') { 'artcraft[ _-]*launcher' } elseif ($App -ceq 'CraftAnything') { 'craft[ _-]*anything' } else { [regex]::Escape($App.ToLowerInvariant()) }
+    [regex]::IsMatch((Get-FoldedName $Stem), '^' + $spelling + '[ _.-]files\z', [Text.RegularExpressions.RegexOptions]::CultureInvariant)
+}
+
+function Get-SortedNames([string[]]$Names) {
+    # Sorted by character code, as Go's sort.Strings sorts the helper's lists.
+    $sorted = [string[]]@($Names | Where-Object { $_ })
+    [Array]::Sort($sorted, [StringComparer]::Ordinal)
+    return ,$sorted
+}
+
+function Get-UnlistedFileIconApps($Assets, [bool]$Documents) {
+    # The helper's unlistedFileIconApps: sorted, the apps whose app-level file art opts in in every file, whatever its
+    # format. App-level art is an app's art in FileTypes, or, in a Komplett pack, an app icon. Every such file must be in
+    # FileTypes and published under a name Test-UnlistedFileArtName accepts, so a Komplett app icon, art normalized to
+    # <App>-files from a format-labelled source such as PhotoCraft-PSD.png, or one twin of that kind, keeps the app out.
+    $explicit = @{}
+    foreach ($asset in @($Assets)) {
+        if (!($asset.AppFiles -or ($Documents -and !$asset.Document))) { continue }
+        $file = $asset.Source.Substring($asset.Source.LastIndexOf('/') + 1)
+        $dot = $file.LastIndexOf('.')
+        $stem = if ($dot -ge 0) { $file.Substring(0, $dot) } else { $file }
+        $named = [bool]$asset.AppFiles -and (Test-UnlistedFileArtName $stem $asset.App)
+        $explicit[$asset.App] = $named -and (!$explicit.ContainsKey($asset.App) -or $explicit[$asset.App])
+    }
+    Get-SortedNames @($explicit.Keys | Where-Object { $explicit[$_] })
+}
+
 function Get-CatalogAsset([string]$Path) {
     $p = $Path.Split('/')
     if ($p.Length -lt 2 -or $p.Length -gt 4 -or !$p[0].StartsWith('Craft-Icons-') -or $p[0].Length -le 12) { return }
     foreach ($part in $p) { if (!(Test-PackPathPart $part)) { return } }
     $ext = [IO.Path]::GetExtension($p[-1]).ToLowerInvariant()
-    if ($ext -notin '.png','.svg','.ico') { return }
+    if ($ext -notin '.png','.svg','.ico','.webp') { return }
     $base = [IO.Path]::GetFileNameWithoutExtension($p[-1])
     $doc = $p[-2] -ceq 'FileTypes'
     $depth = if ($doc) { $p.Length - 1 } else { $p.Length }
     if ($depth -notin 2,3) { return }
+    # In FileTypes, an extension names one format. Any other name that starts with an
+    # app, such as PhotoCraft-PSD, is that app's icon for every file type it opens.
+    $appFiles = $false
     if ($doc) {
         $app = $base.TrimStart('.').ToLowerInvariant()
-        if ('.' + $app -notin $script:ProjectExtensions) { return }
+        if ('.' + $app -notin $script:ProjectExtensions) {
+            $app = Get-AppName $base -Icon
+            if (!$app) { return }
+            $appFiles = $true
+        }
     } else {
         $app = Get-AppName $base -Icon
         if (!$app) { return }
     }
     $name = if ($depth -eq 2) { 'Root' } else { $p[1] }
     $folder = $Path.Substring(0,$Path.LastIndexOf('/') + 1)
-    [pscustomobject]@{ Group=$p[0]; Name=$name; File=$(if ($doc) { 'FileTypes/' + $app + $ext } else { $app + $ext });
-        Canonical=$folder + $app + $ext; App=$app; Document=$doc }
+    $stem = if ($appFiles) { $app + '-files' } else { $app }
+    [pscustomobject]@{ Group=$p[0]; Name=$name; File=$(if ($doc) { 'FileTypes/' + $stem + $ext } else { $stem + $ext });
+        Canonical=$folder + $stem + $ext; App=$app; Document=$doc; AppFiles=$appFiles }
 }
 
 function ConvertTo-PackCatalogRows($Entries) {
@@ -65,12 +109,13 @@ function Read-PackSnapshot([string[]]$Lines, [string]$State) {
         $id = $group + '/' + $asset.Name
         if (!$packs.Contains($id)) {
             $packs[$id] = [pscustomobject]@{ Id=$id; Name=$asset.Name; Author=$asset.Group.Substring(12); Pack=$group;
-                Folder=$asset.Group; Revision=$revision; Signature=''; Assets=[ordered]@{}; IconCount=0; Path=''; Status='Download';
-                Downloaded=$false; UpdateAvailable=$false; FileIcons=@{}; Rows=[Collections.Generic.List[string]]::new() }
+                Folder=$asset.Group; Revision=$revision; Signature=''; Assets=[ordered]@{}; IconCount=0; FileIconCount=0; Path=''; Status='Download';
+                Downloaded=$false; UpdateAvailable=$false; PublishedFileIconCount=0; FileIcons=@{}; AppFileIcons=@{}; FileIconChoices=@{}; AppFileIconChoices=@{};
+                UnlistedFileIconApps=[string[]]@(); Rows=[Collections.Generic.List[string]]::new() }
         }
         $pack = $packs[$id]
         if ($pack.Assets.Contains($asset.File)) { throw 'Duplicate artwork in the pack catalog.' }
-        $pack.Assets[$asset.File] = [pscustomobject]@{ File=$asset.File; Source=$f[2]; Blob=$f[0]; Hash=$f[3]; Document=$asset.Document; App=$asset.App }
+        $pack.Assets[$asset.File] = [pscustomobject]@{ File=$asset.File; Source=$f[2]; Blob=$f[0]; Hash=$f[3]; Document=$asset.Document; App=$asset.App; AppFiles=$asset.AppFiles }
         $pack.Rows.Add($line)
     }
     foreach ($pack in $packs.Values) {
@@ -82,14 +127,34 @@ function Read-PackSnapshot([string[]]$Lines, [string]$State) {
         $pack.Path = Join-Path (Join-Path (Join-Path (Join-Path $State 'downloads') $pack.Signature) $pack.Folder) $pack.Name
         $pack.IconCount = @($pack.Assets.Values | Where-Object { !$_.Document } | ForEach-Object App | Sort-Object -Unique).Count
         Set-PackFileIcons $pack
+        # Known before a download, so a pack can be listed as file artwork right away.
+        $pack.FileIconCount = $pack.FileIcons.Count + $pack.AppFileIcons.Count
+        # From these rows' source names, the third column: the catalog's answer, or a download's own from its record.
+        $pack.UnlistedFileIconApps = Get-UnlistedFileIconApps @($pack.Assets.Values) ($pack.Pack -ceq 'Craft-Icons-Komplett')
     }
     return $packs
 }
 
 function Set-PackFileIcons($Pack) {
-    $Pack.FileIcons = @{}
+    # Every file of an item is a candidate, in the order SVG, ICO, WebP, PNG. FileIcons and AppFileIcons name the first,
+    # so answers before a download do not depend on row order; Resolve-PackFileArtwork picks the usable one afterwards.
+    $rank = @{ '.svg' = 0; '.ico' = 1; '.webp' = 2; '.png' = 3 }
+    $formats = @{}; $applications = @{}
     foreach ($asset in $Pack.Assets.Values) {
-        if ($asset.Document) { $Pack.FileIcons['.' + $asset.App] = Join-Path $Pack.Path $asset.File }
+        if (!$asset.Document) { continue }
+        $path = Join-Path $Pack.Path $asset.File
+        $table = if ($asset.AppFiles) { $applications } else { $formats }
+        $key = if ($asset.AppFiles) { $asset.App } else { '.' + $asset.App }
+        if (!$table.ContainsKey($key)) { $table[$key] = [Collections.Generic.List[string]]::new() }
+        $table[$key].Add($path)
+    }
+    $Pack.FileIcons = @{}; $Pack.AppFileIcons = @{}; $Pack.FileIconChoices = @{}; $Pack.AppFileIconChoices = @{}
+    foreach ($pair in @(@($formats, $Pack.FileIcons, $Pack.FileIconChoices), @($applications, $Pack.AppFileIcons, $Pack.AppFileIconChoices))) {
+        foreach ($key in @($pair[0].Keys)) {
+            $ordered = [string[]]@($pair[0][$key] | Sort-Object { $rank[[IO.Path]::GetExtension($_).ToLowerInvariant()] }, { $_ })
+            $pair[2][$key] = $ordered
+            $pair[1][$key] = $ordered[0]
+        }
     }
 }
 

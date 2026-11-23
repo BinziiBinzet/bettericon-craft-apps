@@ -5,11 +5,25 @@ if [[ "$1" != --private-session ]]; then
     fixture=$(mktemp -d)
     mkdir -p "$fixture/home" "$fixture/run" "$fixture/settings" "$fixture/state" "$fixture/system/applications"
     chmod 700 "$fixture/run"
+    # The icon theme decides which file icon GTK draws. Without this GTK 3 takes the host's /etc/gtk-3.0/settings.ini.
+    mkdir -p "$fixture/settings/gtk-3.0" "$fixture/settings/gtk-4.0"
+    printf '[Settings]\ngtk-icon-theme-name=Adwaita\n' | tee "$fixture/settings/gtk-3.0/settings.ini" > "$fixture/settings/gtk-4.0/settings.ini"
     touch "$fixture/home/.bettericon-test-home"
     echo "Test files and logs: $fixture"
     export HOME="$fixture/home" XDG_RUNTIME_DIR="$fixture/run" XDG_DATA_HOME="$fixture/home/.local/share"
     export XDG_CONFIG_HOME="$fixture/settings" XDG_CACHE_HOME="$fixture/home/.cache" XDG_STATE_HOME="$fixture/state"
-    export XDG_DATA_DIRS="$fixture/system:/usr/local/share:/usr/share" GSETTINGS_BACKEND=memory
+    # The checks count ArtCraft apps, so the machine's own desktop entries stay out of the session.
+    # Its themes, icons, schemas and file types are still used, through links to everything else.
+    data="$fixture/system"
+    for shared in /usr/local/share /usr/share; do
+        mirror="$fixture/machine$(tr / - <<< "$shared")"
+        mkdir -p "$mirror"
+        for item in "$shared"/*; do
+            if [[ -e $item && $(basename "$item") != applications ]]; then ln -s "$item" "$mirror/"; fi
+        done
+        data="$data:$mirror"
+    done
+    export XDG_DATA_DIRS="$data" GSETTINGS_BACKEND=memory
     export XDG_CURRENT_DESKTOP=XFCE XDG_SESSION_TYPE=x11 GDK_BACKEND=x11
     unset WAYLAND_DISPLAY DBUS_SESSION_BUS_ADDRESS AT_SPI_BUS_ADDRESS
     if [[ "${2:-}" == --mutter-resize ]]; then
@@ -39,6 +53,9 @@ trayer --edge top --align right --widthtype request --height 26 > "$fixture/pane
 panel=$!
 trap 'kill "$panel" "$wm" 2>/dev/null || true' EXIT
 "$package/install.sh" --no-start
+# The installer notes an upgrade only when it replaces an earlier installation; a first installation offers the packs.
+first_marker=no
+if [[ -e "$XDG_DATA_HOME/bettericon-desktop/upgraded" ]]; then first_marker=yes; fi
 desktop-file-validate "$XDG_DATA_HOME/applications/com.omegadarling.BetterIcon.desktop"
 desktop-file-validate "$XDG_CONFIG_HOME/autostart/com.omegadarling.BetterIcon.desktop"
 bin="$HOME/.local/bin/bettericon"
@@ -89,8 +106,22 @@ if kill -0 "$pid" 2>/dev/null; then
 fi
 wait "$pid"
 echo 'PASS the Exit BetterIcon tray option closes the installed application'
+mkdir -p "$root/versions/0.0.0-earlier/Packs"
+touch "$root/versions/0.0.0-earlier/Packs/artwork.png"
 "$package/install.sh" --no-start
-"$package/uninstall.sh"
+[[ ! -e "$root/versions/0.0.0-earlier" && "$(find "$root/versions" -mindepth 1 -maxdepth 1 | wc -l)" == 1 && -d "$(readlink -f "$root/current")/desktop" ]]
+echo 'PASS installing removes the folders of earlier versions and keeps the current one'
+marker_title='the installer leaves its upgrade marker only when it replaces an earlier installation, so a first installation is offered the packs and an upgrade is not'
+if [[ $first_marker == no && -f "$root/upgraded" ]]; then
+    echo "PASS $marker_title"
+else
+    echo "FAIL $marker_title; after the first installation: $first_marker, after the second: $([[ -f "$root/upgraded" ]] && echo yes || echo no)"
+    [[ "${BETTERICON_TEST_PROBE:-}" == 1 ]] || exit 1
+fi
+uninstalled=$("$package/uninstall.sh")
+echo "$uninstalled"
 [[ ! -e "$bin" && ! -e "$root" && ! -e "$XDG_CONFIG_HOME/autostart/com.omegadarling.BetterIcon.desktop" ]]
 [[ -f "$XDG_CONFIG_HOME/bettericon/preferences.json" && -d "$XDG_DATA_HOME/bettericon/personal" ]]
 echo 'PASS installed application quits, reinstalls and uninstalls while preserving preferences and personal artwork'
+grep -q 'App icons left applied keep the pack.s icons but no longer follow app updates' <<< "$uninstalled"
+echo 'PASS the uninstall message says that app icons left applied no longer follow app updates'

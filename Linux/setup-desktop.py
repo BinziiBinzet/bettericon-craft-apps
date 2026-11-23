@@ -65,6 +65,27 @@ def stop():
         raise ValueError("Close the active BetterIcon dialog and run the installer again.")
 
 
+def webp_warning(python):
+    """Warn, without stopping the installation, when this computer cannot decode WebP pack artwork: no libwebp that
+    ctypes can load and no GdkPixbuf WebP loader. Packs with PNG artwork work either way."""
+    probe = ("import ctypes, ctypes.util, gi\n"
+             "gi.require_version('GdkPixbuf', '2.0')\n"
+             "from gi.repository import GdkPixbuf\n"
+             "def lib():\n"
+             "    for name in ('libwebp.so.7', 'libwebp.so.6', ctypes.util.find_library('webp')):\n"
+             "        try:\n"
+             "            if name and ctypes.CDLL(name).WebPDecodeRGBAInto:\n"
+             "                return True\n"
+             "        except (OSError, AttributeError):\n"
+             "            pass\n"
+             "    return False\n"
+             "raise SystemExit(0 if lib() or any(f.get_name() == 'webp' for f in GdkPixbuf.Pixbuf.get_formats()) else 3)\n")
+    done = subprocess.run([python, "-c", probe], capture_output=True)
+    if done.returncode:
+        print("Warning: this computer can't read WebP artwork, so icons a pack has only as WebP are left out. "
+              "Install libwebp or a GdkPixbuf WebP loader.", file=sys.stderr)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--no-start", action="store_true")
@@ -84,7 +105,11 @@ def main():
         for file in (DESKTOP, AUTOSTART, BIN):
             file.unlink(missing_ok=True)
         shutil.rmtree(ROOT)
-        print("BetterIcon was uninstalled. Your packs, desktop icon backups, and settings are preserved.")
+        print("BetterIcon was uninstalled. Your packs, desktop icon backups, applied file icons and settings are preserved. "
+              "File icons left applied also keep BetterIcon's registration of their file types; to remove both, "
+              "install BetterIcon again and restore the original file icons. App icons left applied keep the pack's "
+              "icons but no longer follow app updates, so a package update can leave an app's menu entry out of date; "
+              "to avoid that, install BetterIcon again and restore the app defaults.")
         return
     payload = PACKAGE / "app"
     inventory = (PACKAGE / "SHA256SUMS").read_text().splitlines()
@@ -98,8 +123,13 @@ def main():
     import gi
     for ns, version in (("Gtk","3.0"), ("GdkX11","3.0"), ("WebKit2","4.1")):
         gi.require_version(ns, version)
+    # An installation this one replaces makes it an upgrade, which BetterIcon reads at its first start: a new
+    # installation offers to download the icon packs, an upgrade never does. Earlier versions' folders go below.
+    upgrade = (ROOT / "installed-by-bettericon").is_file()
     ROOT.mkdir(parents=True, exist_ok=True)
     (ROOT / "installed-by-bettericon").touch()
+    if upgrade:
+        (ROOT / "upgraded").touch()
     env = ROOT / "venv"
     if not (env / "bin/python").is_file():
         venv.EnvBuilder(with_pip=False, system_site_packages=True).create(env)
@@ -116,6 +146,11 @@ def main():
             staged.rename(dest)
     stop()
     link(ROOT / "current", dest)
+    # Earlier versions could carry every pack and are large. Nothing reads them once this one is current:
+    # settings, personal packs, downloaded packs and applied icons live outside the versions folder.
+    for earlier in versions.iterdir():
+        if earlier != dest and earlier.is_dir() and not earlier.is_symlink():
+            shutil.rmtree(earlier, ignore_errors=True)
     write(ROOT / "launcher", (payload / "desktop/launcher").read_bytes(), 0o755)
     link(BIN, ROOT / "launcher")
     icon = ROOT / "current/Brand/betterIcon_icon_sage_dark.png"
@@ -124,6 +159,7 @@ def main():
     write(DESKTOP, entry.encode(), 0o644)
     write(AUTOSTART, (header + "Exec=" + quote_exec(BIN) + " --tray\nIcon=" + str(icon) + "\nTerminal=false\n").encode(), 0o644)
     shutil.copy2(PACKAGE / "setup-desktop.py", ROOT / "uninstall.py")
+    webp_warning(env / "bin/python")
     if not options.no_start:
         subprocess.Popen([BIN, "--tray"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
     print(f"Installed BetterIcon {version} for {Path.home().name}. Open BetterIcon for ArtCraft from Applications.")

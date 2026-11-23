@@ -1,5 +1,47 @@
 # Windows installer changelog
 
+## 1.28.0 - 2026-11-20
+
+- Manage Icons has two pickers side by side: **App icon pack** and **File type icon pack**. One refresh button updates both lists.
+- File type packs now cover common formats that an ArtCraft app opens, such as PDF, PSD, Word and Excel files, as well as the ArtCraft project formats. A file type changes only when its ArtCraft app is the default app for it.
+- A pack can draw one icon for a format or one icon for every file type an app opens. Komplett's five packs and the file type sets in Mike22's three packs appear in the file type list.
+- **Apply file icons** and **Restore file icons** sit beside the app buttons and replace the File icons dialog.
+- **Remove app pack** and **Remove file pack** each remove the pack chosen in their own list. **Restore all defaults** is now **Restore app defaults**.
+- A listed file type given to an ArtCraft app through **Open with** takes the pack's icon too. One outside the list does only with a pack's `<App>-files` art.
+- There is one installer. It carries the pack list and a preview of each pack, and a pack downloads when you choose it. The Bundled edition is retired.
+- Once it has installed, Setup removes the folders of earlier BetterIcon versions, which could each hold every pack.
+- After an upgrade from an edition that carried every pack, BetterIcon downloads the packs you had chosen again at the first start, so both pickers open as you left them. Without a connection it keeps your choices and tries again at the next start or pack refresh.
+- A pack you downloaded before it gained file type icons is listed as a file type pack straight away, marked **Update available**. Choosing it there downloads the update.
+- The file type list previews a pack's file icons. A pack with both kinds of artwork showed its app icons there.
+- Packs are listed by author, then by name. ArtCraft Launcher leads the Launcher and each pack's icons.
+- Personal packs accept WebP artwork and keep it as PNG.
+- Packs may carry WebP artwork. It is preferred over a PNG of the same icon and needs Windows' WebP Image Extensions, or BetterIcon's own WebP support where Windows has none. Personal-pack WebP import now uses Windows' decoder, which keeps transparency that the previous decoder lost.
+- A WebP icon that can't be read gives way to its PNG twin. Without one, the icon is left out and the status line names it with the reason. When the reason is that this PC can't read WebP, **Install WebP support** appears beside it and in the tray menu: a download of about 110-170 KB, checked against its published SHA-256, after which the icons load and apply without a restart. An import or a chosen icon whose WebP can't be read offers it too.
+- Shared shortcuts read WebP through Windows' own decoder only: BetterIcon running as administrator never loads WebP support installed for one account. Without Windows' WebP Image Extensions, shared shortcuts use the PNG twin, as their review shows.
+- Setup offers **Optional downloads** after it installs, each with its size: WebP support on a PC that can't read WebP, **All app icon packs** and **All file type icon packs**. BetterIcon downloads them once Setup has finished and offers again whatever did not arrive. A silent install downloads only what `/DOWNLOADS=` asks for.
+- The size slider is now **Launcher icon size**. It sizes BetterIcon's own icons and leaves Windows icon sizes alone.
+- Button rows in Manage Icons take two rows in a narrow window so every label stays complete.
+- The app takes its colors from the BetterIcon app icon you choose. Slate Dark gives a dark slate window, Clay Light a light clay one. Text and buttons are adjusted to stay readable.
+- Two new app icons, each in Dark and Light: **Grayscale** and **High contrast** (black and white).
+- Clicking an app in the Launcher makes its icon slightly smaller and darker until you release the mouse button.
+- The Launcher keeps the pack you last applied. Choosing a pack in Manage Icons previews it there, and the Launcher changes when you choose **Apply icons**.
+- An app icon pack no longer supplies file icons by itself. File icons applied earlier stay in place and can still be restored.
+- BetterIcon puts your icons back after an app update, repair or reinstall, and after an ArtCraft Launcher update. Your own shortcuts are fixed by themselves. Shared shortcuts are fixed by themselves where Windows grants administrator access without asking; everywhere else they are one click away, with one administrator approval.
+- A shortcut that a newly installed app or an update adds gets the icon of the pack you applied last, with a backup, so **Restore app defaults** still returns it exactly. Shortcuts a person makes, apps you set back to their own icon one at a time, and apps the pack has no artwork for keep their own icon.
+- **Apply icons** and **Restore app defaults** work after an app update instead of reporting a conflict. Restore returns the shortcut the update installed.
+- BetterIcon opens at login, hidden in the tray. Turn this off with **Open at login** in the tray menu.
+- File icons of an app installed for your account only come back after its update.
+- Only administrators can change BetterIcon's shared backup folder, and Restore checks that a saved shortcut still starts the same program before writing it back.
+- After **Restore app defaults** or restoring one app, a shortcut an update brings back keeps the app's own icon, also after an upgrade from 1.27. Taskbar pins change only through **Apply icons** and **Restore app defaults**, and a shortcut you make is never taken for one an update renamed.
+- File icons of apps installed for all users, and of types given to an app through **Open with**, are left as you set them after Apply.
+- Icons another account put into BetterIcon's shared folder before it was protected are moved aside and never used. The shared action always ends with a word on the status line, and a check that waits for a shortcut still being written waits longer each time.
+- File types outside BetterIcon's list change on their own only when a pack's author names the art `FileTypes/<App>-files.<ext>`, such as `PhotoCraft-files.png`, and only where that app's own file class is their default and opens no listed type. The class changes as a whole, and the review lists all its file types, marked **(other file types)**. Art named for a format, such as Mike22's `PhotoCraft-PSD.png`, and Komplett's app icons never reach such a class. A type outside the list that shares its file class with a listed type changes with that class, under the list's rules, as before. Before this, a type given to an app through **Open with** that the list does not name took the pack's art for all of that app's files, whatever its name.
+- Personal packs keep `<App>-files` art as an item of its own through import, edits, **Export ZIP** and a reimport.
+- **Restore file icons** and the re-apply after app updates cover those classes. The re-apply puts the art back only while the class still qualifies: a class another program took over, one that now also opens a listed type, or one whose app was uninstalled is reported and left alone.
+- The registry part of a file icon review takes about 0.4 s on the PC where it was measured. Before, every review after the first one in a session took about 3.4 s there, because listing every file type through Windows' merged view of the registry slows down after the first time. **Apply file icons** first prepares the pack's artwork, which took a further 1 to 2 s there; **Restore file icons** has no such step.
+- App names in pack files and in shortcut names are read as the Mac and Linux apps read them: a no-break space or a dotted capital I no longer passes for a space or an i.
+- A download Setup handed over that fails while the window shows the Launcher is told in a balloon, as it is while BetterIcon waits in the tray.
+
 ## 1.27.0 - 2026-11-19
 
 - Open a launcher app with one click. Hovering or selecting with the keyboard lightens the icon artwork and preserves its transparent edges.

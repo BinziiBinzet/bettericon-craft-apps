@@ -81,7 +81,7 @@ BetterIcon recognizes the official ArtCraft apps, including ArtCraft Launcher, F
 ### macOS
 
 - Open the BetterIcon disk image and drag **BetterIcon** into Applications. Open it once to add the menu bar icon.
-- In **Manage Icons**, choose a pack and click **Apply icons…**. Review the application paths before applying. **Restore all defaults…** restores their original icons. [Mac guide](macOS/README.md)
+- In **Manage Icons**, choose an app icon pack and click **Apply icons…**. Review the application paths before applying. **Restore app defaults…** restores their original icons. Choose a file type icon pack beside it to change file icons. [Mac guide](macOS/README.md)
 
 ## Contributing & Forking
 

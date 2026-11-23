@@ -30,7 +30,7 @@ namespace BetterIcon.Tray
         object accepted;
         public event EventHandler PackChosen;
         public PackPicker() { rows = new Rows(this); }
-        public void EnablePreviews(PackPreviewStore store) { hover = new PackHoverPreview(store, this); }
+        public void EnablePreviews(PackPreviewStore store, bool fileList = false) { hover = new PackHoverPreview(store, this, fileList); }
         sealed class Rows : NativeWindow
         {
             readonly PackPicker picker;
@@ -87,6 +87,10 @@ namespace BetterIcon.Tray
         protected override void OnDropDown(EventArgs e)
         {
             browsing = true;
+            // Two pickers share the row, so let the list grow to show each full pack name.
+            int widest = Width;
+            foreach (object item in Items) widest = Math.Max(widest, TextRenderer.MeasureText(item.ToString(), Font).Width + SystemInformation.VerticalScrollBarWidth + 12);
+            if (DropDownWidth != widest) DropDownWidth = widest;
             var info = new ComboInfo { Size = Marshal.SizeOf(typeof(ComboInfo)) };
             if (GetComboBoxInfo(Handle, ref info) && info.List != rows.Handle) {
                 if (rows.Handle != IntPtr.Zero) rows.ReleaseHandle();
@@ -173,7 +177,10 @@ namespace BetterIcon.Tray
         readonly ProgressBar loadingProgress = new ProgressBar();
         Task packLoadTask = Task.FromResult(0);
         ThemeEntry loadingTheme;
-        string renderedThemeId;
+        object loadingFileTheme;
+        string renderedThemeId, renderedFileThemeId;
+        // The chosen app pack while it is not on the computer. The list shows another pack until it is downloaded again.
+        string wantedThemeId;
 
         void BuildLoadingIndicator()
         {
@@ -228,66 +235,60 @@ namespace BetterIcon.Tray
             public int Index;
             public object Tag;
         }
-        sealed class PreparedPack : IDisposable
+        sealed class PreparedArtwork : IDisposable
         {
-            public readonly List<ArtworkRequest> Apps = new List<ArtworkRequest>(), Pack = new List<ArtworkRequest>();
-            public readonly List<Bitmap> AppImages = new List<Bitmap>(), PackImages = new List<Bitmap>();
-            public readonly List<ArtworkSource> AppSources = new List<ArtworkSource>(), PackSources = new List<ArtworkSource>();
-            public void Dispose() { foreach (Bitmap image in AppImages.Concat(PackImages)) image.Dispose(); }
+            public readonly List<ArtworkRequest> Items;
+            public readonly List<Bitmap> Images = new List<Bitmap>();
+            public readonly List<ArtworkSource> Sources = new List<ArtworkSource>();
+            public PreparedArtwork(List<ArtworkRequest> requests) { Items = requests; }
+            public void Dispose() { foreach (Bitmap image in Images) image.Dispose(); }
         }
-        static void PrepareImages(List<ArtworkRequest> requests, List<Bitmap> images, List<ArtworkSource> sources, int size, Icon fallback)
+        // Decode off the window thread so painting and the progress animation continue.
+        static PreparedArtwork Prepare(List<ArtworkRequest> requests, int size, Icon fallback)
         {
-            int cacheSize = 128; while (cacheSize < size) cacheSize *= 2;
-            foreach (ArtworkRequest request in requests) {
-                ArtworkSource source = DescribeArtwork(request.Path, request.Index);
-                sources.Add(source); images.Add(Thumbnail(source.Path, fallback, Math.Min(cacheSize, source.MaximumSize), source.Index));
-            }
-        }
-        static PreparedPack PreparePack(ThemeEntry theme, AppEntry[] installed, string[] defaults, int size, Icon fallback)
-        {
-            PreparedPack result = new PreparedPack();
+            PreparedArtwork result = new PreparedArtwork(requests);
             try {
-                foreach (AppEntry app in installed) {
-                    bool original = theme.IsDefault || defaults.Contains(app.Shortcut, StringComparer.OrdinalIgnoreCase);
-                    ThemeIcon art = original ? null : theme.Icons.FirstOrDefault(icon => icon.Application == app.Application);
-                    bool originalSource = original || String.IsNullOrWhiteSpace(app.IconPath);
-                    result.Apps.Add(new ArtworkRequest {
-                        Path = art == null ? Environment.ExpandEnvironmentVariables((originalSource ? app.OriginalIconPath : app.IconPath) ?? "") : PreviewPath(art),
-                        Index = art != null ? 0 : originalSource ? app.OriginalIconIndex : app.IconIndex,
-                        Name = app.Name, Tooltip = app.Name + Environment.NewLine + app.Shortcut, Tag = app
-                    });
+                int cacheSize = 128; while (cacheSize < size) cacheSize *= 2;
+                foreach (ArtworkRequest request in requests) {
+                    ArtworkSource source = DescribeArtwork(request.Path, request.Index);
+                    result.Sources.Add(source); result.Images.Add(Thumbnail(source.Path, fallback, Math.Min(cacheSize, source.MaximumSize), source.Index));
                 }
-                if (theme.IsDefault) foreach (AppEntry app in installed.GroupBy(app => app.Application).Select(group => group.First()).OrderBy(app => app.Application))
-                    result.Pack.Add(new ArtworkRequest { Path = app.OriginalIconPath, Index = app.OriginalIconIndex, Name = app.Application, Tooltip = app.Application + " - ArtCraft default", Tag = app.Application });
-                else foreach (ThemeIcon art in theme.Icons.OrderBy(icon => icon.Application))
-                    result.Pack.Add(new ArtworkRequest { Path = PreviewPath(art), Name = art.Application, Tooltip = art.Application, Tag = art.Application });
-                PrepareImages(result.Apps, result.AppImages, result.AppSources, size, fallback);
-                PrepareImages(result.Pack, result.PackImages, result.PackSources, size, fallback);
                 return result;
             }
             catch { result.Dispose(); throw; }
         }
-        void DisplayPreparedPack(ThemeEntry theme, PreparedPack prepared)
+        static List<ArtworkRequest> PackRequests(ThemeEntry theme, AppEntry[] installed)
         {
-            apps.BeginUpdate(); packPreview.BeginUpdate();
-            try {
-                apps.Items.Clear(); appTiles.Clear();
-                packPreview.Items.Clear(); ClearAppArtwork(); ClearPackArtwork();
-                appArtwork.AddRange(prepared.AppImages); appSources.AddRange(prepared.AppSources); prepared.AppImages.Clear();
-                packArtwork.AddRange(prepared.PackImages); packSources.AddRange(prepared.PackSources); prepared.PackImages.Clear();
-                for (int i = 0; i < prepared.Apps.Count; i++) {
-                    ArtworkRequest request = prepared.Apps[i];
-                    appTiles.Add(new ListViewItem(request.Name, i) { Tag = request.Tag, ToolTipText = request.Tooltip });
-                }
-                for (int i = 0; i < prepared.Pack.Count; i++) {
-                    ArtworkRequest request = prepared.Pack[i];
-                    packPreview.Items.Add(new ListViewItem(request.Name, i) { Tag = request.Tag, ToolTipText = request.Tooltip });
-                }
-                packDetails.Text = theme.IsDefault ? "Original icons for your installed apps. Restore defaults below to undo BetterIcon changes." : theme.IconCount + " icons / " + (theme.Managed ? "Personal pack" : "Built-in pack");
-                UpdateIconSizeLimit(); ResizeAppIcons(); ResizePackIcons(); UpdatePackButtons();
-                renderedThemeId = theme.Id;
+            List<ArtworkRequest> result = new List<ArtworkRequest>();
+            if (theme.IsDefault) foreach (AppEntry app in installed.GroupBy(app => app.Application).Select(group => group.First()).OrderBy(app => !AppOrder.Leads(app.Application)).ThenBy(app => app.Application))
+                result.Add(new ArtworkRequest { Path = app.OriginalIconPath, Index = app.OriginalIconIndex, Name = app.Application, Tooltip = app.Application + " - ArtCraft default", Tag = app.Application });
+            else foreach (ThemeIcon art in theme.Icons.OrderBy(icon => !AppOrder.Leads(icon.Application)).ThenBy(icon => icon.Application))
+                result.Add(new ArtworkRequest { Path = PreviewPath(art), Name = art.Application, Tooltip = art.Application, Tag = art.Application });
+            return result;
+        }
+        static List<ArtworkRequest> FileRequests(ThemeEntry theme)
+        {
+            return ProjectFormat.Artwork(theme).Tiles().Select(tile => new ArtworkRequest { Path = tile.Path, Name = tile.Name, Tooltip = tile.Tooltip }).ToList();
+        }
+        static void Display(IconGridView grid, List<Bitmap> artwork, List<ArtworkSource> sources, PreparedArtwork prepared)
+        {
+            foreach (Bitmap image in artwork) image.Dispose();
+            artwork.Clear(); sources.Clear(); grid.Items.Clear();
+            artwork.AddRange(prepared.Images); sources.AddRange(prepared.Sources); prepared.Images.Clear();
+            for (int i = 0; i < prepared.Items.Count; i++) {
+                ArtworkRequest request = prepared.Items[i];
+                grid.Items.Add(new ListViewItem(request.Name, i) { Tag = request.Tag, ToolTipText = request.Tooltip });
             }
-            finally { packPreview.EndUpdate(); apps.EndUpdate(); }
+        }
+        static string PackDetails(ThemeEntry theme)
+        {
+            return theme == null ? "No packs. Import or create one." : theme.IsDefault ? "Original icons for your installed apps." : theme.IconCount + " icons / " + (theme.Managed ? "Personal pack" : "Built-in pack");
+        }
+        static string FilePackDetails(ThemeEntry theme)
+        {
+            if (theme == null) return "Original file icons from your installed apps.";
+            int count = ProjectFormat.Artwork(theme).Expanded().Count;
+            return count + (count == 1 ? " file type / " : " file types / ") + (theme.Managed ? "Personal pack" : "Built-in pack");
         }
         async Task DownloadTheme(ThemeEntry theme)
         {
@@ -295,19 +296,23 @@ namespace BetterIcon.Tray
             if (reply.DownloadedIcons == null || reply.DownloadedFileIcons == null) throw new IOException("Incomplete downloaded icon pack.");
             theme.Icons = reply.DownloadedIcons;
             theme.IconCount = theme.Icons.Length; theme.FileIcons = reply.DownloadedFileIcons;
+            theme.AppFileIcons = reply.DownloadedAppFileIcons ?? new Dictionary<string, string>();
+            // The download, an update or not, now answers as the catalog does.
+            theme.UnlistedFileIconApps = reply.DownloadedUnlistedFileIconApps ?? new string[0];
+            theme.LeftOut = reply.DownloadedLeftOut ?? new LeftOutItem[0];
             theme.NeedsDownload = false; theme.UpdateAvailable = false; theme.Downloaded = true;
-            themes.RefreshLabels(); BuildTrayMenu();
+            themes.RefreshLabels(); fileThemes.RefreshLabels(); BuildTrayMenu();
         }
+        // Choosing a pack previews it in Manage Icons. The Launcher changes when it is applied.
         async Task LoadSelectedPack()
         {
             ThemeEntry selected = SelectedTheme;
             if (selected == null || catalog == null) return;
             string previous = renderedThemeId ?? preferences.Theme;
             AppEntry[] installed = catalog.Apps.ToArray();
-            string[] defaults = (preferences.DefaultShortcuts ?? new string[0]).ToArray();
             int size = preferences.IconSize;
             loadingTheme = selected; SetBusy(true, PackActivity(selected));
-            PreparedPack prepared = null;
+            PreparedArtwork prepared = null;
             try {
                 // Show feedback immediately, then keep file I/O and decoding off the
                 // window thread so painting and the progress animation can continue.
@@ -319,10 +324,22 @@ namespace BetterIcon.Tray
                     ShowLoading(true, status.Text);
                 }
                 using (Icon fallback = (Icon)Icon.Clone())
-                    prepared = await Task.Run(() => PreparePack(selected, installed, defaults, size, fallback));
+                    prepared = await Task.Run(() => Prepare(PackRequests(selected, installed), size, fallback));
                 if (IsDisposed || Disposing) return;
-                DisplayPreparedPack(selected, prepared); SavePreferences(); BuildTrayMenu();
-                status.Text = selected.IsDefault ? "ArtCraft default preview loaded." : selected + " loaded. Choose Apply icons to change Windows shortcuts.";
+                packPreview.BeginUpdate();
+                try {
+                    Display(packPreview, packArtwork, packSources, prepared);
+                    packDetails.Text = PackDetails(selected);
+                    UpdateIconSizeLimit(); ResizeAppIcons(); ResizePackIcons(); ResizeFileIcons(); UpdatePackButtons();
+                    renderedThemeId = selected.Id;
+                }
+                finally { packPreview.EndUpdate(); }
+                // Choosing a pack replaces an earlier choice that was still waiting to be downloaded.
+                wantedThemeId = null;
+                SavePreferences(); BuildTrayMenu();
+                // Items left out of the pack, with their cause, and the offer of WebP support when that would fix it.
+                status.Text = selected.IsDefault ? "ArtCraft default preview loaded." : PackLoadedText(selected, false);
+                KeepWebPDismissals(); UpdateWebPOffer();
             }
             catch (Exception error) {
                 if (!IsDisposed && !Disposing) {
@@ -335,6 +352,92 @@ namespace BetterIcon.Tray
             finally {
                 if (prepared != null) prepared.Dispose();
                 loadingTheme = null;
+                if (!IsDisposed && !Disposing) SetBusy(false, null);
+            }
+        }
+        // After an upgrade from a build that carried every pack, the chosen packs are still saved but are no
+        // longer on the computer. Download them once, so the app opens as it was left. A failure is not
+        // reported in a dialog: the choices stay saved, and the next start or pack refresh tries again.
+        async Task RestoreChosenPacks()
+        {
+            if (busy || catalog == null || IsDisposed || Disposing) return;
+            var wanted = new List<ThemeEntry>();
+            ThemeEntry app = wantedThemeId == null ? null : catalog.Themes.FirstOrDefault(theme => theme.Id == wantedThemeId && theme.NeedsDownload);
+            if (app != null) wanted.Add(app);
+            string fileId = preferences.FileTheme;
+            ThemeEntry file = fileId == null ? null : fileThemes.Items.OfType<ThemeEntry>().FirstOrDefault(theme => theme.Id == fileId && theme.NeedsDownload);
+            if (file != null && !wanted.Contains(file)) wanted.Add(file);
+            if (wanted.Count == 0) return;
+            bool failed = false;
+            SetBusy(true, PackActivity(wanted[0]));
+            try {
+                foreach (ThemeEntry pack in wanted) {
+                    status.Text = PackActivity(pack); ShowLoading(true, status.Text);
+                    try { await DownloadTheme(pack); }
+                    catch (Exception) { failed = true; }
+                    if (IsDisposed || Disposing) return;
+                }
+                ReloadPacks(wantedThemeId, fileId);
+                status.Text = failed ? "Couldn't download your chosen icon pack. BetterIcon will try again the next time it starts."
+                    : LeftOutStatus() ?? ReviewedText;
+            }
+            finally {
+                if (!IsDisposed && !Disposing) SetBusy(false, null);
+            }
+        }
+        object FilePackRow(string id)
+        {
+            object row = id == null ? null : fileThemes.Items.OfType<ThemeEntry>().FirstOrDefault(theme => theme.Id == id);
+            return row ?? (fileThemes.Items.Count == 0 ? null : fileThemes.Items[0]);
+        }
+        void SelectFilePack()
+        {
+            if (fillingFileThemes) return;
+            if (busy) {
+                fillingFileThemes = true;
+                try { fileThemes.SelectedItem = loadingFileTheme ?? FilePackRow(renderedFileThemeId); }
+                finally { fillingFileThemes = false; }
+                return;
+            }
+            packLoadTask = LoadSelectedFilePack();
+        }
+        async Task LoadSelectedFilePack()
+        {
+            if (catalog == null) return;
+            ThemeEntry selected = SelectedFileTheme;
+            string previous = renderedFileThemeId;
+            int size = preferences.IconSize;
+            loadingFileTheme = fileThemes.SelectedItem; SetBusy(true, PackActivity(selected));
+            PreparedArtwork prepared = null;
+            try {
+                await Task.Yield();
+                if (selected != null && selected.HasDownload) {
+                    await DownloadTheme(selected);
+                    if (IsDisposed || Disposing) return;
+                    status.Text = PackActivity(selected);
+                    ShowLoading(true, status.Text);
+                }
+                using (Icon fallback = (Icon)Icon.Clone())
+                    prepared = await Task.Run(() => Prepare(FileRequests(selected), size, fallback));
+                if (IsDisposed || Disposing) return;
+                DisplayFilePack(selected, prepared);
+                renderedFileThemeId = selected == null ? null : selected.Id;
+                preferences.FileTheme = renderedFileThemeId;
+                SavePreferences();
+                status.Text = selected == null ? "Original file icons selected. Choose Restore file icons to undo BetterIcon changes." : PackLoadedText(selected, true);
+                KeepWebPDismissals(); UpdateWebPOffer();
+            }
+            catch (Exception error) {
+                if (!IsDisposed && !Disposing) {
+                    fillingFileThemes = true;
+                    try { fileThemes.SelectedItem = FilePackRow(previous); }
+                    finally { fillingFileThemes = false; }
+                    ShowLoading(false, null); Report(error);
+                }
+            }
+            finally {
+                if (prepared != null) prepared.Dispose();
+                loadingFileTheme = null;
                 if (!IsDisposed && !Disposing) SetBusy(false, null);
             }
         }
