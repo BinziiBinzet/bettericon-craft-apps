@@ -1,5 +1,15 @@
 # Windows installer changelog
 
+## 1.29.0 - 2026-11-23
+
+- Packs download about ten times smaller where this PC reads WebP. Most published icons now also come as a lighter WebP copy, at most 1024 pixels a side, and BetterIcon downloads one file per icon: the WebP where this PC reads WebP, otherwise the PNG. All 41 packs together are then about 42 MB in place of 413 MB, as Setup counts them.
+- A PC reads WebP for this purpose through Windows' own decoder (the WebP Image Extensions), which the elevated pass for shared shortcuts can use too. Without it BetterIcon downloads the PNG files, as before.
+- A WebP that turns out unreadable brings its PNG in the same download. If Windows' decoder goes away later, a pack downloaded as WebP is listed for download again and then fetches its PNG files.
+- Setup's **Optional downloads** page shows the size this PC will actually download.
+- Most packs downloaded with an earlier version show **Update available**. Updating one downloads it again: at its smaller size where this PC reads WebP, and as the same PNG files where it can't.
+- The largest **Launcher icon size** follows the artwork, so a pack downloaded as WebP offers at most 1024 pixels.
+- The parts of the window that Windows drew in its own light grays now take the colors of the chosen BetterIcon app icon: the pack lists' dropdown buttons, the size slider, check boxes, the loading bar, the borders of text boxes, lists and tables, a list's grid lines, a table's buttons, and every scroll bar. High contrast keeps Windows' own colors.
+
 ## 1.28.0 - 2026-11-20
 
 - Manage Icons has two pickers side by side: **App icon pack** and **File type icon pack**. One refresh button updates both lists.
