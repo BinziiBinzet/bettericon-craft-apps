@@ -187,9 +187,11 @@ static partial class PackEditionTests
                 ThemeEntry[] incomplete = packs.Where(t => !t.NeedsDownload && t.Icons.Length != t.IconCount).ToArray();
                 Check(incomplete.Length == 0, "Every pack already on this computer holds an icon for each app it lists" + (incomplete.Length == 0 ? "" : ": " + String.Join(", ", incomplete.Select(t => t.Id + " " + t.Icons.Length + "/" + t.IconCount))));
                 var filePacks = fileCombo.Items.OfType<ThemeEntry>().ToArray();
-                Check(fileCombo.SelectedIndex == 0 && filePacks.Length == 8 && filePacks.Sum(t => t.FileIconCount) == 112 && filePacks.All(t => t.HasFileIcons && t.NeedsDownload == lean) && !packs.Any(t => t.Pack == "Craft-Icons-Komplett")
+                // Komplett's five and Mike22's three packs (14 file icons each), and OmegaDarling's nine file type packs (37 each).
+                Check(fileCombo.SelectedIndex == 0 && filePacks.Length == 17 && filePacks.Sum(t => t.FileIconCount) == 445 && filePacks.All(t => t.HasFileIcons && t.NeedsDownload == lean) && !packs.Any(t => t.Pack == "Craft-Icons-Komplett")
                     && filePacks.All(t => t.ToString().EndsWith(lean ? " (Download)" : " (Included)")),
-                    "First launch lists the eight file type packs separately, starting from the original file icons");
+                    "First launch lists the seventeen file type packs separately, starting from the original file icons" +
+                    (filePacks.Length == 17 ? "" : ": " + filePacks.Length + " packs, " + filePacks.Sum(t => t.FileIconCount) + " file icons"));
                 Check(packs.Single(t => t.Author == "VimiummuimiV").Id == flat && Find(combo, flat).IconCount == 13, "Modern Flat has one entry with all 13 app icons");
                 var restored = json.Deserialize<Preferences>(File.ReadAllText(prefs));
                 Check(((ThemeEntry)combo.SelectedItem).Id == flat && restored.Theme == flat && restored.FileTheme == flat && Field<string>(form, "wantedThemeId") == null,

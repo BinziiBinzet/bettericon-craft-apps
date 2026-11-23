@@ -98,7 +98,7 @@ static class FileTypeTests
                         Label fileDetails = (Label)field("filePackDetails"), status = (Label)field("status");
                         List<Bitmap> appArtwork = (List<Bitmap>)field("appArtwork");
                         ThemeEntry[] appPacks = themes.Items.OfType<ThemeEntry>().ToArray(), filePacks = fileThemes.Items.OfType<ThemeEntry>().ToArray();
-                        check(fileThemes.Items[0] is string && (string)fileThemes.Items[0] == "Original file icons" && fileThemes.SelectedIndex == 0 && filePacks.Length == 8 && filePacks.All(pack => pack.HasFileIcons),
+                        check(fileThemes.Items[0] is string && (string)fileThemes.Items[0] == "Original file icons" && fileThemes.SelectedIndex == 0 && filePacks.Length == 17 && filePacks.All(pack => pack.HasFileIcons),
                             "The file type list starts with the original icons and holds only packs with file artwork");
                         check(!appPacks.Any(pack => pack.Pack == "Craft-Icons-Komplett") && filePacks.Count(pack => pack.Pack == "Craft-Icons-Komplett") == 5 && appPacks.All(pack => pack.IsDefault || pack.IconCount > 0),
                             "Komplett's document packs moved from the app list to the file type list");

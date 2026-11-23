@@ -53,8 +53,9 @@ function New-TestLink([string]$Directory, [string]$Name) {
 
 try {
     $themes = @(Get-BetterIconTheme)
-    Assert (@($themes | Where-Object Status -eq 'Available').Count -eq 32) 'All 32 current ICO or PNG themes discovered from the repository parent'
-    Assert (@($themes | Where-Object { $_.Pack -eq 'Craft-Icons-Zach' -and $_.Author -eq 'OmegaDarling' }).Count -eq 9) 'Nine OmegaDarling themes remain after retiring Oil Slick'
+    Assert (@($themes | Where-Object Status -eq 'Available').Count -eq 41) 'All 41 current ICO or PNG themes discovered from the repository parent'
+    # OmegaDarling's nine file type packs (<Pack>_filetypes) have no app icons; the nine app themes are counted here.
+    Assert (@($themes | Where-Object { $_.Pack -eq 'Craft-Icons-Zach' -and $_.Author -eq 'OmegaDarling' -and $_.IconCount -gt 0 }).Count -eq 9) 'Nine OmegaDarling themes remain after retiring Oil Slick'
     Assert (@($themes | Where-Object { $_.Name -eq 'Root' -and $_.Pack -ne 'Craft-Icons-circleb' }).Count -eq 0) 'Pack preview sheets are not mistaken for themes'
     $short = @($themes | Where-Object { @(Get-BetterIconThemeIcon -InputObject $_).Count -ne $_.IconCount } | ForEach-Object Id)
     Assert ($short.Count -eq 0) ('Every theme supplies an icon for each app it lists' + $(if ($short.Count) { ': ' + ($short -join ', ') }))

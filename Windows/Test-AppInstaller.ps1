@@ -280,7 +280,7 @@ function Assert-Installed([string]$TestVersion) {
     $catalog = Get-Content -LiteralPath $response -Raw | ConvertFrom-Json
     Assert-Check ($catalog.Success -and $catalog.Catalog.Version -eq $version -and @($catalog.Catalog.Apps).Count -eq 1 -and $catalog.Catalog.Apps[0].Shortcut -eq (Join-Path $links 'PhotoCraft.lnk')) 'Installed bridge discovers only the disposable application shortcut'
     $icons = @($catalog.Catalog.Themes | ForEach-Object { $_.Icons })
-    Assert-Check ($icons.Count -eq 0 -and @($catalog.Catalog.Themes | Where-Object NeedsDownload).Count -eq 32 -and -not (Test-Path -LiteralPath (Join-Path $state 'downloads')) -and
+    Assert-Check ($icons.Count -eq 0 -and @($catalog.Catalog.Themes | Where-Object NeedsDownload).Count -eq 41 -and -not (Test-Path -LiteralPath (Join-Path $state 'downloads')) -and
         @(Get-ChildItem -LiteralPath $versionRoot -Directory -Filter 'Craft-Icons-*').Count -eq 0) 'The installed catalog lists all packs, carries none of their artwork and fetches nothing'
 }
 function Start-InstalledLink([string]$TestVersion) {

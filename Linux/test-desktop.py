@@ -4136,7 +4136,7 @@ def offer_session(scenario):
                         "Download " + megabytes(both), True]
                 seen = js("[el('offerAppsText').textContent, el('offerFilesText').textContent, "
                           "el('offerDownload').textContent, el('offerApps').checked && el('offerFiles').checked]")
-                check(shown and seen == want and apps["count"] == 27 and files["count"] == 8 and apps["known"] and
+                check(shown and seen == want and apps["count"] == 27 and files["count"] == 17 and apps["known"] and
                       files["known"] and prefs().get("offerPacks") is True,
                       "a new installation offers once in its window to download all app icon packs and all file type "
                       "icon packs, each with its count and size" + ("" if seen == want else f"; {seen} for {want}"))
@@ -4262,7 +4262,7 @@ def offer_checks(packs):
     catalog = hashlib.sha256((payload / "Catalog/packs.tsv").read_bytes().replace(b"\r\n", b"\n")).hexdigest()
     published = [p for key, p in packs.builtin.items() if key != DEFAULT_ID]
     check(sizes.is_file() and f"#catalog\t{catalog}" in sizes.read_text().splitlines() and
-          all(packs.sizes.get(p.id, 0) > 0 for p in published) and len(published) == 32, OFFER_TITLES[0])
+          all(packs.sizes.get(p.id, 0) > 0 for p in published) and len(published) == 41, OFFER_TITLES[0])
     root = home.parent / "offer-homes"
 
     def start(scenario, name, prepare=None):
@@ -4351,14 +4351,14 @@ def core():
     for file in extra:
         file.unlink()
     packs = Packs(payload, cat.data)
-    check(len(packs.builtin) == 33 and not (payload / "Packs").exists() and
+    check(len(packs.builtin) == 42 and not (payload / "Packs").exists() and
           all(p.status == "Download" and not p.icons and not p.app_files for key, p in packs.builtin.items() if key != DEFAULT_ID),
-          "the installer lists 32 packs and carries none of their artwork")
+          "the installer lists 41 packs and carries none of their artwork")
     komplett = [p for key, p in packs.builtin.items() if key.startswith("Craft-Icons-Komplett/")]
     mike = [p for key, p in packs.builtin.items() if key.startswith("Craft-Icons-Mike22/")]
     check(len(komplett) == 5 and all(not p.can_apps and p.can_files and not p.icons for p in komplett) and
           len(mike) == 3 and all(p.can_apps and p.can_files for p in mike) and
-          sum(p.can_files for p in packs.builtin.values()) == 9 and sum(p.can_apps for p in packs.builtin.values()) == 28,
+          sum(p.can_files for p in packs.builtin.values()) == 18 and sum(p.can_apps for p in packs.builtin.values()) == 28,
           "Komplett's five packs and Mike22's three file type sets are file type packs")
     both = "Craft-Icons-Mike22/CraftApps AIO November - Dark"
     for wanted in ("Craft-Icons-Zach/Cardboard", "Craft-Icons-Komplett/Dunkel", both):
@@ -4795,9 +4795,9 @@ def gui():
     check(js("""(() => {
         const komplett = model.packs.filter(p => p.id.startsWith('Craft-Icons-Komplett/'));
         return komplett.length === 5 && komplett.every(p => !p.canApps && p.canFiles) &&
-            model.packs.filter(p => p.canFiles && !p.default && !p.personal).length === 8 &&
+            model.packs.filter(p => p.canFiles && !p.default && !p.personal).length === 17 &&
             model.packs.find(p => p.default).canFiles;
-    })()"""), "the file type list holds the eight file type packs and the original file icons")
+    })()"""), "the file type list holds the seventeen file type packs and the original file icons")
     check(js("""!el('filePreview').hidden && el('filePreview').children.length === 1 &&
         el('fileDetail').textContent === '1 file type / Personal pack' &&
         el('applyFiles').textContent === 'Apply file icons…' && el('applyFiles').classList.contains('primary') &&

@@ -17,13 +17,13 @@ static class PackTests
         string state = Path.Combine(root, "pack-tests-state"); Directory.CreateDirectory(state);
         PackLibrary library = new PackLibrary(Path.Combine(state, "packs"));
         ThemeEntry[] omega = catalog.Themes.Where(t => t.Pack == "Craft-Icons-Zach").ToArray();
-        check(omega.Length == 9 && omega.All(t => t.Author == "OmegaDarling" && t.ToString().Contains("OmegaDarling") && t.Id.StartsWith("Craft-Icons-Zach/")), "OmegaDarling credits are public while existing pack IDs stay stable");
-        check(catalog.Themes.Length == 32 && catalog.Themes.Sum(t => t.IconCount) == 382 && !catalog.Themes.Any(t => t.Name == "OilSlick"), "Nine OmegaDarling packs are present in the 32-theme catalog with 382 app icons");
+        check(omega.Length == 18 && omega.All(t => t.Author == "OmegaDarling" && t.ToString().Contains("OmegaDarling") && t.Id.StartsWith("Craft-Icons-Zach/")), "OmegaDarling credits are public while existing pack IDs stay stable");
+        check(catalog.Themes.Length == 41 && catalog.Themes.Sum(t => t.IconCount) == 382 && !catalog.Themes.Any(t => t.Name == "OilSlick"), "Nine OmegaDarling app packs are present in the 41-theme catalog with 382 app icons");
         ThemeEntry[] komplett = catalog.Themes.Where(t => t.Pack == "Craft-Icons-Komplett").ToArray(), mike = catalog.Themes.Where(t => t.Pack == "Craft-Icons-Mike22").ToArray();
         check(komplett.Length == 5 && komplett.All(t => t.IconCount == 0 && t.Icons.Length == 0 && t.FileIconCount == 14 && t.AppFileIcons.Count == 14 && t.AppFileIcons.Values.All(File.Exists)),
             "Komplett's document artwork is file type artwork for the apps it draws");
         check(mike.Length == 3 && mike.All(t => t.IconCount == 15 && t.AppFileIcons.Count == 14 && t.AppFileIcons.ContainsKey("PhotoCraft") && t.AppFileIcons.Values.All(File.Exists))
-            && catalog.Themes.Count(t => t.HasFileIcons) == 8 && catalog.Themes.Sum(t => t.FileIconCount) == 112,
+            && catalog.Themes.Count(t => t.HasFileIcons) == 17 && catalog.Themes.Sum(t => t.FileIconCount) == 445,
             "A pack can carry app icons and file type artwork together");
         FileArtwork documents = ProjectFormat.Artwork(komplett[0]);
         check(documents.Tiles().Count == 14 && documents.Expanded().ContainsKey(".pdf") && documents.Expanded().ContainsKey(".docx") && documents.Expanded().ContainsKey(".pcraft") && !documents.Formats.Any(),

@@ -309,14 +309,14 @@ import WebKit
         let published = try PublishedPacks(resources: resources, state: root.appendingPathComponent("test-pack-cache"))
         var packs = try published.list()
         try check(
-            packs.count == 32 && packs.allSatisfy { $0.status == "Download" && $0.icons.isEmpty && $0.appFiles.isEmpty }
+            packs.count == 41 && packs.allSatisfy { $0.status == "Download" && $0.icons.isEmpty && $0.appFiles.isEmpty }
                 && !fm.fileExists(atPath: resources.appendingPathComponent("Packs").path),
-            "the installer lists 32 packs and carries none of their artwork")
+            "the installer lists 41 packs and carries none of their artwork")
         let komplett = packs.filter { $0.id.hasPrefix("Craft-Icons-Komplett/") }
         let mike = packs.filter { $0.id.hasPrefix("Craft-Icons-Mike22/") }
         try check(komplett.count == 5 && komplett.allSatisfy { !$0.canApps && $0.canFiles && $0.icons.isEmpty }
             && mike.count == 3 && mike.allSatisfy { $0.canApps && $0.canFiles }
-            && packs.filter(\.canFiles).count == 8 && packs.filter(\.canApps).count == 27,
+            && packs.filter(\.canFiles).count == 17 && packs.filter(\.canApps).count == 27,
             "Komplett's five packs and Mike22's three file type sets are file type packs")
         _ = try published.list("acquire", id: "Craft-Icons-Zach/Cardboard")
         _ = try published.list("acquire", id: "Craft-Icons-Komplett/Standard")
@@ -664,11 +664,11 @@ import WebKit
             (() => {
               const komplett = model.packs.filter(p => p.id.startsWith('Craft-Icons-Komplett/'));
               return komplett.length === 5 && komplett.every(p => !p.canApps && p.canFiles) &&
-                model.packs.filter(p => p.canFiles && !p.default && !p.personal).length === 8 &&
+                model.packs.filter(p => p.canFiles && !p.default && !p.personal).length === 17 &&
                 model.packs.find(p => p.default).canFiles;
             })()
             """)
-        try check(lists as? Bool == true, "the file type list holds the eight file type packs and the original file icons")
+        try check(lists as? Bool == true, "the file type list holds the seventeen file type packs and the original file icons")
         var trayImage = false
         var flatItems = 0, fileItems = 0
         host.statusMenu { menu, _ in
