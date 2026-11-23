@@ -73,13 +73,29 @@ namespace BetterIcon.Tray
             using (var sha = SHA256.Create())
                 return BitConverter.ToString(sha.ComputeHash(bytes)).Replace("-", "").Equals(entry.Hash, StringComparison.OrdinalIgnoreCase) ? bytes : null;
         }
-        public Bitmap Load(ThemeEntry theme, CancellationToken token)
+        public Bitmap Load(ThemeEntry theme, CancellationToken token) { return Read(theme, token, false); }
+        // The file type list shows a pack's file artwork, not its app icons.
+        public Bitmap LoadFiles(ThemeEntry theme, CancellationToken token)
+        {
+            try { return Read(theme, token, true); }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception) {
+                // A strip that cannot be fetched gives way to the pack's own artwork when it is here.
+                if (theme.NeedsDownload || theme.Managed) throw;
+                return LocalPreview(theme, token, true);
+            }
+        }
+        Bitmap Read(ThemeEntry theme, CancellationToken token, bool fileList)
         {
             token.ThrowIfCancellationRequested();
             if (theme == null || theme.IsDefault) return null;
-            if (theme.Managed) return LocalPreview(theme, token);
+            if (theme.Managed) return LocalPreview(theme, token, fileList);
             Entry entry;
-            if (!catalog.Value.TryGetValue(theme.Id, out entry)) return theme.NeedsDownload ? null : LocalPreview(theme, token);
+            // The artwork in a pack's FileTypes folder has a strip of its own. A pack of file artwork alone has one strip.
+            bool listed = fileList
+                ? catalog.Value.TryGetValue(theme.Id + "/FileTypes", out entry) || (theme.IconCount == 0 && catalog.Value.TryGetValue(theme.Id, out entry))
+                : catalog.Value.TryGetValue(theme.Id, out entry);
+            if (!listed) return theme.NeedsDownload ? null : LocalPreview(theme, token, fileList);
             string bundled = Path.Combine(directory, entry.File), cached = Path.Combine(cache, entry.Hash + ".webp");
             byte[] bytes = Verified(bundled, entry) ?? Verified(cached, entry);
             if (bytes == null) {
@@ -167,14 +183,13 @@ namespace BetterIcon.Tray
                 using (var image = new Bitmap(png)) return new Bitmap(image);
             }
         }
-        static Bitmap LocalPreview(ThemeEntry theme, CancellationToken token)
+        static Bitmap LocalPreview(ThemeEntry theme, CancellationToken token, bool fileList)
         {
-            var paths = (theme.Icons ?? new ThemeIcon[0])
-                .OrderBy(icon => !String.Equals(icon.Application, "ArtCraftLauncher", StringComparison.OrdinalIgnoreCase))
+            var paths = fileList ? new string[0] : (theme.Icons ?? new ThemeIcon[0])
+                .OrderBy(icon => !AppOrder.Leads(icon.Application))
                 .ThenBy(icon => icon.Application, StringComparer.OrdinalIgnoreCase)
                 .Select(icon => String.IsNullOrEmpty(icon.PreviewPath) ? icon.Path : icon.PreviewPath).Take(3).ToArray();
-            if (paths.Length == 0 && theme.FileIcons != null)
-                paths = theme.FileIcons.OrderBy(p => p.Key, StringComparer.OrdinalIgnoreCase).Select(p => p.Value).Take(3).ToArray();
+            if (paths.Length == 0) paths = ProjectFormat.Artwork(theme).Tiles().Select(tile => tile.Path).Take(3).ToArray();
             if (paths.Length == 0) return null;
             var result = new Bitmap(paths.Length * (Cell + Gap) - Gap, Cell);
             try {
@@ -187,6 +202,9 @@ namespace BetterIcon.Tray
         }
     }
 
+    // Pack artwork in WebP is decoded by WebpArtwork (BetterIcon.WebP.cs), never by ImageSharp. The hover strips above
+    // keep ImageSharp: they are BetterIcon's own files, checked by their SHA-256.
+
     sealed class PackHoverPreview : IDisposable
     {
         readonly PackPreviewStore store;
@@ -195,7 +213,9 @@ namespace BetterIcon.Tray
         ThemeEntry current;
         Rectangle row;
         PreviewWindow popup;
-        public PackHoverPreview(PackPreviewStore source, Control control) { store = source; owner = control; }
+        readonly bool fileList;
+        public PackHoverPreview(PackPreviewStore source, Control control) : this(source, control, false) {}
+        public PackHoverPreview(PackPreviewStore source, Control control, bool files) { store = source; owner = control; fileList = files; }
         public void Hover(ThemeEntry theme, Rectangle bounds)
         {
             if (theme == null || theme.IsDefault || bounds.IsEmpty) { Clear(); return; }
@@ -215,7 +235,7 @@ namespace BetterIcon.Tray
             var token = pending.Token;
             try {
                 await Task.Delay(175, token);
-                image = await Task.Run(() => store.Load(theme, token), token);
+                image = await Task.Run(() => fileList ? store.LoadFiles(theme, token) : store.Load(theme, token), token);
                 if (image == null || token.IsCancellationRequested || request != pending || owner.IsDisposed || owner.Disposing) return;
                 if (popup == null) popup = new PreviewWindow();
                 popup.Display(image, row, owner, theme.DisplayName); image = null;

@@ -3,14 +3,12 @@ set -euo pipefail
 export COPYFILE_DISABLE=1
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(dirname "$here")"
-out="${1:?Usage: build.sh OUTPUT_DIRECTORY [Windows bundled artwork ZIP or artwork checkout] [Bundled|OnDemand]}"
+out="${1:?Usage: build.sh OUTPUT_DIRECTORY [BetterIcon checkout, or a ZIP of its branding and hover strips]}"
 mkdir -p "$out"
 out="$(cd "$out" && pwd)"
 version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$here/Info.plist")"
 minimum="$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$here/Info.plist")"
-edition="${3:-Bundled}"
-case "$edition" in Bundled|OnDemand) ;; *) echo 'Choose Bundled or OnDemand.' >&2; exit 2;; esac
-dmg="$out/BetterIcon-$version-macOS-$edition.dmg"
+dmg="$out/BetterIcon-$version-macOS.dmg"
 if [[ -e "$out/BetterIcon.app" || -e "$dmg" ]]; then
     echo "Choose an output directory without an existing BetterIcon.app or disk image." >&2
     exit 1
@@ -24,7 +22,14 @@ cp -X "$here/Info.plist" "$app/Contents/"
 cp -X "$here"/Web/* "$resources/Web/"
 cp -X "$repo/LICENSE" "$resources/LICENSE"
 input="${2:-$repo}"
-/usr/bin/python3 "$repo/Shared/prepare_packs.py" "$resources" "$input" "$edition"
+/usr/bin/python3 "$repo/Shared/prepare_packs.py" "$resources" "$input"
+# Each pack's download size, for the offer a new installation makes. pack-sizes.py writes it from the pack artwork.
+cp -X "$here/PackSizes.tsv" "$resources/Catalog/pack-sizes.tsv"
+catalog="$(tr -d '\r' < "$resources/Catalog/packs.tsv" | shasum -a 256 | cut -d ' ' -f 1)"
+sizes="$(tr -d '\r' < "$here/PackSizes.tsv")"
+if [[ $'\n'"$sizes"$'\n' != *$'\n#catalog\t'"$catalog"$'\n'* ]]; then
+    echo "warning: macOS/PackSizes.tsv was made for another pack catalog. Run macOS/pack-sizes.py on a checkout with the artwork." >&2
+fi
 mkdir -p "$app/Contents/Helpers"
 for target in arm64 amd64; do
     (cd "$repo/Shared/packstore"; CGO_ENABLED=0 GOOS=darwin GOARCH="$target" go build -trimpath -ldflags="-s -w" -o "$stage/packs-$target" .)

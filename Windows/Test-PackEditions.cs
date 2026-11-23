@@ -34,6 +34,14 @@ static partial class PackEditionTests
         Environment.SetEnvironmentVariable("NO_PROXY", null);
     }
     static ThemeEntry Find(ComboBox combo, string id) { return combo.Items.OfType<ThemeEntry>().Single(t => t.Id == id); }
+    static int Cached(string cache) { return Directory.Exists(cache) ? Directory.GetFiles(cache, ".complete", SearchOption.AllDirectories).Length : 0; }
+    // The start reads the catalog and then downloads a chosen pack that is not on the computer.
+    static void WaitStarted(LauncherForm form)
+    {
+        Wait(() => !Field<bool>(form, "busy") && Field<Catalog>(form, "catalog") != null);
+        Application.DoEvents();
+        Wait(() => !Field<bool>(form, "busy"));
+    }
     [StructLayout(LayoutKind.Sequential)] struct Rect { public int Left, Top, Right, Bottom; }
     [StructLayout(LayoutKind.Sequential)] struct Info { public int Size; public Rect Item, Button; public int State; public IntPtr Combo, Edit, List; }
     [DllImport("user32.dll")] static extern bool GetComboBoxInfo(IntPtr hwnd, ref Info info);
@@ -56,6 +64,7 @@ static partial class PackEditionTests
     static void Browse(ComboBox combo, ThemeEntry target, string cache)
     {
         var active = combo.SelectedItem;
+        int before = Cached(cache);
         var list = OpenRows(combo);
         foreach (var pack in combo.Items.OfType<ThemeEntry>().Where(t => t.NeedsDownload)) {
             var point = RowPoint(list, combo.Items.IndexOf(pack));
@@ -63,7 +72,7 @@ static partial class PackEditionTests
             SendMessage(combo.Handle, 0x0100, (IntPtr)Keys.Down, IntPtr.Zero);
         }
         combo.DroppedDown = false; combo.SelectedItem = target; Application.DoEvents();
-        Check(Object.Equals(active, combo.SelectedItem) && target.NeedsDownload && !Directory.Exists(cache),
+        Check(Object.Equals(active, combo.SelectedItem) && target.NeedsDownload && Cached(cache) == before,
             "Opening, hovering, arrowing across the list, canceling and programmatic selection never download a pack");
     }
     static string MenuLabel(LauncherForm form, ThemeEntry pack)
@@ -73,9 +82,9 @@ static partial class PackEditionTests
     }
     static void SelectPack(Form form, string id, bool file, bool download, bool fails)
     {
-        var combo = Field<ComboBox>(form, file ? "packs" : "themes");
-        var label = Field<Label>(form, file ? "phase" : "loadingMessage");
-        var bar = Field<ProgressBar>(form, file ? "progress" : "loadingProgress");
+        var combo = Field<ComboBox>(form, file ? "fileThemes" : "themes");
+        var label = Field<Label>(form, "loadingMessage");
+        var bar = Field<ProgressBar>(form, "loadingProgress");
         var target = Find(combo, id);
         var changes = new List<string>();
         EventHandler changed = delegate { changes.Add(label.Text); };
@@ -95,8 +104,13 @@ static partial class PackEditionTests
             string first = (download ? "Downloading " : "Loading ") + name;
             Check(changes.FirstOrDefault() == first && bar.Visible && bar.MarqueeAnimationSpeed > 0 && bar.AccessibleName == first,
                 (file ? "File" : "App") + " picker immediately shows " + first);
-            if (file) Wait(() => !Field<bool>(form, "working"));
-            else {
+            // A failed download reports once in a dialog. Close it so the load can finish.
+            bool reported = false;
+            using (var dismiss = new System.Windows.Forms.Timer { Interval = 20 }) {
+                dismiss.Tick += delegate {
+                    foreach (Form dialog in form.OwnedForms) if (dialog.Visible && dialog.Text == "BetterIcon") { reported = true; dialog.DialogResult = DialogResult.OK; dialog.Close(); }
+                };
+                dismiss.Start();
                 var work = Field<System.Threading.Tasks.Task>(form, "packLoadTask");
                 Wait(() => work.IsCompleted);
                 work.GetAwaiter().GetResult();
@@ -106,10 +120,10 @@ static partial class PackEditionTests
                 "Bottom bar shows the actual phases in order and stops: " + String.Join(" then ", changes) +
                 " (visible=" + bar.Visible + ", speed=" + bar.MarqueeAnimationSpeed + ")");
             if (fails) {
-                Check(combo.SelectedItem != target && Field<Label>(form, "message").Text.Length > 0 && target.ToString().EndsWith(" (Download)"), "Failed fetch returns to the previous pack and keeps the Download label");
+                Check(reported && combo.SelectedItem != target && Field<Label>(form, "status").Text.Length > 0 && target.ToString().EndsWith(" (Download)"), "Failed fetch returns to the previous pack and keeps the Download label");
             } else {
-                var list = Field<ListView>(form, file ? "files" : "packPreview");
-                Check(list.Items.Count > 0 && !target.NeedsDownload, "The selected artwork is ready");
+                var list = Field<ListView>(form, file ? "filePreview" : "packPreview");
+                Check(!reported && list.Items.Count > 0 && !target.NeedsDownload, "The selected artwork is ready");
             }
         } finally { label.TextChanged -= changed; }
     }
@@ -140,63 +154,199 @@ static partial class PackEditionTests
         File.WriteAllText(prefs, json.Serialize(new Preferences { Theme = flat + " - Bolt - Knob", FileTheme = flat + " - Spark - Sliders", Hotkey = new HotkeySettings { Enabled = false } }));
         var fixture = new FixtureConfig { StateDirectory = state, ShortcutDirectory = new[] { args[1] }, KeepOpenForAutomation = true };
         bool lean = File.Exists(Path.Combine(args[0], "OnDemand.tsv"));
-        if (args.Length > 2 && args[2] == "refresh") { CheckRefresh(args[0], state, fixture); return; }
+        if (args.Length > 2 && args[2] == "refresh") {
+            // These checks are about pack metadata. Without a chosen app pack nothing is downloaded at the start.
+            File.WriteAllText(prefs, json.Serialize(new Preferences { FileTheme = flat + " - Spark - Sliders", Hotkey = new HotkeySettings { Enabled = false } }));
+            CheckRefresh(args[0], state, fixture); return;
+        }
         CheckCurrentPackUpdate();
+        if (lean) { CheckChosenPacksKept(args[0], args[1]); CheckChosenPackNotApplied(args[0], args[1]); CheckGainedFileArtwork(args[0], args[1]); }
         if (!lean) Offline();
-        const string first = "Craft-Icons-circleb/Root", second = "Craft-Icons-Komplett/Standard", third = "Craft-Icons-Zach/Ink";
+        // second draws documents only. mixed carries app icons and file type artwork.
+        const string first = "Craft-Icons-circleb/Root", second = "Craft-Icons-Komplett/Standard", third = "Craft-Icons-Zach/Ink", mixed = "Craft-Icons-Mike22/CraftApps AIO November - Dark";
         using (var show = new EventWaitHandle(false, EventResetMode.AutoReset))
         using (var stop = new EventWaitHandle(false, EventResetMode.AutoReset)) {
             for (int pass = 0; pass < 2; pass++) using (var form = new LauncherForm(args[0], fixture, true, show, stop)) {
                 form.Start();
                 form.ShowManager();
-                Wait(() => !Field<bool>(form, "busy") && Field<Catalog>(form, "catalog") != null);
+                WaitStarted(form);
                 Field<TabControl>(form, "pages").SelectedIndex = 1;
                 var combo = Field<ComboBox>(form, "themes");
+                var fileCombo = Field<ComboBox>(form, "fileThemes");
                 if (pass == 1) {
                     HoverPack(combo, Find(combo, third), state, args[0], lean);
-                    Check(((ThemeEntry)combo.SelectedItem).Id == first && !Find(combo, second).NeedsDownload, "Restart offline remembers the app pack and the downloaded file pack");
-                    SelectPack(form, second, false, false, false);
-                    Check(json.Deserialize<Preferences>(File.ReadAllText(prefs)).FileTheme == first, "App pack switches preserve the file pack preference");
+                    Check(((ThemeEntry)combo.SelectedItem).Id == first && fileCombo.SelectedItem == Find(fileCombo, second) && !Find(combo, mixed).NeedsDownload, "Restart offline remembers the app pack and the downloaded file pack");
+                    SelectPack(form, mixed, false, false, false);
+                    Check(json.Deserialize<Preferences>(File.ReadAllText(prefs)).FileTheme == second, "App pack switches preserve the file pack preference");
                     typeof(LauncherForm).GetMethod("ExitLauncher", Fields).Invoke(form, null);
                     continue;
                 }
                 var packs = combo.Items.OfType<ThemeEntry>().Where(t => !t.IsDefault).ToArray();
-                Check(packs.Length == 32 && packs.Sum(t => t.IconCount) == 452 && packs.All(t => t.NeedsDownload == lean), "First launch lists all 32 packs and 452 icons with the correct availability");
+                // The saved choice is an earlier name of Modern Flat. The download edition fetches that one pack again.
+                Check(packs.Length == 27 && packs.Sum(t => t.IconCount) == 382 && packs.All(t => t.NeedsDownload == (lean && t.Id != flat)), "First launch lists all 27 app packs and 382 icons with the correct availability");
+                ThemeEntry[] incomplete = packs.Where(t => !t.NeedsDownload && t.Icons.Length != t.IconCount).ToArray();
+                Check(incomplete.Length == 0, "Every pack already on this computer holds an icon for each app it lists" + (incomplete.Length == 0 ? "" : ": " + String.Join(", ", incomplete.Select(t => t.Id + " " + t.Icons.Length + "/" + t.IconCount))));
+                var filePacks = fileCombo.Items.OfType<ThemeEntry>().ToArray();
+                // Komplett's five and Mike22's three packs (14 file icons each), and OmegaDarling's nine file type packs (37 each).
+                Check(fileCombo.SelectedIndex == 0 && filePacks.Length == 17 && filePacks.Sum(t => t.FileIconCount) == 445 && filePacks.All(t => t.HasFileIcons && t.NeedsDownload == lean) && !packs.Any(t => t.Pack == "Craft-Icons-Komplett")
+                    && filePacks.All(t => t.ToString().EndsWith(lean ? " (Download)" : " (Included)")),
+                    "First launch lists the seventeen file type packs separately, starting from the original file icons" +
+                    (filePacks.Length == 17 ? "" : ": " + filePacks.Length + " packs, " + filePacks.Sum(t => t.FileIconCount) + " file icons"));
                 Check(packs.Single(t => t.Author == "VimiummuimiV").Id == flat && Find(combo, flat).IconCount == 13, "Modern Flat has one entry with all 13 app icons");
-                Check((lean || ((ThemeEntry)combo.SelectedItem).Id == flat) && json.Deserialize<Preferences>(File.ReadAllText(prefs)).FileTheme == flat, "Saved variant selections resolve to Modern Flat without downloading");
+                var restored = json.Deserialize<Preferences>(File.ReadAllText(prefs));
+                Check(((ThemeEntry)combo.SelectedItem).Id == flat && restored.Theme == flat && restored.FileTheme == flat && Field<string>(form, "wantedThemeId") == null,
+                    "Saved variant selections resolve to Modern Flat, and the chosen app pack is shown again");
                 var cache = Path.Combine(state, "downloads");
-                Check(!Directory.Exists(cache), "Listing the catalog creates no download cache");
-                Check(packs.All(t => t.ToString().EndsWith(lean ? " (Download)" : " (Included)") && MenuLabel(form, t) == t.ToString()), "Picker and tray labels identify each pack's availability at installation");
+                int chosen = lean ? 1 : 0;
+                Check(Cached(cache) == chosen, "Listing the catalog downloads nothing but the pack that was chosen before");
+                Check(packs.All(t => t.ToString().EndsWith(!lean ? " (Included)" : t.Id == flat ? " (Downloaded)" : " (Download)") && MenuLabel(form, t) == t.ToString()), "Picker and tray labels identify each pack's availability at installation");
                 if (lean) Browse(combo, Find(combo, third), cache);
                 Check(!Directory.Exists(Path.Combine(state, "pack-previews")), "Opening and quickly browsing the catalog fetched no previews");
                 HoverPack(combo, Find(combo, third), state, args[0], lean, true);
                 HoverPack(combo, Find(combo, flat), state, args[0], lean);
-                HoverRaces(form, Find(combo, third), Find(combo, second), state, args[0], lean);
+                HoverRaces(form, Find(combo, third), Find(fileCombo, second), state, args[0], lean);
                 PersonalHover(form, state);
                 TrayHover(form, Find(combo, third));
-                Check(!Directory.Exists(cache), "Hover previews keep the full-pack cache empty");
+                Check(Cached(cache) == chosen, "Hover previews download no pack");
                 SelectPack(form, first, false, lean, false);
                 Check(MenuLabel(form, Find(combo, first)).EndsWith(lean ? " (Downloaded)" : " (Included)"), "The clicked pack has the correct local status in the tray");
-                var dialogType = typeof(LauncherForm).GetNestedType("ProjectFileDialog", BindingFlags.NonPublic);
-                using (var files = (Form)Activator.CreateInstance(dialogType, new object[] { form, null })) {
-                    files.Show(form);
-                    Wait(() => files.Visible && !Field<bool>(files, "working"));
-                    HoverPack(Field<ComboBox>(files, "packs"), Find(combo, third), state, args[0], lean);
-                    SelectPack(files, second, true, lean, false);
-                    Check(MenuLabel(form, Find(combo, second)).EndsWith(lean ? " (Downloaded)" : " (Included)"), "Choosing a file pack updates its availability in the other menus");
-                    Offline();
-                    SelectPack(files, first, true, false, false);
-                    if (lean) SelectPack(files, third, true, true, true);
-                    Check(Field<ListView>(files, "files").Items.Cast<ListViewItem>().Any(row => row.Text == ".pcraft"), "File picker previews native PhotoCraft documents");
-                    files.Close();
-                }
+                string fileStrip = HoverPack(fileCombo, Find(fileCombo, mixed), state, args[0], lean, false, mixed + "/FileTypes");
+                Check(fileStrip != null && fileStrip != HoverPack(combo, Find(combo, mixed), state, args[0], lean),
+                    "The file type list previews a pack's file artwork, not its app icons");
+                SelectPack(form, mixed, true, lean, false);
+                Check(MenuLabel(form, Find(combo, mixed)).EndsWith(lean ? " (Downloaded)" : " (Included)") && !Find(combo, mixed).NeedsDownload, "Choosing a file pack updates its availability in the other menus");
+                SelectPack(form, second, true, lean, false);
+                Check(Find(fileCombo, second).ToString().EndsWith(lean ? " (Downloaded)" : " (Included)"), "A document pack shows its own availability once chosen");
+                Offline();
+                SelectPack(form, mixed, true, false, false);
+                if (lean) SelectPack(form, "Craft-Icons-Komplett/Dunkel", true, true, true);
+                SelectPack(form, second, true, false, false);
+                Check(Field<ListView>(form, "filePreview").Items.Cast<ListViewItem>().Any(row => row.Text == "PhotoCraft") && Field<ListView>(form, "filePreview").Visible, "File picker previews PhotoCraft document artwork");
                 var saved = json.Deserialize<Preferences>(File.ReadAllText(prefs));
-                Check(saved.Theme == first && saved.FileTheme == first, "Successful app and file choices are persisted independently");
+                Check(saved.Theme == first && saved.FileTheme == second, "Successful app and file choices are persisted independently");
                 if (lean) {
-                    Check(Directory.GetFiles(cache, ".complete", SearchOption.AllDirectories).Length == 2 &&
+                    Check(Cached(cache) == 4 &&
                           Directory.GetDirectories(cache, ".loading-*", SearchOption.AllDirectories).Length == 0,
-                          "Only selected packs were cached and a failed download published no partial files");
+                          "Only chosen packs were cached and a failed download published no partial files");
                 } else Check(!Directory.Exists(cache), "The bundled edition loads both pack types entirely offline");
+                typeof(LauncherForm).GetMethod("ExitLauncher", Fields).Invoke(form, null);
+            }
+        }
+    }
+    // A build that carried every pack kept them beside the app. After an upgrade a chosen pack is saved but not on the computer.
+    static void CheckChosenPacksKept(string windows, string root)
+    {
+        const string app = "Craft-Icons-Zach/Ink", file = "Craft-Icons-Komplett/Dunkel";
+        string state = Path.Combine(root, "chosen-state"), prefs = Path.Combine(state, "tray-preferences.json"), cache = Path.Combine(state, "downloads");
+        Directory.CreateDirectory(state);
+        var json = new JavaScriptSerializer();
+        File.WriteAllText(prefs, json.Serialize(new Preferences { Theme = app, FileTheme = file, Hotkey = new HotkeySettings { Enabled = false } }));
+        var fixture = new FixtureConfig { StateDirectory = state, ShortcutDirectory = new[] { root }, KeepOpenForAutomation = true };
+        string[] proxyNames = { "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY" };
+        var proxies = proxyNames.ToDictionary(name => name, Environment.GetEnvironmentVariable);
+        using (var show = new EventWaitHandle(false, EventResetMode.AutoReset))
+        using (var stop = new EventWaitHandle(false, EventResetMode.AutoReset)) {
+            try {
+                Offline();
+                using (var form = new LauncherForm(windows, fixture, true, show, stop)) {
+                    form.Start();
+                    WaitStarted(form);
+                    var saved = json.Deserialize<Preferences>(File.ReadAllText(prefs));
+                    Check(((ThemeEntry)Field<ComboBox>(form, "themes").SelectedItem).IsDefault && Field<ComboBox>(form, "fileThemes").SelectedIndex == 0 &&
+                          saved.Theme == app && saved.FileTheme == file && Cached(cache) == 0,
+                          "A chosen pack that cannot be downloaded stays the saved choice");
+                    Check(!form.Visible && !form.OwnedForms.Any(dialog => dialog.Visible) && Field<Label>(form, "status").Text.Contains("try again"),
+                          "The failed download is noted in the status line without opening the window or a dialog");
+                    typeof(LauncherForm).GetMethod("ExitLauncher", Fields).Invoke(form, null);
+                }
+            } finally {
+                foreach (var proxy in proxies) Environment.SetEnvironmentVariable(proxy.Key, proxy.Value);
+            }
+            using (var form = new LauncherForm(windows, fixture, true, show, stop)) {
+                form.Start();
+                WaitStarted(form);
+                var combo = Field<ComboBox>(form, "themes");
+                var fileCombo = Field<ComboBox>(form, "fileThemes");
+                var saved = json.Deserialize<Preferences>(File.ReadAllText(prefs));
+                Check(((ThemeEntry)combo.SelectedItem).Id == app && fileCombo.SelectedItem == Find(fileCombo, file) && saved.Theme == app && saved.FileTheme == file,
+                      "The next start downloads the chosen packs again and shows them in both lists");
+                Check(Cached(cache) == 2 && !Find(combo, app).NeedsDownload && !Find(fileCombo, file).NeedsDownload && !form.Visible &&
+                      Field<ListView>(form, "packPreview").Items.Count > 0 && Field<ListView>(form, "filePreview").Items.Count > 0,
+                      "Only the two chosen packs were downloaded, and their artwork is ready");
+                typeof(LauncherForm).GetMethod("ExitLauncher", Fields).Invoke(form, null);
+            }
+        }
+    }
+    // A new installation has applied nothing. A pack that is only chosen never becomes the Launcher's pack at the next start.
+    static void CheckChosenPackNotApplied(string windows, string root)
+    {
+        const string pack = "Craft-Icons-Zach/Ink";
+        string state = Path.Combine(root, "browsed-state"), prefs = Path.Combine(state, "tray-preferences.json");
+        Directory.CreateDirectory(state);
+        var json = new JavaScriptSerializer();
+        File.WriteAllText(prefs, json.Serialize(new Preferences { Hotkey = new HotkeySettings { Enabled = false } }));
+        var fixture = new FixtureConfig { StateDirectory = state, ShortcutDirectory = new[] { root }, KeepOpenForAutomation = true };
+        var applied = typeof(LauncherForm).GetMethod("AppliedTheme", Fields);
+        using (var show = new EventWaitHandle(false, EventResetMode.AutoReset))
+        using (var stop = new EventWaitHandle(false, EventResetMode.AutoReset))
+        for (int pass = 0; pass < 2; pass++) using (var form = new LauncherForm(windows, fixture, true, show, stop)) {
+            form.Start();
+            form.ShowManager();
+            WaitStarted(form);
+            Field<TabControl>(form, "pages").SelectedIndex = 1;
+            if (pass == 0) SelectPack(form, pack, false, true, false);
+            var saved = json.Deserialize<Preferences>(File.ReadAllText(prefs));
+            Check(saved.Theme == pack && saved.AppliedTheme == "" && applied.Invoke(form, null) == null &&
+                  ((ThemeEntry)Field<ComboBox>(form, "themes").SelectedItem).Id == pack,
+                  pass == 0 ? "Choosing a pack on a new installation applies nothing"
+                            : "After a restart the Launcher still shows no pack that was only chosen");
+            typeof(LauncherForm).GetMethod("ExitLauncher", Fields).Invoke(form, null);
+        }
+    }
+    // A pack that was downloaded before it gained file artwork is still offered as a file type pack.
+    static void CheckGainedFileArtwork(string windows, string root)
+    {
+        const string pack = "Craft-Icons-Mike22/CraftApps AIO November - Dark";
+        string older = Path.Combine(root, "older", "Windows"), state = Path.Combine(root, "gained-state");
+        Directory.CreateDirectory(state);
+        Directory.CreateDirectory(older);
+        foreach (string folder in Directory.GetDirectories(windows, "*", SearchOption.AllDirectories)) Directory.CreateDirectory(Path.Combine(older, folder.Substring(windows.Length + 1)));
+        foreach (string source in Directory.GetFiles(windows, "*", SearchOption.AllDirectories)) File.Copy(source, Path.Combine(older, source.Substring(windows.Length + 1)));
+        // The earlier pack list has this pack's app icons and none of its file artwork.
+        string seed = Path.Combine(older, "OnDemand.tsv");
+        string[] rows = File.ReadAllLines(seed);
+        string[] kept = rows.Where(row => !row.Contains("\t" + pack + "/FileTypes/")).ToArray();
+        Check(rows.Length - kept.Length == 14, "The earlier pack list leaves out the pack's 14 file type icons");
+        File.WriteAllLines(seed, kept);
+        var json = new JavaScriptSerializer();
+        File.WriteAllText(Path.Combine(state, "tray-preferences.json"), json.Serialize(new Preferences { Hotkey = new HotkeySettings { Enabled = false } }));
+        var fixture = new FixtureConfig { StateDirectory = state, ShortcutDirectory = new[] { root }, KeepOpenForAutomation = true };
+        using (var show = new EventWaitHandle(false, EventResetMode.AutoReset))
+        using (var stop = new EventWaitHandle(false, EventResetMode.AutoReset)) {
+            using (var form = new LauncherForm(older, fixture, true, show, stop)) {
+                form.Start(); form.ShowManager();
+                WaitStarted(form);
+                Field<TabControl>(form, "pages").SelectedIndex = 1;
+                Check(!Field<ComboBox>(form, "fileThemes").Items.OfType<ThemeEntry>().Any(t => t.Id == pack), "With the earlier pack list the pack is an app icon pack only");
+                SelectPack(form, pack, false, true, false);
+                typeof(LauncherForm).GetMethod("ExitLauncher", Fields).Invoke(form, null);
+            }
+            using (var form = new LauncherForm(windows, fixture, true, show, stop)) {
+                form.Start(); form.ShowManager();
+                WaitStarted(form);
+                Field<TabControl>(form, "pages").SelectedIndex = 1;
+                var combo = Field<ComboBox>(form, "themes");
+                var fileCombo = Field<ComboBox>(form, "fileThemes");
+                ThemeEntry local = Find(combo, pack);
+                Check(((ThemeEntry)combo.SelectedItem).Id == pack && local.UpdateAvailable && !local.HasFileIcons && local.PublishedFileIconCount == 14,
+                      "The copy on the computer has no file artwork, and its update brings 14 file type icons");
+                Check(fileCombo.Items.OfType<ThemeEntry>().Count(t => t.Id == pack) == 1 && Find(fileCombo, pack).ToString().EndsWith(" (Update available)") && fileCombo.SelectedIndex == 0,
+                      "The file type list offers the pack before its update is downloaded");
+                SelectPack(form, pack, true, true, false);
+                var saved = json.Deserialize<Preferences>(File.ReadAllText(Path.Combine(state, "tray-preferences.json")));
+                Check(local.HasFileIcons && !local.UpdateAvailable && saved.FileTheme == pack && fileCombo.SelectedItem == Find(fileCombo, pack) &&
+                      Find(combo, pack).ToString().EndsWith(" (Downloaded)"),
+                      "Choosing it there downloads the update and selects its file artwork");
                 typeof(LauncherForm).GetMethod("ExitLauncher", Fields).Invoke(form, null);
             }
         }
@@ -243,7 +393,8 @@ static partial class PackEditionTests
             int before = combo.Items.OfType<ThemeEntry>().Count(t => !t.IsDefault);
             byte[] prefs = File.ReadAllBytes(Path.Combine(state, "tray-preferences.json"));
             if (pass == 1) {
-                Check(before >= 32 && Find(combo, id) != null, "The refreshed list survives an offline restart");
+                // The app list holds the 27 app packs. The five packs with file type artwork only are in the other list.
+                Check(before >= 27 && Find(combo, id) != null, "The refreshed list survives an offline restart");
                 byte[] saved = File.ReadAllBytes(snapshot);
                 command().PerformClick();
                 Wait(() => !Field<bool>(form, "busy"));
@@ -263,17 +414,15 @@ static partial class PackEditionTests
                 Check(Field<bool>(form, "busy") && !refresh.Enabled && !command().Enabled, "Both refresh controls are disabled while the status bar is checking");
                 Wait(() => !Field<bool>(form, "busy"));
                 int after = combo.Items.OfType<ThemeEntry>().Count(t => !t.IsDefault);
-                Check(refresh.Enabled && File.Exists(snapshot) && after >= 32 && Find(combo, id) != null,
+                Check(refresh.Enabled && File.Exists(snapshot) && after >= 27 && after >= before && Find(combo, id) != null,
                     "The button reads the public catalog, refreshes the app dropdown (" + before + " to " + after + ") and is ready to use again. " + Field<Label>(form, "status").Text);
                 Check(MenuLabel(form, Find(combo, id)) == Find(combo, id).ToString(), "The tray theme menu shows the refreshed entry and its availability");
-                var dialog = typeof(LauncherForm).GetNestedType("ProjectFileDialog", BindingFlags.NonPublic);
-                using (var files = (Form)Activator.CreateInstance(dialog, new object[] { form, null })) {
-                    Check(Find(Field<ComboBox>(files, "packs"), id) != null, "The File icons dropdown includes the refreshed pack");
-                }
+                var fileCombo = Field<ComboBox>(form, "fileThemes");
+                Check(fileCombo.Items.OfType<ThemeEntry>().Count(t => t.Pack == "Craft-Icons-Komplett") == 5 && fileCombo.Items.OfType<ThemeEntry>().All(t => t.HasFileIcons), "The file type dropdown lists the refreshed file type packs");
                 Check(!Directory.Exists(Path.Combine(state, "downloads")) && !Directory.Exists(Path.Combine(state, "pack-previews")), "Refreshing requests metadata without downloading packs or WebP artwork");
                 Check(prefs.SequenceEqual(File.ReadAllBytes(Path.Combine(state, "tray-preferences.json"))), "Refreshing preserves the app and file pack preferences");
                 string newPackLabel = Find(combo, id).ToString();
-                string updatedPackLabel = Find(combo, "Craft-Icons-Komplett/Standard").ToString();
+                string updatedPackLabel = Find(fileCombo, "Craft-Icons-Komplett/Standard").ToString();
                 typeof(LauncherForm).GetMethod("ExitLauncher", Fields).Invoke(form, null);
                 CheckUpdateBadge(windows, state, fixture, snapshot, newPackLabel, updatedPackLabel);
                 Offline();
@@ -377,7 +526,7 @@ static partial class PackEditionTests
             Check(PackUpdateCount(form) == 0 && refresh.AccessibleDescription == initialDescription &&
                   !marked.SequenceEqual(RefreshButtonCorner(refresh)),
                   "Refreshing manually acknowledges the changes and removes the visible badge");
-            Check(Find(combo, omitted).ToString() == omittedLabel && Find(combo, changed).ToString() == changedLabel &&
+            Check(Find(combo, omitted).ToString() == omittedLabel && Find(Field<ComboBox>(form, "fileThemes"), changed).ToString() == changedLabel &&
                   savedPreferences.SequenceEqual(File.ReadAllBytes(preferences)) &&
                   !Directory.Exists(Path.Combine(state, "downloads")) && !Directory.Exists(Path.Combine(state, "pack-previews")),
                   "Acknowledging the badge preserves pack availability and leaves artwork downloads to the user");

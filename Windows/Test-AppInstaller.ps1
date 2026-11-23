@@ -20,7 +20,6 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 if ([string]::IsNullOrWhiteSpace($InstallerScript)) { $InstallerScript = Join-Path $PSScriptRoot 'BetterIcon.Setup.iss' }
 $payload = [IO.Path]::GetFullPath($PayloadRoot).TrimEnd('\')
-$editionSuffix = if (Test-Path -LiteralPath (Join-Path $payload 'Windows\OnDemand.tsv')) { '-OnDemand' } else { '' }
 $compiler = [IO.Path]::GetFullPath($CompilerPath)
 $scriptPath = [IO.Path]::GetFullPath($InstallerScript)
 $runtime = Join-Path $payload 'Windows\BetterIcon-Tray.exe'
@@ -44,6 +43,11 @@ $shortcutName = 'BetterIcon TEST ' + $id
 $programs = [Environment]::GetFolderPath('Programs')
 $shortcutPath = Join-Path $programs ($shortcutName + '.lnk')
 $uninstallSubkey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\' + $testAppId + '_is1'
+# Disposable keys that stand in for the per-user Run and StartupApproved\Run keys. The real ones are only read.
+$fixtureKey = 'Software\BetterIcon-Fixtures\installer-' + $id
+$loginRunKey = $fixtureKey + '\Run'
+$loginApprovedKey = $fixtureKey + '\StartupApproved\Run'
+$realLoginKeys = @('Software\Microsoft\Windows\CurrentVersion\Run', 'Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run')
 $checks = New-Object 'Collections.Generic.List[object]'
 $commands = New-Object 'Collections.Generic.List[object]'
 $compiledSetups = New-Object 'Collections.Generic.List[object]'
@@ -145,26 +149,106 @@ function Assert-UserUnchanged([string]$Phase) {
 function Assert-StateUnchanged([hashtable]$Expected, [string]$Phase) {
     foreach ($path in $Expected.Keys) { Assert-Check ((Get-Digest $path) -eq $Expected[$path]) "$Phase preserves fixture state: $([IO.Path]::GetFileName($path))" }
 }
+function Get-LoginValue([string]$Key) {
+    $opened = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($Key)
+    if ($null -eq $opened) { return $null }
+    try { $opened.GetValue('BetterIcon') } finally { $opened.Dispose() }
+}
+function Get-RealLoginState {
+    # Read only: the user's own login entry for BetterIcon and Windows' Startup apps state for it.
+    @(foreach ($key in $realLoginKeys) {
+        $value = Get-LoginValue $key
+        if ($null -eq $value) { 'missing' } elseif ($value -is [byte[]]) { [BitConverter]::ToString($value) } else { [string]$value }
+    }) -join "`n"
+}
+function Get-ExpectedLogin([string]$TestVersion) {
+    $windows = Join-Path $install ('versions\' + $TestVersion + '\Windows')
+    '"' + (Join-Path $windows 'BetterIcon-Tray.exe') + '" --tray --source-folder "' + $windows + '" --config "' + $config + '"'
+}
 function Compile-TestSetup([string]$TestVersion) {
     $output = Join-Path $root ('setup-' + $TestVersion)
     $null = [IO.Directory]::CreateDirectory($output)
     $arguments = @('/Qp', ('/DPayloadRoot=' + $payload), ('/DAppVersion=' + $TestVersion), ('/DOutputDir=' + $output),
-        ('/DTestAppId=' + $testAppId), ('/DTestInstallDir=' + $install), ('/DTestShortcutName=' + $shortcutName), ('/DTestFixturePath=' + $config), $scriptPath)
-    if ($editionSuffix) { $arguments = @('/DOnDemand=1') + $arguments }
+        ('/DTestAppId=' + $testAppId), ('/DTestInstallDir=' + $install), ('/DTestShortcutName=' + $shortcutName), ('/DTestFixturePath=' + $config), ('/DTestRunKey=' + $loginRunKey), $scriptPath)
     & $compiler @arguments 2>&1 | Out-File -LiteralPath (Join-Path $output 'compile.log') -Encoding UTF8
     if ($LASTEXITCODE -ne 0) { throw "Inno Setup test compilation failed; see $output\compile.log" }
-    $setup = Join-Path $output ('BetterIcon-TEST-Setup-' + $TestVersion + $editionSuffix + '.exe')
+    $setup = Join-Path $output ('BetterIcon-TEST-Setup-' + $TestVersion + '.exe')
     Assert-Check (Test-Path -LiteralPath $setup -PathType Leaf) "Compiled the isolated $TestVersion installer"
     $compiledSetups.Add([pscustomobject]@{ Version = $TestVersion; Path = $setup; SHA256 = Get-Digest $setup; CompileLog = (Join-Path $output 'compile.log') })
     return $setup
 }
-function Install-TestSetup([string]$Setup, [string]$Phase) {
-    Invoke-LocalProcess $Setup @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/SP-', '/NORESTART', ('/LOG=' + (Quote-Argument (Join-Path $root ($Phase + '.log'))))) $Phase
+function Install-TestSetup([string]$Setup, [string]$Phase, [string[]]$Extra = @()) {
+    Invoke-LocalProcess $Setup (@('/VERYSILENT', '/SUPPRESSMSGBOXES', '/SP-', '/NORESTART', ('/LOG=' + (Quote-Argument (Join-Path $root ($Phase + '.log'))))) + $Extra) $Phase
     Assert-Check (@(Get-TestProcesses).Count -eq 0) "$Phase closes only the fixture instance and does not launch during silent setup"
     Assert-UserUnchanged $Phase
 }
+# ---- Optional downloads ---------------------------------------------------------------------------------------------
+# Setup decides what its optional downloads page offers from the installed program's answers and logs each decision.
+# The WebP decoder seam stands in for a PC without Windows' WebP decoder, and the libwebp release zips come from a local
+# folder (BETTERICON_TEST_LIBWEBP), never from GitHub. Pack downloads are not started here: they would need GitHub.
+$downloadSeams = @('BETTERICON_WEBP_DECODER', 'BETTERICON_LIBWEBP_SOURCE')
+function Set-DownloadSeams([hashtable]$Values) {
+    foreach ($name in $downloadSeams) { [Environment]::SetEnvironmentVariable($name, $(if ($Values -and $Values.ContainsKey($name)) { $Values[$name] } else { $null })) }
+}
+function Get-SetupLog([string]$Phase) { @(Get-Content -LiteralPath (Join-Path $root ($Phase + '.log')) -Encoding UTF8) }
+function Test-SetupLog([string]$Phase, [string]$Text) { @(Get-SetupLog $Phase | Where-Object { $_.Contains($Text) }).Count -gt 0 }
+function Invoke-WebPProbe([string]$TestVersion, [hashtable]$Seams) {
+    $windows = Join-Path $install ('versions\' + $TestVersion + '\Windows')
+    Set-DownloadSeams $Seams
+    try {
+        $process = Start-Process -FilePath (Join-Path $windows 'BetterIcon-Tray.exe') -ArgumentList ('--probe-webp --source-folder ' + (Quote-Argument $windows) + ' --config ' + (Quote-Argument $config)) -PassThru -Wait -WindowStyle Hidden
+        try { return $process.ExitCode } finally { $process.Dispose() }
+    }
+    finally { Set-DownloadSeams @{} }
+}
+function Get-ExpectedPackOffers {
+    # The packs of each list and their sizes, worked out here from the catalog and the size table the package carries.
+    $sizes = @{}
+    foreach ($line in [IO.File]::ReadAllLines((Join-Path $payload 'Windows\PackSizes.tsv'))) {
+        if ($line.StartsWith('#')) { continue }
+        $fields = $line.Split([char]9); $sizes[$fields[0]] = [long]$fields[1]
+    }
+    $app = @{}; $file = @{}
+    foreach ($row in @([IO.File]::ReadAllLines((Join-Path $payload 'Windows\OnDemand.tsv')) | Select-Object -Skip 1)) {
+        $parts = $row.Split([char]9)[2].Split('/')
+        $documents = $parts[-2] -ceq 'FileTypes'
+        $depth = if ($documents) { $parts.Count - 1 } else { $parts.Count }
+        $group = if ($parts[0] -eq 'Craft-Icons-OmegaDarling') { 'Craft-Icons-Zach' } else { $parts[0] }
+        $id = $group + '/' + $(if ($depth -eq 3) { $parts[1] } else { 'Root' })
+        if ($id -like 'Craft-Icons-VimiummuimiV/Modern Flat - *') { continue }
+        if ($documents -or $group -eq 'Craft-Icons-Komplett') { $file[$id] = $true } else { $app[$id] = $true }
+    }
+    [pscustomobject]@{ AppCount = $app.Count; AppBytes = [long](($app.Keys | ForEach-Object { $sizes[$_] } | Measure-Object -Sum).Sum)
+        FileCount = $file.Count; FileBytes = [long](($file.Keys | ForEach-Object { $sizes[$_] } | Measure-Object -Sum).Sum) }
+}
+function Wait-SetupDownloads([int]$Before, [int]$Seconds = 120) {
+    # The tray program records each run of Setup's downloads in the fixture's event log.
+    $trace = Join-Path $state 'tray-events.jsonl'
+    $finished = { @(if (Test-Path -LiteralPath $trace) { Get-Content -LiteralPath $trace | Where-Object { $_.Contains('Setup downloads finished') } }) }
+    $done = Wait-Until { @(& $finished).Count -gt $Before } $Seconds
+    if (-not $done) { throw 'BetterIcon did not finish the downloads Setup handed over.' }
+    # The event's own text: the trace is JSON, which writes an apostrophe as '.
+    [string]((@(& $finished) | Select-Object -Last 1) | ConvertFrom-Json).Event
+}
+function Get-FinishedCount { $trace = Join-Path $state 'tray-events.jsonl'; @(if (Test-Path -LiteralPath $trace) { Get-Content -LiteralPath $trace | Where-Object { $_.Contains('Setup downloads finished') } }).Count }
+function Stop-FixtureApp([string]$Phase) {
+    # The app refuses Setup's stop request while an operation runs, as it does for Setup itself, so ask up to three times.
+    $arguments = @('--source-folder', (Quote-Argument (Join-Path $payload 'Windows')), '--config', (Quote-Argument $config), '--stop-and-wait')
+    $code = -1
+    for ($attempt = 0; $attempt -lt 3 -and $code -ne 0; $attempt++) {
+        $process = Start-Process -FilePath $runtime -ArgumentList ($arguments -join ' ') -PassThru -WindowStyle Hidden
+        try {
+            if (-not $process.WaitForExit(30000)) { throw "$Phase shutdown exceeded 30 seconds (PID $($process.Id)); it was not force-terminated. Logs: $root" }
+            $process.WaitForExit(); $code = $process.ExitCode
+        }
+        finally { $process.Dispose() }
+        $commands.Add([pscustomobject]@{ Name = "$Phase shutdown"; File = $runtime; Arguments = $arguments; ExitCode = $code })
+    }
+    Assert-Check ($code -eq 0) "$Phase shutdown exits successfully without a reboot"
+    Assert-Check (Wait-Until { @(Get-TestProcesses).Count -eq 0 }) "$Phase leaves no fixture instance running"
+}
 function Assert-Installed([string]$TestVersion) {
-    $versionRoot = Join-Path $install ('versions\' + $TestVersion + $editionSuffix)
+    $versionRoot = Join-Path $install ('versions\' + $TestVersion)
     $exe = Join-Path $versionRoot 'Windows\BetterIcon-Tray.exe'
     $matches = $true
     foreach ($entry in $payloadFiles) {
@@ -196,15 +280,12 @@ function Assert-Installed([string]$TestVersion) {
     $catalog = Get-Content -LiteralPath $response -Raw | ConvertFrom-Json
     Assert-Check ($catalog.Success -and $catalog.Catalog.Version -eq $version -and @($catalog.Catalog.Apps).Count -eq 1 -and $catalog.Catalog.Apps[0].Shortcut -eq (Join-Path $links 'PhotoCraft.lnk')) 'Installed bridge discovers only the disposable application shortcut'
     $icons = @($catalog.Catalog.Themes | ForEach-Object { $_.Icons })
-    if ($editionSuffix) {
-        Assert-Check ($icons.Count -eq 0 -and @($catalog.Catalog.Themes | Where-Object NeedsDownload).Count -eq 32 -and -not (Test-Path -LiteralPath (Join-Path $state 'downloads'))) 'Installed on-demand catalog lists all packs without fetching artwork'
-    } else {
-        Assert-Check ($icons.Count -gt 0 -and @($icons | Where-Object { -not $_.Path.StartsWith($versionRoot + '\', [StringComparison]::OrdinalIgnoreCase) }).Count -eq 0) 'Installed catalog resolves bundled artwork without using the source checkout'
-    }
+    Assert-Check ($icons.Count -eq 0 -and @($catalog.Catalog.Themes | Where-Object NeedsDownload).Count -eq 41 -and -not (Test-Path -LiteralPath (Join-Path $state 'downloads')) -and
+        @(Get-ChildItem -LiteralPath $versionRoot -Directory -Filter 'Craft-Icons-*').Count -eq 0) 'The installed catalog lists all packs, carries none of their artwork and fetches nothing'
 }
 function Start-InstalledLink([string]$TestVersion) {
     Start-Process -FilePath $shortcutPath -WindowStyle Hidden
-    $expected = Join-Path $install ('versions\' + $TestVersion + $editionSuffix + '\Windows\BetterIcon-Tray.exe')
+    $expected = Join-Path $install ('versions\' + $TestVersion + '\Windows\BetterIcon-Tray.exe')
     # RefreshCatalog assigns this title after loading the library and artwork;
     # its finally block clears busy before the stop timer can run. A merely shown
     # window can still be loading and must correctly refuse an installer stop.
@@ -242,13 +323,14 @@ try {
         $running = Get-Process -Id $_.ProcessId -ErrorAction Stop
         [pscustomobject]@{ Id = $running.Id; Path = $running.Path; StartTicks = $running.StartTime.ToUniversalTime().Ticks }
     })
-    Write-Json (Join-Path $root 'user-baseline.json') @{ Files = $guard; Processes = $userProcesses }
+    $realLogin = Get-RealLoginState
+    Write-Json (Join-Path $root 'user-baseline.json') @{ Files = $guard; Processes = $userProcesses; Login = $realLogin }
     Assert-Check ($null -eq (Get-UninstallRecord) -and -not (Test-Path -LiteralPath $shortcutPath)) 'Generated installer identity does not collide with an existing installation'
     $payloadFiles = @(Get-ChildItem -LiteralPath $payload -Recurse -File | ForEach-Object {
         [pscustomobject]@{ RelativePath = $_.FullName.Substring($payload.Length + 1); SHA256 = Get-Digest $_.FullName }
     })
     Write-Json (Join-Path $root 'payload-files.json') $payloadFiles
-    Write-Json $config @{ ShortcutDirectory = @($links); StateDirectory = $state; KeepOpenForAutomation = $true }
+    Write-Json $config @{ ShortcutDirectory = @($links); StateDirectory = $state; KeepOpenForAutomation = $true; LoginRunKey = $loginRunKey; LoginApprovedKey = $loginApprovedKey }
     $packId = [guid]::NewGuid().ToString('N'); $revision = [guid]::NewGuid().ToString('N')
     $packRoot = Join-Path $state ('packs\' + $packId + '\' + $revision)
     $null = [IO.Directory]::CreateDirectory($packRoot)
@@ -297,38 +379,116 @@ try {
     $installedVersions.Add($firstVersion)
     Assert-Installed $firstVersion
     Assert-Check ((Get-Digest $shortcutPath) -ne $legacyLinkHash) 'Fresh setup replaces an identified legacy BetterIcon launcher shortcut'
+    Assert-Check ($null -eq (Get-LoginValue $loginRunKey)) 'Fresh setup adds no login entry by itself'
     $unrelated = Join-Path $install 'user-owned-keep.txt'
     [IO.File]::WriteAllText($unrelated, $id, $utf8)
     $retainedPaths += $unrelated
     Start-InstalledLink $firstVersion
+    $firstPreferences = Get-Content -LiteralPath $preferencesPath -Raw | ConvertFrom-Json
+    Assert-Check ((Get-LoginValue $loginRunKey) -ieq (Get-ExpectedLogin $firstVersion) -and $firstPreferences.OpenAtLogin -eq $true) 'The installed app adds its login entry once at its first start, hidden in the tray'
     Assert-SingleInstance
     Invoke-LocalProcess $runtime @('--source-folder', (Quote-Argument (Join-Path $payload 'Windows')), '--config', (Quote-Argument $config), '--stop-and-wait') 'Fixture graceful shutdown' 30
     Assert-Check (@(Get-TestProcesses).Count -eq 0) 'Waitable shutdown releases the installed fixture process'
     $retainedPaths += $preferencesPath
     $expectedState = @{}; foreach ($path in $retainedPaths) { $expectedState[$path] = Get-Digest $path }
     Start-InstalledLink $firstVersion
+    # An earlier build of the same version could carry every pack beside the catalog.
+    $leftoverPack = Join-Path $install ('versions\' + $firstVersion + '\Craft-Icons-Leftover\Style')
+    $leftoverCatalog = Join-Path $install ('versions\' + $firstVersion + '\Windows\Included.tsv')
+    $null = [IO.Directory]::CreateDirectory($leftoverPack)
+    [IO.File]::WriteAllText((Join-Path $leftoverPack 'PhotoCraft.ico'), $id, $utf8)
+    [IO.File]::WriteAllText($leftoverCatalog, $id, $utf8)
     Install-TestSetup $firstSetup 'reinstall-running-fixture'
     Assert-Installed $firstVersion
+    Assert-Check (-not (Test-Path -LiteralPath (Split-Path -Parent $leftoverPack)) -and -not (Test-Path -LiteralPath $leftoverCatalog)) 'Installing over an all-packs build of the same version removes its pack artwork and its catalog'
     Assert-StateUnchanged $expectedState 'Reinstall'
+
+    # Setup's optional downloads: what the page offers, and the hand-over to the installed app.
+    Assert-Check ((Invoke-WebPProbe $firstVersion @{}) -eq 0) 'The bundled tray program reports through its exit code that Windows decodes WebP'
+    Assert-Check ((Test-SetupLog 'fresh-install' 'Optional downloads: none requested (silent install without /DOWNLOADS).') -and -not (Test-Path -LiteralPath (Join-Path $state 'setup-downloads.json')) -and
+        -not (Test-Path -LiteralPath (Join-Path $state 'libwebp'))) 'A silent install downloads nothing and starts nothing unless /DOWNLOADS asks'
+    Install-TestSetup $firstSetup 'downloads-windows-decodes' @('/DOWNLOADS=webp')
+    Assert-Check ((Test-SetupLog 'downloads-windows-decodes' 'Optional downloads: WebP support not offered: Windows decodes WebP.') -and
+        (Test-SetupLog 'downloads-windows-decodes' 'Optional downloads: none requested (/DOWNLOADS=webp asks for nothing that is offered).')) 'Setup hides the WebP choice when Windows decodes WebP'
+    $offers = Get-ExpectedPackOffers
+    Assert-Check ($offers.AppCount -gt 0 -and $offers.FileCount -gt 0 -and $offers.AppBytes -gt 0 -and $offers.FileBytes -gt 0 -and
+        (Test-SetupLog 'downloads-windows-decodes' ('Optional downloads: all app icon packs offered: ' + $offers.AppCount + ' packs, ' + $offers.AppBytes + ' bytes.')) -and
+        (Test-SetupLog 'downloads-windows-decodes' ('Optional downloads: all file type icon packs offered: ' + $offers.FileCount + ' packs, ' + $offers.FileBytes + ' bytes.'))) 'Setup offers all app icon packs and all file type icon packs with their sizes'
+    # The page's own wording comes from the installed program: one pack in the singular, the size as BetterIcon shows sizes.
+    $choiceText = { param([string]$Label, [int]$Count, [long]$Bytes)
+        $size = if ($Bytes -lt 1MB) { [string][Math]::Max(1, [Math]::Floor(($Bytes + 512) / 1024)) + ' KB' } else { ($Bytes / 1048576.0).ToString('0.0', [Globalization.CultureInfo]::InvariantCulture) + ' MB' }
+        $Label + ' (' + $Count + $(if ($Count -eq 1) { ' pack, ' } else { ' packs, ' }) + $size + ')'
+    }
+    Assert-Check ((Test-SetupLog 'downloads-windows-decodes' ('Optional downloads: choice shown: ' + (& $choiceText 'All app icon packs' $offers.AppCount $offers.AppBytes))) -and
+        (Test-SetupLog 'downloads-windows-decodes' ('Optional downloads: choice shown: ' + (& $choiceText 'All file type icon packs' $offers.FileCount $offers.FileBytes)))) 'Setup''s page shows each pack choice as BetterIcon words it, with its count and size'
+    Assert-Check ((Invoke-WebPProbe $firstVersion @{ BETTERICON_WEBP_DECODER = 'libwebp' }) -eq 1) 'The bundled tray program reports through its exit code that WebP support is needed when the seam hides Windows'' decoder'
+    $pinLines = [IO.File]::ReadAllLines((Join-Path $payload 'Windows\LibWebP.ini'))
+    $x64Section = [Array]::IndexOf($pinLines, '[x64]')
+    $x64Pins = @{}; foreach ($line in $pinLines[($x64Section + 1)..($x64Section + 5)]) { $pair = $line.Split('=', 2); $x64Pins[$pair[0]] = $pair[1] }
+    $emptyRelease = Join-Path $root 'empty libwebp release'
+    $null = [IO.Directory]::CreateDirectory($emptyRelease)
+    $finishedBefore = Get-FinishedCount
+    Set-DownloadSeams @{ BETTERICON_WEBP_DECODER = 'libwebp'; BETTERICON_LIBWEBP_SOURCE = $emptyRelease }
+    try { Invoke-LocalProcess $firstSetup @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/SP-', '/NORESTART', ('/LOG=' + (Quote-Argument (Join-Path $root 'downloads-failing.log'))), '/DOWNLOADS=webp') 'Silent install that hands over WebP support from an empty release' }
+    finally { Set-DownloadSeams @{} }
+    Assert-UserUnchanged 'Failed download'
+    $finished = Wait-SetupDownloads $finishedBefore
+    $kept = Get-Content -LiteralPath (Join-Path $state 'setup-downloads.json') -Raw | ConvertFrom-Json
+    Assert-Check ((Test-SetupLog 'downloads-failing' ('Optional downloads: WebP support offered (Windows can''t decode WebP), ' + $x64Pins['ZipBytes'] + ' bytes.')) -and
+        (Test-SetupLog 'downloads-failing' 'Optional downloads: requested: webp.')) 'Setup offers WebP support with its size when the seam says Windows cannot decode WebP'
+    Assert-Check ((Test-SetupLog 'downloads-failing' 'Optional downloads: BetterIcon starts in the tray to download webp.') -and $finished.Contains('Couldn''t install the WebP support you chose in Setup.') -and
+        $kept.WebP -and $kept.Attempts -eq 1 -and $kept.Failure -like 'Couldn''t install the WebP support you chose in Setup.*' -and -not (Test-Path -LiteralPath (Join-Path $state 'libwebp\1.6.0\x64\libwebpdecoder.dll'))) 'A failed WebP download lets Setup finish and BetterIcon keeps offering it'
+    Stop-FixtureApp 'Failed download'
+    $packages = $env:BETTERICON_TEST_LIBWEBP
+    $webpInstalled = $false
+    if (-not $packages -or -not (Test-Path -LiteralPath (Join-Path $packages $x64Pins['Zip']) -PathType Leaf)) {
+        Write-Host 'SKIP A silent install with /DOWNLOADS=webp hands WebP support to BetterIcon, which installs the pinned library (BETTERICON_TEST_LIBWEBP names no folder with the release zips)'
+        Write-Host 'SKIP An upgrade never offers WebP support that is already installed (BETTERICON_TEST_LIBWEBP names no folder with the release zips)'
+    }
+    else {
+        $finishedBefore = Get-FinishedCount
+        Set-DownloadSeams @{ BETTERICON_WEBP_DECODER = 'libwebp'; BETTERICON_LIBWEBP_SOURCE = $packages }
+        try { Invoke-LocalProcess $firstSetup @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/SP-', '/NORESTART', ('/LOG=' + (Quote-Argument (Join-Path $root 'downloads-installing.log'))), '/DOWNLOADS=webp') 'Silent install that hands over WebP support' }
+        finally { Set-DownloadSeams @{} }
+        Assert-UserUnchanged 'WebP support download'
+        $finished = Wait-SetupDownloads $finishedBefore
+        $libwebpDll = Join-Path $state 'libwebp\1.6.0\x64\libwebpdecoder.dll'
+        Assert-Check ($finished.Contains('Installed the WebP support you chose in Setup.') -and (Test-Path -LiteralPath $libwebpDll -PathType Leaf) -and (Get-Digest $libwebpDll) -eq $x64Pins['DllSha256'] -and
+            (Test-Path -LiteralPath (Join-Path $state 'libwebp\1.6.0\x64\COPYING')) -and -not (Test-Path -LiteralPath (Join-Path $state 'setup-downloads.json'))) 'A silent install with /DOWNLOADS=webp hands WebP support to BetterIcon, which installs the pinned library'
+        Stop-FixtureApp 'WebP support download'
+        $webpInstalled = $true
+    }
     Start-InstalledLink $firstVersion
-    Install-TestSetup $nextSetup 'upgrade-running-fixture'
+    if ($webpInstalled) {
+        # An empty release folder: an offer that should not be made fails here, never reaches GitHub.
+        Set-DownloadSeams @{ BETTERICON_WEBP_DECODER = 'libwebp'; BETTERICON_LIBWEBP_SOURCE = $emptyRelease }
+        try { Install-TestSetup $nextSetup 'upgrade-running-fixture' @('/DOWNLOADS=webp') }
+        finally { Set-DownloadSeams @{} }
+        Assert-Check (Test-SetupLog 'upgrade-running-fixture' 'Optional downloads: WebP support not offered: already installed.') 'An upgrade never offers WebP support that is already installed'
+    }
+    else { Install-TestSetup $nextSetup 'upgrade-running-fixture' }
     $installedVersions.Add($nextVersion)
+    Assert-Check ((Get-LoginValue $loginRunKey) -ieq (Get-ExpectedLogin $nextVersion)) 'An upgrade points the existing login entry at the new version'
     Assert-Installed $nextVersion
     Assert-StateUnchanged $expectedState 'Upgrade'
+    Assert-Check (-not (Test-Path -LiteralPath (Join-Path $install ('versions\' + $firstVersion))) -and (Test-Path -LiteralPath $unrelated -PathType Leaf)) 'An upgrade removes the superseded version folder and leaves an unrelated file in place'
     Start-InstalledLink $nextVersion
     $record = Get-UninstallRecord
     if ($record.UninstallString -notmatch '^"([^"]+)"') { throw 'The registered uninstall command is not a quoted executable path.' }
     $uninstaller = [IO.Path]::GetFullPath($Matches[1])
     if (-not $uninstaller.StartsWith($install + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'The registered uninstaller escaped the isolated installation directory.' }
+    $loginBeforeUninstall = Get-LoginValue $loginRunKey
     Invoke-LocalProcess $uninstaller @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', ('/LOG=' + (Quote-Argument (Join-Path $root 'uninstall.log')))) 'Uninstall running fixture'
     Assert-Check (Wait-Until { $null -eq (Get-UninstallRecord) -and @(Get-TestProcesses).Count -eq 0 }) 'Uninstall removes its registration and closes the fixture instance'
     Assert-Check (-not (Test-Path -LiteralPath $shortcutPath)) 'Uninstall removes its Start-menu shortcut'
+    Assert-Check ($null -ne $loginBeforeUninstall -and $null -eq (Get-LoginValue $loginRunKey)) 'Uninstall removes the login entry'
     foreach ($installedVersion in $installedVersions) {
-        $remaining = @($payloadFiles | Where-Object { Test-Path -LiteralPath (Join-Path $install ('versions\' + $installedVersion + $editionSuffix + '\' + $_.RelativePath)) })
+        $remaining = @($payloadFiles | Where-Object { Test-Path -LiteralPath (Join-Path $install ('versions\' + $installedVersion + '\' + $_.RelativePath)) })
         Assert-Check ($remaining.Count -eq 0) "Uninstall removes owned payload files from version $installedVersion"
     }
     Assert-StateUnchanged $expectedState 'Uninstall'
     Assert-UserUnchanged 'Uninstall'
+    Assert-Check ((Get-RealLoginState) -ceq $realLogin) 'Setup and the installed app leave the real login entries untouched'
 }
 catch { $failure = $_.Exception.ToString(); Write-Warning $failure }
 finally {
@@ -346,6 +506,19 @@ finally {
         try { Assert-UserUnchanged 'Final isolation check' }
         catch { if ($null -eq $failure) { $failure = $_.Exception.ToString() } else { $failure += "`nIsolation: " + $_.Exception.Message } }
     }
+    # Only this run's own disposable key; the real Run keys were never written.
+    try {
+        [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree($fixtureKey, $false)
+        # Leave no empty parent key behind when this was the only fixture.
+        $fixtures = 'Software\BetterIcon-Fixtures'
+        $parent = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($fixtures)
+        if ($null -ne $parent) {
+            $empty = $parent.SubKeyCount -eq 0 -and $parent.ValueCount -eq 0
+            $parent.Close()
+            if ($empty) { [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKey($fixtures, $false) }
+        }
+    }
+    catch { if ($null -eq $failure) { $failure = $_.Exception.ToString() } }
     Write-Json (Join-Path $root 'results.json') @{
         StartedUtc = $started.ToString('o'); FinishedUtc = [DateTime]::UtcNow.ToString('o')
         Succeeded = ($null -eq $failure)

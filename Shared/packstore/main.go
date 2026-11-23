@@ -162,7 +162,7 @@ func (l *library) checkUpdates(previous updateCheck) (updateCheck, error) {
 		return updateCheck{}, err
 	}
 	for id, p := range l.visiblePacks(published.Packs) {
-		// The picker may retain a bundled Modern Flat when it is no longer published.
+		// The picker may retain a downloaded Modern Flat when it is no longer published.
 		if _, present := published.Packs[id]; present && known[id] != p.signature() {
 			result.Count++
 		}
@@ -303,10 +303,15 @@ func run(args []string) (any, error) {
 		}
 		err = l.acquire(l.currentID(args[3]))
 	case "preview":
-		if len(args) != 4 {
+		// "files" asks for the strip of the pack's file type artwork.
+		if len(args) != 4 && (len(args) != 5 || args[4] != "files") {
 			return nil, errors.New("Missing preview")
 		}
-		return l.thumbnail(l.currentID(args[3]))
+		key := l.currentID(args[3])
+		if len(args) == 5 {
+			key += fileSet
+		}
+		return l.thumbnail(key)
 	case "list":
 	default:
 		return nil, errors.New("Unknown catalog operation")

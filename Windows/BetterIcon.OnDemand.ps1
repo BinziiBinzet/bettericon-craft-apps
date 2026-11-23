@@ -57,7 +57,15 @@ function Get-DownloadCatalog {
     if ($saved) { $latest = $saved.Packs }
     if (![object]::ReferenceEquals($latest,$seed)) {
         foreach ($id in @($latest.Keys)) {
-            if ($seed.Contains($id) -and $seed[$id].Signature -ceq $latest[$id].Signature) { $latest[$id]=$seed[$id] }
+            if ($seed.Contains($id) -and $seed[$id].Signature -ceq $latest[$id].Signature) {
+                # The same files under the installed list's record. The signature leaves out the files' published names, which
+                # decide the opt-in for file types outside the index: that answer, and the record a download keeps, come from
+                # the refreshed list, as the shared helper reads them.
+                $copy = $seed[$id].PSObject.Copy()
+                $copy.UnlistedFileIconApps = $latest[$id].UnlistedFileIconApps
+                Add-Member -InputObject $copy -NotePropertyName ReceiptLines -NotePropertyValue ([string[]](@($latest[$id].Revision) + $latest[$id].Rows.ToArray())) -Force
+                $latest[$id]=$copy
+            }
         }
     }
     $installed = @{}
@@ -112,11 +120,51 @@ function Get-DownloadCatalog {
     foreach ($pack in $available.Values) { $pack.Status='Available' }
     foreach ($target in $latest.Values) {
         $local = $available[$target.Id]
-        if ($local) { $local.UpdateAvailable = $local.Signature -ne $target.Signature }
+        if ($local) {
+            $local.UpdateAvailable = $local.Signature -ne $target.Signature
+            # An update can bring file artwork that the copy on the computer lacks. The pack is then listed for files too.
+            $local.PublishedFileIconCount = if ($local.UpdateAvailable) { [int]$target.FileIconCount } else { 0 }
+            # The opt-in for file types outside the index is a file's published name, which the signature leaves out. A copy
+            # that is up to date answers as the catalog does; an older one ("Update available") as its own record.
+            if (!$local.UpdateAvailable) { $local.UnlistedFileIconApps = $target.UnlistedFileIconApps }
+        }
         else { $available[$target.Id]=$target }
     }
     $script:AvailableCatalog=$available; $script:DownloadCatalog=$latest
     return $latest
+}
+
+function Get-PackDownloadSizes {
+    # Download size in bytes of each pack ID in the installed catalog. Build-WindowsPackage.ps1 measures the artwork it
+    # packages against and writes PackSizes.tsv beside the catalog; a table written for another catalog is ignored. A
+    # source checkout has the artwork itself, so its sizes are measured here.
+    $sizes = @{}
+    $seedPath = Get-SeedCatalogPath
+    $table = Join-Path $PSScriptRoot 'PackSizes.tsv'
+    if ([IO.File]::Exists($table)) {
+        $sha = [Security.Cryptography.SHA256]::Create()
+        try { $catalogHash = ([BitConverter]::ToString($sha.ComputeHash([IO.File]::ReadAllBytes($seedPath)))).Replace('-','').ToLowerInvariant() } finally { $sha.Dispose() }
+        $lines = [IO.File]::ReadAllLines($table)
+        if (@($lines | Where-Object { $_ -ceq ('#catalog' + [char]9 + $catalogHash) }).Count) {
+            foreach ($line in $lines) {
+                if ($line.StartsWith('#')) { continue }
+                $f = $line.Split([char]9)
+                if ($f.Count -eq 3 -and $f[1] -match '^\d{1,12}$') { $sizes[$f[0]] = [long]$f[1] }
+            }
+            return $sizes
+        }
+    }
+    foreach ($line in @([IO.File]::ReadAllLines($seedPath) | Select-Object -Skip 1)) {
+        $f = $line.Split([char]9)
+        if ($f.Count -ne 4) { continue }
+        $asset = Get-CatalogAsset $f[2]
+        $file = Join-Path $script:RepositoryRoot $f[2].Replace('/', '\')
+        if (!$asset -or ![IO.File]::Exists($file)) { continue }
+        $group = if ($asset.Group -eq 'Craft-Icons-OmegaDarling') { 'Craft-Icons-Zach' } else { $asset.Group }
+        $id = $group + '/' + $asset.Name
+        $sizes[$id] = [long]$(if ($sizes.ContainsKey($id)) { $sizes[$id] } else { 0 }) + ([IO.FileInfo]::new($file)).Length
+    }
+    return $sizes
 }
 
 function Install-BetterIconDownloadedPack {
@@ -142,18 +190,27 @@ function Install-BetterIconDownloadedPack {
         Assert-RegularPath $pack.Path
         $state = Get-PackState
         $receipt = Join-Path (Join-Path $state 'pack-catalog/installed') ((Get-PathId (Join-Path $state $pack.Id)) + '.tsv')
+        # The record of the pack list the files were chosen from, so a later "Update available" answers with its names.
+        $record = if ($pack.PSObject.Properties['ReceiptLines']) { [string[]]$pack.ReceiptLines } else { [string[]](@($pack.Revision) + $pack.Rows.ToArray()) }
         if (Test-DownloadedPack $pack -Verify) {
-            Write-PackSnapshot $receipt ([string[]](@($pack.Revision) + $pack.Rows.ToArray()))
+            Write-PackSnapshot $receipt $record
             $script:DownloadCatalog=$null; return
         }
         [void][IO.Directory]::CreateDirectory($stage)
+        # Tests use a local folder laid out like the published artwork tree, never GitHub. Elevated passes download nothing.
+        $localSource = $env:BETTERICON_PACK_SOURCE
         foreach ($asset in $pack.Assets.Values) {
             $relative = ($asset.Source.Split('/') | ForEach-Object { [Uri]::EscapeDataString($_) }) -join '/'
             $url = 'https://raw.githubusercontent.com/BinziiBinzet/bettericon-craft-apps/'+$pack.Revision+'/'+$relative
             $file = Join-Path $stage $asset.File
             [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($file))
             $curl = Join-Path $env:SystemRoot 'System32\curl.exe'
-            if (Test-Path -LiteralPath $curl -PathType Leaf) {
+            if ($localSource) {
+                $local = Join-Path $localSource $asset.Source.Replace('/', '\')
+                if (![IO.File]::Exists($local)) { throw ("Could not download " + $pack.Name + ". Check your connection and choose the pack again.") }
+                [IO.File]::Copy($local, $file, $true)
+            }
+            elseif (Test-Path -LiteralPath $curl -PathType Leaf) {
                 & $curl --disable --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 60 --retry 1 --max-filesize 16777216 --output $file $url
                 if ($LASTEXITCODE -ne 0) { throw ("Could not download " + $pack.Name + ". Check your connection and choose the pack again.") }
             } else {
@@ -162,13 +219,25 @@ function Install-BetterIconDownloadedPack {
             }
             if (!(Test-PackAsset $file $asset)) { throw 'The downloaded artwork did not match its published checksum. Choose the pack again.' }
         }
+        # Each WebP gets one full decode now. A WebP that fails is recorded with its cause, so its PNG twin is used and
+        # the reason can be shown. Without a decoder a WebP can't be checked yet: it is named in .webp-unchecked, and gets
+        # its full decode once a decoder exists, before anything chooses it (Get-WebpProblems).
+        $problems = [Collections.Generic.List[string]]::new(); $unchecked = [Collections.Generic.List[string]]::new()
+        foreach ($asset in $pack.Assets.Values) {
+            if ([IO.Path]::GetExtension($asset.File) -ine '.webp') { continue }
+            $cause = Get-WebpProblem (Join-Path $stage $asset.File) $true
+            if (!$cause) { continue }
+            if ((Get-WebpArtworkType)::FileCause($cause)) { $problems.Add($asset.File + [char]9 + $cause) } else { $unchecked.Add($asset.File) }
+        }
+        if ($problems.Count) { [IO.File]::WriteAllLines((Join-Path $stage '.webp-problems'), [string[]]$problems.ToArray(), [Text.UTF8Encoding]::new($false)) }
+        if ($unchecked.Count) { [IO.File]::WriteAllLines((Join-Path $stage '.webp-unchecked'), [string[]]$unchecked.ToArray(), [Text.UTF8Encoding]::new($false)) }
         [IO.File]::WriteAllText((Join-Path $stage '.complete'), $pack.Revision)
         if ([IO.Directory]::Exists($pack.Path)) {
             $old = $pack.Path + '.replaced-' + [guid]::NewGuid().ToString('N')
             [IO.Directory]::Move($pack.Path,$old)
             try { [IO.Directory]::Move($stage,$pack.Path) } catch { [IO.Directory]::Move($old,$pack.Path); throw }
         } else { [IO.Directory]::Move($stage,$pack.Path) }
-        Write-PackSnapshot $receipt ([string[]](@($pack.Revision) + $pack.Rows.ToArray()))
+        Write-PackSnapshot $receipt $record
         $script:DownloadCatalog=$null
     } finally {
         # The stage is a fresh private folder containing only known flat catalog filenames.
@@ -178,6 +247,7 @@ function Install-BetterIconDownloadedPack {
                 if ([IO.File]::Exists($file)) { [IO.File]::Delete($file) }
             }
             if ([IO.Directory]::Exists((Join-Path $stage 'FileTypes'))) { [IO.Directory]::Delete((Join-Path $stage 'FileTypes')) }
+            [IO.File]::Delete((Join-Path $stage '.webp-problems')); [IO.File]::Delete((Join-Path $stage '.webp-unchecked'))
             [IO.File]::Delete((Join-Path $stage '.complete')); [IO.Directory]::Delete($stage)
         }
         $lock.Dispose()

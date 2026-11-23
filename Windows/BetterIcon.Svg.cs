@@ -91,13 +91,21 @@ namespace BetterIcon.Tray
             float scale = size / Math.Max(dimensions.Width, dimensions.Height);
             int width = Math.Max(1, (int)Math.Round(dimensions.Width * scale));
             int height = Math.Max(1, (int)Math.Round(dimensions.Height * scale));
-            using (Bitmap artwork = document.Draw(width, height)) {
+            // SVG.NET renders clipped vector edges without antialiasing.
+            // Render at a higher resolution, then downsample so the launcher
+            // and Windows shortcut icons keep smooth contours.
+            // Limit the intermediate canvas to the existing 4096px bound.
+            int sampling = Math.Min(4, Math.Max(1, 4096 / size));
+            using (Bitmap artwork = document.Draw(width * sampling, height * sampling)) {
                 if (artwork == null) throw new IOException("The SVG has no renderable canvas.");
                 Bitmap output = new Bitmap(size, size);
                 using (Graphics graphics = Graphics.FromImage(output)) {
                     graphics.Clear(Color.Transparent);
                     graphics.CompositingMode = CompositingMode.SourceCopy;
-                    graphics.DrawImageUnscaled(artwork, (size - width) / 2, (size - height) / 2);
+                    graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                    graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                    graphics.DrawImage(artwork, new Rectangle((size - width) / 2, (size - height) / 2, width, height),
+                        0, 0, artwork.Width, artwork.Height, GraphicsUnit.Pixel);
                 }
                 return output;
             }

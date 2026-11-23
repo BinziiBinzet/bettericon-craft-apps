@@ -117,6 +117,7 @@ final class ArtScheme: NSObject, WKURLSchemeHandler {
     }
     private var sources = [String: Source]()
     private let cache = NSCache<NSString, NSData>()
+    private var generation = 0
     override init() {
         super.init()
         cache.totalCostLimit = 64 * 1024 * 1024
@@ -124,11 +125,21 @@ final class ArtScheme: NSObject, WKURLSchemeHandler {
     func reset() {
         sources.removeAll()
         cache.removeAllObjects()
+        generation += 1
     }
     func link(_ url: URL, system: Bool = false) -> String {
-        let key = digest(Data(((system ? "app:" : "file:") + url.path).utf8))
+        // An app's icon can change in place. A new address after each reset keeps WebKit from reusing the old image.
+        let key = digest(Data(((system ? "app:\(generation):" : "file:") + url.path).utf8))
         sources[key] = system ? .app(url) : .file(url)
         return "bettericon-art://image/" + key
+    }
+    /// What an address draws: an artwork file, or the icon an app has now.
+    func source(of link: String) -> (url: URL, app: Bool)? {
+        guard let key = URL(string: link)?.lastPathComponent, let source = sources[key] else { return nil }
+        switch source {
+        case .file(let url): return (url, false)
+        case .app(let url): return (url, true)
+        }
     }
     func webView(_ webView: WKWebView, start task: WKURLSchemeTask) {
         guard let url = task.request.url, let source = sources[url.lastPathComponent] else {

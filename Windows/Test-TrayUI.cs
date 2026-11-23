@@ -15,6 +15,7 @@ using BetterIcon.Tray;
 static class TrayTests
 {
     [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")] static extern bool PostMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
     [StructLayout(LayoutKind.Sequential)] struct NativeRect { public int Left, Top, Right, Bottom; }
     [DllImport("user32.dll", EntryPoint = "SendMessageW")] static extern IntPtr SendMessageRect(IntPtr window, int message, IntPtr wParam, out NativeRect rectangle);
     [DllImport("user32.dll")] static extern bool GetKeyboardState(byte[] state);
@@ -49,6 +50,124 @@ static class TrayTests
         Console.WriteLine("PASS: " + name);
     }
     static Point TabDivider(TabControl tabs) { return tabs.PointToScreen(tabs.GetTabRect(1).Location); }
+    static IntPtr MousePoint(Rectangle rect)
+    {
+        return new IntPtr(((rect.Top + rect.Height / 2) << 16) | ((rect.Left + rect.Width / 2) & 0xffff));
+    }
+    static Bitmap PaintGrid(ListView grid)
+    {
+        Bitmap frame = new Bitmap(grid.Width, grid.Height);
+        grid.Refresh();
+        grid.DrawToBitmap(frame, grid.ClientRectangle);
+        return frame;
+    }
+    static void CheckLauncherFeedback(ListView grid, string root)
+    {
+        Rectangle tile = grid.Items[0].Bounds;
+        IntPtr point = MousePoint(grid.GetItemRect(0, ItemBoundsPortion.Icon));
+        SendMessage(grid.Handle, 0x02A3, IntPtr.Zero, IntPtr.Zero); // WM_MOUSELEAVE
+        using (Bitmap idle = PaintGrid(grid)) {
+            SendMessage(grid.Handle, 0x0200, IntPtr.Zero, point);
+            using (Bitmap hover = PaintGrid(grid)) {
+                Check(grid.SelectedItems.Count == 0, "Hover brightens artwork without committing a selection");
+                SendMessage(grid.Handle, 0x02A3, IntPtr.Zero, IntPtr.Zero);
+                grid.Items[0].Selected = grid.Items[0].Focused = true;
+                using (Bitmap selected = PaintGrid(grid)) {
+                    int brighter = 0, changedBackground = 0, different = 0;
+                    Rectangle icon = grid.GetItemRect(0, ItemBoundsPortion.Icon);
+                    for (int y = tile.Top; y < tile.Bottom; y++)
+                        for (int x = tile.Left; x < tile.Right; x++) {
+                            Color before = idle.GetPixel(x, y), after = hover.GetPixel(x, y);
+                            // Inside the image, antialiased artwork may round to the background RGB.
+                            if (!icon.Contains(x, y) && before != after) changedBackground++;
+                            if (after.R > before.R + 8 || after.G > before.G + 8 || after.B > before.B + 8) brighter++;
+                            if (after != selected.GetPixel(x, y)) different++;
+                        }
+                    Check(brighter > 50 && changedBackground == 0 && different == 0,
+                        "Mouse and keyboard brighten the same artwork with clear padding (" + brighter + " brighter pixels, " +
+                        changedBackground + " changed background pixels, " + different + " mouse/keyboard differences)");
+                }
+            }
+        }
+        // The receiving shortcut writes one unique receipt per launched process.
+        int initial = Directory.GetFiles(root, "launches.txt.*.launched").Length;
+        point = MousePoint(grid.GetItemRect(2, ItemBoundsPortion.Label));
+        Rectangle cell = grid.GetItemRect(2, ItemBoundsPortion.Icon);
+        IntPtr window = grid.Handle;
+        // Deliver anything the hover checks left queued before the press begins.
+        Application.DoEvents();
+        Rectangle restBox, heldBox, backBox; double restLight, heldLight, backLight;
+        using (Bitmap resting = PaintGrid(grid)) {
+            Artwork(resting, cell, grid.BackColor, out restBox, out restLight);
+            // The native list waits in its own loop while the button is down. Look at the grid from inside that loop.
+            Bitmap held = null; bool done = false;
+            using (System.Windows.Forms.Timer whileDown = new System.Windows.Forms.Timer { Interval = 40 }) {
+                whileDown.Tick += delegate { whileDown.Stop(); held = PaintGrid(grid); PostMessage(window, 0x0202, IntPtr.Zero, point); };
+                // Release the button anyway if that loop never runs the timer, so a failure cannot hang the suite.
+                ThreadPool.QueueUserWorkItem(delegate { Thread.Sleep(3000); if (!done && held == null) PostMessage(window, 0x0202, IntPtr.Zero, point); });
+                whileDown.Start();
+                SendMessage(window, 0x0201, new IntPtr(1), point);
+                done = true;
+            }
+            Check(held != null, "The grid can be seen while the mouse button is held on an app");
+            using (held) Artwork(held, cell, grid.BackColor, out heldBox, out heldLight);
+            using (Bitmap released = PaintGrid(grid)) Artwork(released, cell, grid.BackColor, out backBox, out backLight);
+        }
+        Check(restBox.Width > 12 && heldBox.Width <= restBox.Width - 2 && heldBox.Height <= restBox.Height - 2
+            && Math.Abs(heldBox.Left + heldBox.Right - restBox.Left - restBox.Right) <= 2 && Math.Abs(heldBox.Top + heldBox.Bottom - restBox.Top - restBox.Bottom) <= 2
+            && heldLight < restLight * 0.95,
+            "Holding the mouse button on an app draws its artwork slightly smaller, centered and darker (" + restBox.Size + " to " + heldBox.Size + ", brightness " + (int)restLight + " to " + (int)heldLight + ")");
+        Check(backBox.Width >= restBox.Width - 1 && backBox.Height >= restBox.Height - 1 && backLight >= restLight,
+            "Releasing the button returns the artwork to full size (" + backBox.Size + ", brightness " + (int)backLight + ")");
+        Application.DoEvents();
+        for (int retry = 0; retry < 100 && Directory.GetFiles(root, "launches.txt.*.launched").Length == initial; retry++) {
+            Application.DoEvents();
+            Thread.Sleep(20);
+        }
+        Check(Directory.GetFiles(root, "launches.txt.*.launched").Length == initial + 1,
+            "One left click on the app label opens the fixture shortcut exactly once");
+        PostMessage(grid.Handle, 0x0203, new IntPtr(1), point); // second press of a double-click
+        PostMessage(grid.Handle, 0x0202, IntPtr.Zero, point);
+        Application.DoEvents();
+        for (int elapsed = 0; elapsed < SystemInformation.DoubleClickTime + 100; elapsed += 20) {
+            Application.DoEvents();
+            Thread.Sleep(20);
+        }
+        Check(Directory.GetFiles(root, "launches.txt.*.launched").Length == initial + 1,
+            "The second press of a double-click does not open a duplicate app");
+
+        // A press that turns into a drag pops back at once and opens nothing.
+        IntPtr away = MousePoint(grid.GetItemRect(0, ItemBoundsPortion.Icon));
+        bool moved = false;
+        using (System.Windows.Forms.Timer whileDown = new System.Windows.Forms.Timer { Interval = 40 }) {
+            whileDown.Tick += delegate { whileDown.Stop(); moved = true; PostMessage(window, 0x0200, new IntPtr(1), away); };
+            ThreadPool.QueueUserWorkItem(delegate { Thread.Sleep(3000); if (!moved) PostMessage(window, 0x0202, IntPtr.Zero, point); });
+            whileDown.Start();
+            SendMessage(window, 0x0201, new IntPtr(1), point);
+        }
+        Rectangle draggedBox; double draggedLight;
+        using (Bitmap dragged = PaintGrid(grid)) Artwork(dragged, cell, grid.BackColor, out draggedBox, out draggedLight);
+        PostMessage(window, 0x0202, IntPtr.Zero, away);
+        for (int elapsed = 0; elapsed < 300; elapsed += 20) { Application.DoEvents(); Thread.Sleep(20); }
+        Check(moved && draggedBox.Width >= restBox.Width - 1 && draggedBox.Height >= restBox.Height - 1
+            && Directory.GetFiles(root, "launches.txt.*.launched").Length == initial + 1,
+            "Dragging off a pressed app returns its artwork to full size and opens nothing (" + draggedBox.Size + ")");
+    }
+    // The extent and average brightness of the artwork drawn inside one icon cell.
+    static void Artwork(Bitmap frame, Rectangle cell, Color background, out Rectangle box, out double brightness)
+    {
+        cell.Intersect(new Rectangle(Point.Empty, frame.Size));
+        int left = Int32.MaxValue, top = Int32.MaxValue, right = -1, bottom = -1, count = 0; long sum = 0;
+        for (int y = cell.Top; y < cell.Bottom; y++)
+            for (int x = cell.Left; x < cell.Right; x++) {
+                Color pixel = frame.GetPixel(x, y);
+                if (Math.Abs(pixel.R - background.R) + Math.Abs(pixel.G - background.G) + Math.Abs(pixel.B - background.B) < 24) continue;
+                left = Math.Min(left, x); top = Math.Min(top, y); right = Math.Max(right, x); bottom = Math.Max(bottom, y);
+                sum += pixel.R + pixel.G + pixel.B; count++;
+            }
+        box = count == 0 ? Rectangle.Empty : Rectangle.FromLTRB(left, top, right + 1, bottom + 1);
+        brightness = count == 0 ? 0 : (double)sum / count;
+    }
     static void ClickTab(TabControl tabs, int index)
     {
         Rectangle tab = tabs.GetTabRect(index);
@@ -223,7 +342,9 @@ static class TrayTests
         Preferences preferences = (Preferences)field("preferences"); PackLibrary library = (PackLibrary)field("library");
         ThemeEntry basis = themes.Items.Cast<ThemeEntry>().First(theme => theme.Id == "Craft-Icons-Zach/HyGel");
         string previousTheme = preferences.Theme; string[] previousDefaults = preferences.DefaultShortcuts;
+        string previousApplied = preferences.AppliedTheme; Dictionary<string, string> previousAppliedArtwork = preferences.AppliedArtwork;
         MethodInfo reload = typeof(LauncherForm).GetMethod("ReloadLibrary", instance), change = typeof(LauncherForm).GetMethod("ChangeAppIcon", instance);
+        MethodInfo remember = typeof(LauncherForm).GetMethod("RememberAppliedTheme", instance), render = typeof(LauncherForm).GetMethod("RenderSelection", instance);
         string png = Path.Combine(root, "context-choice.png"), other = Path.Combine(root, "context-other.png");
         using (Bitmap bitmap = new Bitmap(128, 128)) {
             using (Graphics canvas = Graphics.FromImage(bitmap)) canvas.Clear(Color.Lime);
@@ -253,8 +374,11 @@ static class TrayTests
                 "A context edit replaces only the chosen assignment and leaves bundled source artwork intact");
             List<Bitmap> appImages = (List<Bitmap>)field("appArtwork"), packImages = (List<Bitmap>)field("packArtwork");
             int appIndex = Array.IndexOf(catalog.Apps, photo), packIndex = saved.Icons.OrderBy(icon => icon.Application).ToList().FindIndex(icon => icon.Application == photo.Application);
-            Check(appImages[appIndex].GetPixel(64, 64).ToArgb() == Color.Lime.ToArgb() && packImages[packIndex].GetPixel(64, 64).ToArgb() == Color.Lime.ToArgb(),
-                "The selected image immediately appears in both launcher and Settings grids");
+            Check(appImages[appIndex].GetPixel(64, 64).ToArgb() != Color.Lime.ToArgb() && packImages[packIndex].GetPixel(64, 64).ToArgb() == Color.Lime.ToArgb(),
+                "The selected image immediately appears in the Settings preview while the Launcher waits for Apply");
+            remember.Invoke(form, new object[] { saved }); render.Invoke(form, null);
+            Check(appImages[appIndex].GetPixel(64, 64).ToArgb() == Color.Lime.ToArgb() && preferences.AppliedTheme == saved.Id && preferences.AppliedArtwork[photo.Application] == saved.Icons.Single(icon => icon.Application == photo.Application).Path,
+                "Applying the edited pack brings its image to the Launcher");
             Preferences written = json.Deserialize<Preferences>(File.ReadAllText(preferencesPath));
             Check(written.Theme == saved.Id && written.DefaultShortcuts.SequenceEqual(new[] { film.Shortcut }) && unchangedPreferences == json.Serialize(new { preferences.Scope, preferences.IconSize, preferences.Hotkey, preferences.ShowAppNames, preferences.AppearanceMode, preferences.AppIconStyle, preferences.AppIconVariant }),
                 "The edited pack persists, replaces only the edited app's remembered defaults and retains other settings");
@@ -266,6 +390,9 @@ static class TrayTests
                 && File.ReadAllBytes(edited.Icons.Single(icon => icon.Application == photo.Application).Path).SequenceEqual(File.ReadAllBytes(png))
                 && File.ReadAllBytes(saved.Icons.Single(icon => icon.Application == film.Application).Path).SequenceEqual(bundled[film.Application]),
                 "A second edit updates the same personal pack while retaining other choices and immutable earlier revisions");
+            int filmIndex = Array.IndexOf(catalog.Apps, film);
+            Check(appImages[appIndex].GetPixel(64, 64).ToArgb() == Color.Lime.ToArgb() && appImages[filmIndex].GetPixel(64, 64).ToArgb() != Color.Magenta.ToArgb() && preferences.AppliedTheme == saved.Id,
+                "A later edit to an applied pack stays out of the Launcher until it is applied again");
             string manifest = Path.Combine(library.Root, "library.json"), invalid = Path.Combine(root, "bad-context-icon.png");
             byte[] beforeManifest = File.ReadAllBytes(manifest), beforePreferences = File.ReadAllBytes(preferencesPath);
             File.WriteAllText(invalid, "Invalid image"); bool rejected = false;
@@ -281,7 +408,10 @@ static class TrayTests
             Check(fromDefault.Managed && fromDefault.Icons.Single().Application == photo.Application && defaults.Icons.Length == 0,
                 "Choosing artwork from ArtCraft default creates a personal pack without modifying the virtual default");
         }
-        finally { preferences.DefaultShortcuts = previousDefaults; reload.Invoke(form, new object[] { previousTheme }); }
+        finally {
+            preferences.DefaultShortcuts = previousDefaults; preferences.AppliedTheme = previousApplied; preferences.AppliedArtwork = previousAppliedArtwork;
+            reload.Invoke(form, new object[] { previousTheme });
+        }
     }
     static string SettingsLayoutProblem(Control parent)
     {
@@ -301,10 +431,51 @@ static class TrayTests
                 Rectangle overlap = Rectangle.Intersect(child.Bounds, children[j].Bounds);
                 if (overlap.Width > 1 && overlap.Height > 1) return name + " overlaps " + children[j].GetType().Name + " " + children[j].Text;
             }
+            Button button = child as Button;
+            // One pixel of rounding in a shared row does not reach the text.
+            if (button != null && button.Text.Length > 0 && button.Width + 1 < button.GetPreferredSize(Size.Empty).Width)
+                return name + " cuts off its label: " + button.Width + " of " + button.GetPreferredSize(Size.Empty).Width + " pixels";
             string nested = SettingsLayoutProblem(child);
             if (nested != null) return nested;
         }
         return null;
+    }
+    // The shared button rows, apart from any window.
+    static void CheckButtonRows()
+    {
+        Type type = typeof(LauncherForm).Assembly.GetType("BetterIcon.Tray.ButtonRow", true);
+        using (Font font = new Font("Segoe UI", 10F))
+        using (TableLayoutPanel table = new TableLayoutPanel { Font = font }) {
+            Button[] row = new[] { "Apply icons...", "Restore app defaults...", "Apply file icons...", "Restore file icons..." }
+                .Select(text => new Button { Text = text, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(10, 3, 10, 3), Margin = new Padding(4, 0, 4, 0) }).ToArray();
+            object rows = Activator.CreateInstance(type, new object[] { table, row, new[] { row[0], row[2], row[1], row[3] }, 2 });
+            Func<Button, int> needs = button => button.GetPreferredSize(Size.Empty).Width + button.Margin.Horizontal;
+            int widest = row.Max(needs), pair = Math.Max(needs(row[0]) + needs(row[1]), needs(row[2]) + needs(row[3]));
+            Action<int> arrange = width => type.GetMethod("Arrange").Invoke(rows, new object[] { width });
+            Func<Button, Point> cell = button => new Point(table.GetCellPosition(button).Column, table.GetCellPosition(button).Row);
+            Func<int, float> share = column => table.ColumnStyles[column].Width;
+            arrange(widest * 4);
+            Check(table.ColumnCount == 4 && table.RowCount == 1 && Enumerable.Range(0, 4).All(i => cell(row[i]) == new Point(i, 0) && Math.Abs(share(i) - 25) < 0.01),
+                "Four buttons share one row equally while every label fits");
+            arrange(pair * 2);
+            Check(table.ColumnCount == 4 && Enumerable.Range(0, 4).All(i => cell(row[i]) == new Point(i, 0)) && share(1) > share(0) + 1
+                && Math.Abs(share(0) + share(1) - 50) < 0.01 && Math.Abs(share(2) + share(3) - 50) < 0.01,
+                "A longer label takes a larger share of its half before the row wraps");
+            arrange(pair * 2 - 2);
+            Check(table.ColumnCount == 4 && table.RowCount == 1 && row.All(button => button.Padding.Left == 5 && button.Padding.Right == 5 && button.Padding.Top == 3),
+                "The buttons give up some padding before the row wraps");
+            // Each pair saves ten pixels a button with the smaller padding.
+            arrange((pair - 20) * 2 - 2);
+            Check(table.ColumnCount == 2 && table.RowCount == 2 && cell(row[0]) == new Point(0, 0) && cell(row[2]) == new Point(1, 0) && cell(row[1]) == new Point(0, 1) && cell(row[3]) == new Point(1, 1)
+                && row[1].Margin.Top > 0 && row[0].Margin.Top == 0 && row.All(button => button.Padding.Left == 10),
+                "Buttons take two rows of two before a label is cut off, each pair in its own column");
+            arrange(widest * 4);
+            Check(table.ColumnCount == 4 && table.RowCount == 1 && Enumerable.Range(0, 4).All(i => cell(row[i]) == new Point(i, 0) && row[i].Margin.Top == 0 && row[i].Padding.Left == 10), "The buttons return to one row when the width allows");
+            type.GetMethod("Show").Invoke(rows, new object[] { row[1], false }); arrange(widest * 4);
+            Check(table.GetColumnSpan(row[0]) == 2 && table.GetColumnSpan(row[2]) == 1 && table.GetColumnSpan(row[3]) == 1, "A button whose partner is hidden takes both places");
+            type.GetMethod("Show").Invoke(rows, new object[] { row[1], true }); arrange(widest * 4);
+            Check(table.GetColumnSpan(row[0]) == 1, "Showing the partner again returns each button to its own place");
+        }
     }
     static bool SamePixels(Bitmap first, Bitmap second)
     {
@@ -353,6 +524,9 @@ static class TrayTests
             bitmap.Save(file, System.Drawing.Imaging.ImageFormat.Png);
         }
         ThemeEntry high = library.Save("High detail fixture", new Dictionary<string, string> { { "PhotoCraft", file } }, null);
+        // The Launcher shows the applied pack, so apply the fixture before measuring both grids.
+        MethodInfo rememberApplied = typeof(LauncherForm).GetMethod("RememberAppliedTheme", instance), renderAll = typeof(LauncherForm).GetMethod("RenderSelection", instance);
+        rememberApplied.Invoke(form, new object[] { high });
         typeof(LauncherForm).GetMethod("ReloadLibrary", instance).Invoke(form, new object[] { high.Id });
         Check(slider.Maximum == 1024 && cached.All(image => image.Width == 128), "The size limit follows available PNG resolution while compact startup keeps small caches");
         slider.Value = 512;
@@ -388,8 +562,12 @@ static class TrayTests
             "Larger previews grow within the scrolling Settings layout without overlapping controls");
         themes.SelectedIndex = 0;
         LoadingTests.Wait(form);
+        Check(slider.Maximum == 1024 && slider.Value == 520 && GridImageSize(launcher) == new Size(520, 520),
+            "Previewing smaller artwork keeps the range that the applied Launcher artwork needs");
+        rememberApplied.Invoke(form, new object[] { themes.Items[0] }); renderAll.Invoke(form, null);
         Check(slider.Maximum == 128 && slider.Value == 128 && json.Deserialize<Preferences>(File.ReadAllText(preferencesPath)).IconSize == 128 && GridImageSize(launcher) == new Size(128, 128) && GridImageSize(preview) == new Size(128, 128),
             "Switching to smaller artwork adjusts the range and replaces oversized artwork in both native grids");
+        rememberApplied.Invoke(form, new object[] { high });
         typeof(LauncherForm).GetMethod("ReloadLibrary", instance).Invoke(form, new object[] { high.Id }); slider.Value = 512;
     }
     static void CheckIconSizeEditing(LauncherForm form, string preferencesPath, JavaScriptSerializer json)
@@ -467,12 +645,18 @@ static class TrayTests
             bool disabled = !editor.Enabled;
             typeof(LauncherForm).GetMethod("SetBusy", instance).Invoke(form, new object[] { false, null });
             Check(disabled && editor.Enabled, "The numeric editor follows the other size controls while an operation is busy");
-            slider.Value = 512; themes.SelectedIndex = 0; LoadingTests.Wait(form);
+            // Both grids must hold smaller artwork for the range to shrink, so apply the default too.
+            string appliedTheme = preferences.AppliedTheme; Dictionary<string, string> appliedArtwork = preferences.AppliedArtwork;
+            slider.Value = 512; preferences.AppliedTheme = ThemeEntry.DefaultThemeId; preferences.AppliedArtwork = null;
+            themes.SelectedIndex = 0; LoadingTests.Wait(form);
+            typeof(LauncherForm).GetMethod("RenderSelection", instance).Invoke(form, null);
             Check(slider.Maximum == 128 && synchronized(128), "Changing to smaller artwork updates the numeric editor and clamps the saved size");
 
+            preferences.AppliedTheme = appliedTheme; preferences.AppliedArtwork = appliedArtwork;
             typeof(LauncherForm).GetMethod("ReloadLibrary", instance).Invoke(form, new object[] { previousTheme });
             slider.Value = 83;
-            Label label = slider.Parent.Controls.OfType<Label>().Single(control => control.Text == "Icon size");
+            Label label = slider.Parent.Controls.OfType<Label>().Single(control => control.Text == "Launcher icon size");
+            Check(slider.AccessibleName == "Launcher icon size", "The size slider is named for the Launcher icons it changes");
             Label unit = Descendants(slider.Parent).OfType<Label>().Single(control => control.Text == "px");
             Func<Control, double> center = control => control.PointToScreen(Point.Empty).Y + control.Height / 2.0;
             foreach (string mode in new[] { "Dark", "Light", "System" }) foreach (Size window in new[] { new Size(790, 570), new Size(900, 818), new Size(1100, 900) }) {
@@ -494,6 +678,28 @@ static class TrayTests
                     "The native slider channel and thumb align with the label, editable number, px unit, and Reset in " + mode + " at " + window.Width + "x" + window.Height
                     + " (channel " + channelOffset + " px, thumb " + thumbOffset + " px)" + (layoutProblem == null ? "" : ": " + layoutProblem));
             }
+            // The slider is placed from its own native channel and thumb, whatever this PC's DPI. Larger text in the row
+            // stands in for a larger scale: the slider follows it too.
+            float dpi;
+            using (Graphics g = form.CreateGraphics()) dpi = g.DpiY;
+            Control[] rowPeers = { label, editor, unit, reset };
+            Func<double[]> placement = () => {
+                scroll.AutoScrollPosition = Point.Empty; form.PerformLayout(); content.PerformLayout(); Application.DoEvents();
+                NativeRect channelNow, thumbNow;
+                SendMessageRect(slider.Handle, 0x041A, IntPtr.Zero, out channelNow);
+                SendMessageRect(slider.Handle, 0x0419, IntPtr.Zero, out thumbNow);
+                double top = slider.PointToScreen(Point.Empty).Y;
+                double channelMiddle = top + (channelNow.Top + channelNow.Bottom) / 2.0, thumbMiddle = top + (thumbNow.Top + thumbNow.Bottom) / 2.0;
+                return new[] { Math.Abs((channelMiddle + thumbMiddle) / 2 - rowPeers.Average(center)), rowPeers.Max(control => Math.Abs(center(control) - channelMiddle)), rowPeers.Max(control => Math.Abs(center(control) - thumbMiddle)) };
+            };
+            double[] here = placement(), larger;
+            Control sliderRow = slider.Parent;
+            sliderRow.Font = new Font(sliderRow.Font.FontFamily, sliderRow.Font.Size * 1.2f);
+            try { larger = placement(); }
+            finally { sliderRow.ResetFont(); placement(); }
+            Check(here[0] <= 1.0 && here[1] <= 1.5 && here[2] <= 2.5 && larger[0] <= 1.0 && larger[1] <= 1.5 && larger[2] <= 2.5,
+                "The size slider stays on the middle of its row's text at this PC's DPI and when that text grows by a fifth (" + dpi + " DPI: middle " + here[0] + " px, channel " + here[1]
+                + " px, thumb " + here[2] + " px; larger text: middle " + larger[0] + " px, channel " + larger[1] + " px, thumb " + larger[2] + " px)");
         }
         finally {
             preferences.AppearanceMode = previousAppearance; appearance.Invoke(form, null);
@@ -581,19 +787,23 @@ static class TrayTests
         Action<string, object[]> call = (name, arguments) => typeof(LauncherForm).GetMethod(name, instance).Invoke(form, arguments);
         Catalog catalog = (Catalog)field("catalog"); AppEntry[] previousApps = catalog.Apps;
         Preferences preferences = (Preferences)field("preferences"); string[] defaults = preferences.DefaultShortcuts;
+        string applied = preferences.AppliedTheme; Dictionary<string, string> appliedArtwork = preferences.AppliedArtwork;
         string theme = ((ThemeEntry)((ComboBox)field("themes")).SelectedItem).Id;
         TrackBar slider = (TrackBar)field("iconSizeSlider"); int previousSize = slider.Value;
         string shortcut = Path.Combine(root, "PhotoCraft.lnk"); byte[] bytes = File.ReadAllBytes(shortcut);
-        List<Bitmap> artwork = (List<Bitmap>)field("appArtwork");
+        List<Bitmap> artwork = (List<Bitmap>)field("appArtwork"), previewArtwork = (List<Bitmap>)field("packArtwork");
         TabControl pages = (TabControl)field("pages");
         try {
             catalog.Apps = new[] { new AppEntry { Application = "ArtCraftLauncher", Name = "ArtCraft Launcher", Shortcut = shortcut, Scope = "CurrentUser", IconPath = "", OriginalIconPath = Path.Combine(root, "original-red.png"), UsingDefaultIcon = true } };
-            preferences.DefaultShortcuts = new string[0]; call("RenderSelection", null);
+            preferences.DefaultShortcuts = new string[0]; preferences.AppliedTheme = null; preferences.AppliedArtwork = null; call("RenderSelection", null);
             Check(artwork[0].GetPixel(64, 64).ToArgb() == Color.Red.ToArgb(), "A launcher without an explicit icon path displays its own original instead of BetterIcon's fallback");
             PackLibrary library = (PackLibrary)field("library");
             ThemeEntry custom = library.Save("Launcher preview fixture", new Dictionary<string, string> { { "ArtCraftLauncher", Path.Combine(root, "current-blue.png") } }, null);
             call("ReloadLibrary", new object[] { custom.Id });
-            Check(artwork[0].GetPixel(64, 64).ToArgb() == Color.Blue.ToArgb(), "A custom launcher pack can preview artwork before any shortcut change");
+            Check(artwork[0].GetPixel(64, 64).ToArgb() == Color.Red.ToArgb() && previewArtwork[0].GetPixel(64, 64).ToArgb() == Color.Blue.ToArgb(),
+                "A custom launcher pack previews its artwork in Manage Icons and leaves the Launcher alone");
+            call("RememberAppliedTheme", new object[] { custom }); call("RenderSelection", null);
+            Check(artwork[0].GetPixel(64, 64).ToArgb() == Color.Blue.ToArgb(), "An applied launcher pack shows its artwork in the Launcher");
             pages.SelectedIndex = 0;
             ListView grid = (ListView)field("apps"); RequestIconMenu(grid, grid.Items[0]);
             ToolStripMenuItem restore = (ToolStripMenuItem)field("restoreIconDefault");
@@ -608,6 +818,7 @@ static class TrayTests
         }
         finally {
             ((ContextMenuStrip)field("iconMenu")).Close(); catalog.Apps = previousApps; preferences.DefaultShortcuts = defaults;
+            preferences.AppliedTheme = applied; preferences.AppliedArtwork = appliedArtwork;
             call("ReloadLibrary", new object[] { theme }); slider.Value = Math.Min(previousSize, slider.Maximum);
         }
     }
@@ -709,6 +920,9 @@ static class TrayTests
             new AppEntry { Application = "FigCraft", Name = "Shared drawing workspace", Shortcut = fig, Scope = "AllUsers", IconPath = current, OriginalIconPath = original, RestoreAvailable = true }
         };
         pages.SelectedIndex = 1;
+        // The Launcher follows the pack that was applied, here HyGel, not the one being browsed.
+        Action<string> markApplied = id => { preferences.AppliedTheme = id; preferences.AppliedArtwork = null; };
+        markApplied(themed.Id);
         call("ReloadLibrary", new object[] { ThemeEntry.DefaultThemeId });
         Check(((ThemeEntry)themes.Items[0]).IsDefault && ((ThemeEntry)themes.Items[0]).Id == ThemeEntry.DefaultThemeId && themes.SelectedIndex == 0,
             "ArtCraft default is the first selectable pack and uses a stable identity");
@@ -722,6 +936,9 @@ static class TrayTests
             && menu.Items.Cast<ToolStripItem>().First(item => item.Text == "Restore built-in packs").Enabled,
             "The virtual default cannot be customized, edited, exported or removed");
         Check(apply.Enabled && apply.Text == "Restore ArtCraft defaults...", "Choosing the default presents the restore-all action");
+        Check(appArtwork.Count == 4 && !appArtwork.Any(image => image.GetPixel(64, 64).ToArgb() == Color.Red.ToArgb()),
+            "Choosing ArtCraft default leaves the Launcher on the applied pack");
+        markApplied(ThemeEntry.DefaultThemeId); call("RenderSelection", null);
         Check(appArtwork.Count == 4 && appArtwork.All(image => image.GetPixel(64, 64).ToArgb() == Color.Red.ToArgb()),
             "Default launcher thumbnails use original artwork instead of current shortcut or pack artwork");
         Check(packPreview.Items.Count == 3 && packPreview.Items.Cast<ListViewItem>().Select(item => item.Text).SequenceEqual(new[] { "FigCraft", "FilmCraft", "PhotoCraft" })
@@ -733,9 +950,32 @@ static class TrayTests
             && !themes.Items.Cast<ThemeEntry>().Any(t => !t.Managed && !t.IsDefault),
             "ArtCraft default stays first and available when all bundled packs are hidden");
         library.RestoreBundled();
+        call("ReloadLibrary", new object[] { "Craft-Icons-Zach/Cardboard" });
+        {
+            // Lists show each author's packs together, by name. ArtCraft Launcher leads every grid of app icons.
+            string[] listOrder = themes.Items.Cast<ThemeEntry>().Select(t => t.Id).ToArray();
+            Func<string, int> placeOf = id => Array.IndexOf(listOrder, id);
+            Func<string, bool> groupedBy = prefix => {
+                int[] places = Enumerable.Range(0, listOrder.Length).Where(i => listOrder[i].StartsWith(prefix)).ToArray();
+                return places.Length > 0 && places.Last() - places[0] == places.Length - 1;
+            };
+            const string mikeDark = "Craft-Icons-Mike22/CraftApps AIO November - Dark";
+            Check(listOrder[0] == ThemeEntry.DefaultThemeId && groupedBy("Craft-Icons-Zach/") && groupedBy("Craft-Icons-Mike22/")
+                && placeOf("Craft-Icons-Mains/Stained Glass") < placeOf(mikeDark) && placeOf(mikeDark) < placeOf("Craft-Icons-Zach/Cardboard")
+                && placeOf("Craft-Icons-Zach/Cardboard") < placeOf("Craft-Icons-Zach/Ink"), "Packs are listed by author, then by name");
+            Check(((ThemeEntry)themes.SelectedItem).Id == "Craft-Icons-Zach/Cardboard" && packPreview.Items.Count == 20
+                && packPreview.Items.Cast<ListViewItem>().Take(3).Select(item => item.Text).SequenceEqual(new[] { "ArtCraftLauncher", "AniCraft", "CADCraft" }),
+                "ArtCraft Launcher leads a pack's icons when the pack draws it");
+            Catalog leadCatalog = new Catalog { Apps = new[] { "AniCraft", "PhotoCraft", "ArtCraftLauncher", "FilmCraft" }.Select(name => new AppEntry { Application = name, Name = name }).ToArray() };
+            Check(leadCatalog.Apps.Select(app => app.Application).SequenceEqual(new[] { "ArtCraftLauncher", "AniCraft", "PhotoCraft", "FilmCraft" }),
+                "ArtCraft Launcher leads the app grid and the other apps keep their order");
+        }
         call("ReloadLibrary", new object[] { themed.Id });
-        Check(!appArtwork.Any(image => image.GetPixel(64, 64).ToArgb() == Color.Red.ToArgb()) && packPreview.Items.Count == themed.Icons.Length,
-            "Selecting an icon pack restores themed thumbnails and its full preview");
+        Check(appArtwork.All(image => image.GetPixel(64, 64).ToArgb() == Color.Red.ToArgb()) && packPreview.Items.Count == themed.Icons.Length,
+            "Selecting an icon pack shows its full preview and leaves the Launcher unchanged");
+        call("RememberAppliedTheme", new object[] { themed }); call("RenderSelection", null);
+        Check(!appArtwork.Any(image => image.GetPixel(64, 64).ToArgb() == Color.Red.ToArgb()) && preferences.AppliedTheme == themed.Id && preferences.AppliedArtwork.Count == themed.Icons.Length,
+            "Applying an icon pack gives the Launcher its themed thumbnails");
 
         // Exercise the real native extractor with different resource indices,
         // independently of whatever artwork is currently selected in the app.
@@ -766,10 +1006,12 @@ static class TrayTests
             Check(new[] { 16, 32, 64, 96, 112 }.All(x => new[] { 16, 32, 64, 96, 112 }.All(y => compressed.GetPixel(x, y).ToArgb() == Color.Red.ToArgb())),
                 "PNG-compressed ICO thumbnails retain their artwork instead of gray noise or a fallback");
             catalog.Apps[3].OriginalIconPath = shellLibrary; catalog.Apps[3].OriginalIconIndex = 1;
+            markApplied(ThemeEntry.DefaultThemeId);
             call("ReloadLibrary", new object[] { ThemeEntry.DefaultThemeId });
             Check(SamePixels(appArtwork[3], second) && SamePixels(packArtwork[0], second),
                 "Default launcher and preview both honor the original native icon resource index");
             catalog.Apps[3].OriginalIconPath = original; catalog.Apps[3].OriginalIconIndex = 0;
+            markApplied(themed.Id);
             call("ReloadLibrary", new object[] { themed.Id });
             ThemeIcon themedPhoto = ((ThemeEntry)themes.SelectedItem).Icons.First(icon => icon.Application == "PhotoCraft");
             string previousArtwork = themedPhoto.Path, previousPreview = themedPhoto.PreviewPath, previousCurrentIcon = catalog.Apps[0].IconPath;
@@ -896,6 +1138,8 @@ static class TrayTests
         string failure = null, root = args[0];
         Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false);
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException);
+        // The WebP checks run their packs in a process of their own (WebPTests.RunPacks): a process loads WebP support once.
+        if (args.Length > 2 && args[2] == "--webp-packs") return WebPTests.RunPacksChild(args[0], args[1]);
         try {
             Rectangle work = new Rectangle(0, 0, 1920, 1040);
             Rectangle bottom = PopupPlacement.AboveTray(new Size(900, 690), new Point(1850, 1060), work);
@@ -951,7 +1195,7 @@ static class TrayTests
             File.WriteAllText(Path.Combine(workerState, "manifest.json"), "{\"Product\":\"BetterIcon-Craft Apps Windows\",\"SchemaVersion\":1,\"Version\":\"1.1.0\",\"Scope\":\"CurrentUser\",\"Entries\":[]}");
             WorkerClient client = new WorkerClient(args[1], new FixtureConfig { ShortcutDirectory = new[] { root }, StateDirectory = workerState });
             WorkerReply catalog = client.Run(new WorkerRequest { Action = "Catalog", Scope = "CurrentUser" }, false).GetAwaiter().GetResult();
-            Check(catalog.Success && catalog.Catalog.Themes.Length == 32 && catalog.Catalog.Apps.Length == 1 && catalog.Catalog.Apps[0].Application == "PhotoCraft", "Native process invokes the catalog worker with a real fixture shortcut");
+            Check(catalog.Success && catalog.Catalog.Themes.Length == 41 && catalog.Catalog.Apps.Length == 1 && catalog.Catalog.Apps[0].Application == "PhotoCraft", "Native process invokes the catalog worker with a real fixture shortcut");
             WorkerReply preview = client.Run(new WorkerRequest { Action = "RestorePreview", Scope = "CurrentUser" }, false).GetAwaiter().GetResult();
             Check(preview.Success && preview.StateHash.Length == 64 && preview.Results.Length == 0, "Native restore worker hashes an existing manifest with inherited module paths");
             PackTests.Run(root, args[1], catalog.Catalog, Check);
@@ -1088,6 +1332,7 @@ static class TrayTests
                         Check(GridImages(list) == typingImages && ImageList_GetImageCount(GridImages(list)) == artworkCount, "Typing reuses the loaded artwork instead of rebuilding image lists");
                         form.Hide(); form.ShowManager();
                         Check(list.Items.Count == 3 && !filter.Visible && list.SelectedItems.Count == 0, "Reopening starts with all apps, no stale filter, and no selected icon");
+                        CheckLauncherFeedback(list, root);
                         pages.SelectedIndex = 1; type("fil");
                         Check(list.Items.Count == 3 && pages.SelectedIndex == 1, "Settings keyboard input does not filter the launcher");
                         CheckProjectLink(versionLink, root);
@@ -1122,11 +1367,20 @@ static class TrayTests
                         Panel settingsScroll = (Panel)typeof(LauncherForm).GetField("settingsScroll", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
                         TableLayoutPanel settingsContent = (TableLayoutPanel)typeof(LauncherForm).GetField("settingsContent", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
                         Button removePack = (Button)typeof(LauncherForm).GetField("removePackButton", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
-                        Check(removePack.Visible && removePack.Text == "Remove pack" && removePack.ContextMenuStrip == null
-                            && !Descendants(pages.TabPages[1]).OfType<Button>().Any(button => button.Text == "Pack actions..." || button.Text == "Change hotkey..." || button.Text == "Exit" || button.Text == "Refresh apps"),
-                            "Manage Icons has a direct Remove pack button and no old pack-actions, hotkey or utility buttons");
-                        Check(previewGrid.Dock == DockStyle.Fill && previewGrid.Parent == settingsContent,
+                        Button removeFilePack = (Button)typeof(LauncherForm).GetField("removeFilePackButton", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
+                        Button restoreApps = (Button)typeof(LauncherForm).GetField("restore", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
+                        Check(removePack.Visible && removePack.Text == "Remove app pack" && removePack.Enabled && removePack.ContextMenuStrip == null
+                            && removeFilePack.Visible && removeFilePack.Text == "Remove file pack" && !removeFilePack.Enabled
+                            && removePack.Parent == removeFilePack.Parent && removePack.Top == removeFilePack.Top && removePack.Right <= removeFilePack.Left
+                            && !Descendants(pages.TabPages[1]).OfType<Button>().Any(button => button.Text == "Remove pack" || button.Text == "Pack actions..." || button.Text == "Change hotkey..." || button.Text == "Exit" || button.Text == "Refresh apps"),
+                            "Manage Icons has one remove button for each pack list and no old pack-actions, hotkey or utility buttons");
+                        Check(restoreApps.Visible && restoreApps.Text == "Restore app defaults...", "The restore action beside Apply icons says that it restores app icons");
+                        Control previewRow = previewGrid.Parent;
+                        ListView filePreviewGrid = (ListView)typeof(LauncherForm).GetField("filePreview", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
+                        Check(previewGrid.Dock == DockStyle.Fill && previewRow.Dock == DockStyle.Fill && previewRow.Parent == settingsContent && filePreviewGrid.Parent == previewRow,
                             "The pack preview occupies the flexible middle row of Manage Icons");
+                        Check(!filePreviewGrid.Visible && previewGrid.Width >= previewRow.ClientSize.Width - previewGrid.Margin.Horizontal - 1,
+                            "The app preview uses the whole row while the original file icons are chosen");
                         Size previousSize = form.Size; int previousIconSize = slider.Value;
                         try {
                             foreach (Size windowSize in new[] { new Size(790, 570), new Size(900, 690), new Size(900, 900) }) foreach (int iconSize in new[] { 24, 128, 184 }) {
@@ -1283,6 +1537,12 @@ static class TrayTests
             }
             CheckContextRestore(root, args[1], json);
             ShortcutScopeTests.Run(root, args[1], json, Check);
+            CheckButtonRows();
+            FileTypeTests.Run(root, args[1], json, Check);
+            ReapplyTests.Run(root, args[1], json, Check);
+            LoginItemTests.Run(root, args[1], json, Check);
+            ReapplyFixTests.Run(root, args[1], json, Check);
+            WebPTests.Run(root, args[1], json, Check);
         }
         catch (Exception error) { failure = error.ToString(); Console.Error.WriteLine(failure); }
         finally { File.WriteAllText(Path.Combine(root, "results.json"), new JavaScriptSerializer().Serialize(new { Passed = failure == null, Error = failure, Checks = checks, ArtifactDirectory = root })); }

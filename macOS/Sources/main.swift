@@ -21,7 +21,7 @@ func startBetterIcon() throws {
             """
             BetterIcon [--menu-bar-only]
             BetterIcon --list-apps | --list-packs
-            BetterIcon --apply PACK | --restore [--app PhotoCraft] [--scope personal|shared] [--yes]
+            BetterIcon --apply PACK | --restore [--app PhotoCraft] [--scope personal|shared|all] [--yes]
             Apply and restore print a review. Add --yes to perform the reviewed operation.
             --fixture DIRECTORY uses its Applications, Shared and State folders for local testing.
             """)
@@ -29,7 +29,8 @@ func startBetterIcon() throws {
     }
     let fixture = try parameter("--fixture").map { URL(fileURLWithPath: $0, isDirectory: true) }
     let scopeName = try parameter("--scope") ?? "shared"
-    guard let scope = Scope(rawValue: scopeName) else { throw Problem("Use --scope personal or --scope shared.") }
+    let scope = Scope(rawValue: scopeName)
+    guard scope != nil || scopeName == "all" else { throw Problem("Use --scope personal, --scope shared or --scope all.") }
     let packName = try parameter("--apply")
     let only = try parameter("--app")
     let restore = flag("--restore")
@@ -59,8 +60,7 @@ func startBetterIcon() throws {
         }
         let lib = try PackLibrary(install.state.appendingPathComponent("Packs"))
         let published = try PublishedPacks(resources: resources, state: install.state)
-        lib.projectKeys = Set(published.formats.map(\.Key))
-        lib.projectApps = Set(published.formats.map(\.Application))
+        lib.formats = published.formats
         let packs = lib.visible(try published.list())
         if listPacks {
             for pack in packs { print([pack.id, pack.title, String(pack.icons.count)].joined(separator: "\t")) }
@@ -76,12 +76,14 @@ func startBetterIcon() throws {
         let pack = matches.first ?? .defaults
         if !restore && pack.status == "Download" { throw Problem("Select this pack in Manage Icons to download it first.") }
         let backend = AppIcons(install.state.appendingPathComponent("App Icons"))
+        // A running BetterIcon may be putting an icon back after an update. The review shows the apps as it leaves them.
+        try backend.waitUntilIdle(timeout: 30)
         let plan = backend.review(
             apps: apps, pack: pack, scope: scope, restore: restore || pack.isDefault, only: only)
         for row in plan.rows { print(row.message + "\t" + row.app.url.path) }
         if yes {
-            let result = try backend.perform(
-                plan, apps: install.catalog.discover(extraFolders: fixture == nil ? p.folders : []), pack: pack)
+            let found = install.catalog.discover(extraFolders: fixture == nil ? p.folders : [])
+            let result = try backend.perform(plan, apps: found, pack: pack, wait: 10)
             if !result.changed.isEmpty || !result.defaults.isEmpty {
                 try updatePreferences(install.state) { value in
                     if plan.restore {
@@ -89,6 +91,7 @@ func startBetterIcon() throws {
                     } else {
                         value.defaultPaths.subtract(result.changed)
                     }
+                    value.noteApplied(plan, result, pack: pack)
                 }
                 DistributedNotificationCenter.default().postNotificationName(
                     install.notificationName, object: "refresh", userInfo: nil, deliverImmediately: true)
@@ -99,8 +102,10 @@ func startBetterIcon() throws {
         return
     }
     try fm.createDirectory(at: install.state, withIntermediateDirectories: true)
-    let lock = open(
-        install.state.appendingPathComponent("launcher.lock").path, O_CREAT | O_RDWR | O_NOFOLLOW, 0o600)
+    let lockPath = install.state.appendingPathComponent("launcher.lock").path
+    // Every earlier version leaves its lock file behind at its first start, also when it never saved preferences.
+    let startedBefore = fm.fileExists(atPath: lockPath)
+    let lock = open(lockPath, O_CREAT | O_RDWR | O_NOFOLLOW, 0o600)
     guard lock >= 0 else { throw Problem("Could not open the launcher lock.") }
     defer { close(lock) }
     if flock(lock, LOCK_EX | LOCK_NB) != 0 {
@@ -109,7 +114,7 @@ func startBetterIcon() throws {
         return
     }
     let ns = NSApplication.shared
-    let delegate = try Application(install, hidden: hidden)
+    let delegate = try Application(install, hidden: hidden, startedBefore: startedBefore)
     ns.delegate = delegate
     withExtendedLifetime(delegate) { ns.run() }
 }

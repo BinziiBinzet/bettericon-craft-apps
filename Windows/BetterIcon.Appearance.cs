@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.IO;
@@ -34,7 +35,31 @@ namespace BetterIcon.Tray
     }
     public static class AppBranding
     {
-        public static readonly string[] Styles = { "clay", "copper", "mauve", "ochre", "sage", "slate", "stone", "teal" };
+        public static readonly string[] Styles = { "clay", "copper", "mauve", "ochre", "sage", "slate", "stone", "teal", "grayscale", "contrast" };
+        static readonly Dictionary<string, Color[]> tones = new Dictionary<string, Color[]>();
+        // Each icon is drawn in two tones. Returns the darker one, then the lighter one.
+        public static Color[] Tones(string style, string variant)
+        {
+            string key = style + "." + variant;
+            lock (tones) {
+                Color[] known;
+                if (tones.TryGetValue(key, out known)) return known;
+                using (Bitmap image = Preview(style, variant, 64)) {
+                    Func<Color, double> luma = pixel => 0.299 * pixel.R + 0.587 * pixel.G + 0.114 * pixel.B;
+                    List<Color> solid = new List<Color>();
+                    for (int y = 0; y < image.Height; y++) for (int x = 0; x < image.Width; x++) { Color pixel = image.GetPixel(x, y); if (pixel.A >= 250) solid.Add(pixel); }
+                    if (solid.Count == 0) throw new IOException("The BetterIcon app icon has no artwork.");
+                    double middle = (solid.Min(luma) + solid.Max(luma)) / 2;
+                    Func<IEnumerable<Color>, Color> mean = part => {
+                        Color[] pixels = part.ToArray();
+                        return pixels.Length == 0 ? solid[0] : Color.FromArgb((int)Math.Round(pixels.Average(p => (double)p.R)), (int)Math.Round(pixels.Average(p => (double)p.G)), (int)Math.Round(pixels.Average(p => (double)p.B)));
+                    };
+                    known = new[] { mean(solid.Where(pixel => luma(pixel) < middle)), mean(solid.Where(pixel => luma(pixel) >= middle)) };
+                }
+                tones[key] = known;
+                return known;
+            }
+        }
         public static string Variant(string preference, bool dark) { return preference == "Dark" ? "dark" : preference == "Light" ? "light" : dark ? "dark" : "light"; }
         public static string ResourceName(string style, string variant) { return "BetterIcon.AppIcons." + style + "." + variant + ".ico"; }
         public static Icon Load(string style, string variant, int size = 256)
@@ -53,13 +78,15 @@ namespace BetterIcon.Tray
             }
             return output;
         }
-        public static string Title(string style) { return Char.ToUpperInvariant(style[0]) + style.Substring(1); }
+        public static string Title(string style) { return style == "contrast" ? "High contrast" : Char.ToUpperInvariant(style[0]) + style.Substring(1); }
     }
 
     public sealed class AppearancePalette
     {
         public bool Dark, HighContrast;
         public Color Background, Surface, Input, Text, Muted, Border, Accent, Selection, SelectionText, InactiveTab, Error;
+        // A primary action's label, and how it and an ordinary button look under the pointer and while pressed.
+        public Color AccentText, AccentHover, AccentPressed, Pressed;
     }
 
     public static class AppAppearance
@@ -75,22 +102,78 @@ namespace BetterIcon.Tray
             catch (UnauthorizedAccessException) { return false; }
             catch (IOException) { return false; }
         }
-        public static AppearancePalette Resolve(string mode, bool? systemDark = null, bool? highContrast = null)
+        static readonly Dictionary<string, AppearancePalette> schemes = new Dictionary<string, AppearancePalette>();
+        // WCAG relative luminance and contrast ratio.
+        public static double Luminance(Color color)
+        {
+            Func<int, double> linear = value => { double v = value / 255.0; return v <= 0.03928 ? v / 12.92 : Math.Pow((v + 0.055) / 1.055, 2.4); };
+            return 0.2126 * linear(color.R) + 0.7152 * linear(color.G) + 0.0722 * linear(color.B);
+        }
+        public static double Contrast(Color first, Color second)
+        {
+            double a = Luminance(first), b = Luminance(second);
+            return (Math.Max(a, b) + 0.05) / (Math.Min(a, b) + 0.05);
+        }
+        static Color Mix(Color from, Color to, double amount)
+        {
+            return Color.FromArgb((int)Math.Round(from.R + (to.R - from.R) * amount), (int)Math.Round(from.G + (to.G - from.G) * amount), (int)Math.Round(from.B + (to.B - from.B) * amount));
+        }
+        // Move a color toward white or black, only as far as it needs to read on every background.
+        static Color Readable(Color color, double ratio, params Color[] backgrounds)
+        {
+            Color target = backgrounds.Min(back => Contrast(Color.White, back)) >= backgrounds.Min(back => Contrast(Color.Black, back)) ? Color.White : Color.Black;
+            for (int step = 0; step <= 20; step++) {
+                Color candidate = Mix(color, target, step / 20.0);
+                if (backgrounds.All(back => Contrast(candidate, back) >= ratio)) return candidate;
+            }
+            return target;
+        }
+        // The app takes its colors from the chosen app icon: the icon's dark tone is the
+        // dark theme's background and its light tone the light theme's.
+        static AppearancePalette Scheme(string style, bool dark)
+        {
+            string key = style + (dark ? ".dark" : ".light");
+            lock (schemes) {
+                AppearancePalette p;
+                if (schemes.TryGetValue(key, out p)) return p;
+                Color[] tones = AppBranding.Tones(style, dark ? "dark" : "light");
+                bool strong = style == "contrast";
+                Color low = strong ? Color.Black : tones[0], high = strong ? Color.White : tones[1];
+                p = new AppearancePalette { Dark = dark };
+                if (dark) {
+                    p.Surface = low; p.Background = strong ? low : Mix(low, Color.Black, 0.18); p.Input = strong ? low : Mix(low, Color.Black, 0.12);
+                    p.InactiveTab = Mix(low, high, 0.18); p.Selection = Mix(low, high, 0.28); p.Pressed = Mix(low, high, 0.40);
+                    p.Border = strong ? high : Mix(low, high, 0.42);
+                    p.Text = Readable(Readable(Mix(high, Color.White, 0.65), 7, p.Surface, p.Input, p.Background), 4.5, p.Selection, p.InactiveTab, p.Pressed);
+                    p.Muted = strong ? p.Text : Readable(high, 4.5, p.Surface, p.Background, p.InactiveTab);
+                    p.Accent = high; p.AccentHover = Mix(high, Color.White, 0.22); p.AccentPressed = Mix(high, Color.White, 0.40);
+                    p.AccentText = Readable(low, 4.5, p.Accent, p.AccentHover, p.AccentPressed);
+                    p.Error = Readable(Color.FromArgb(255, 161, 154), 4.5, p.Surface, p.Background);
+                } else {
+                    p.Surface = high; p.Background = strong ? high : Mix(high, low, 0.07); p.Input = strong ? high : Mix(high, Color.White, 0.55);
+                    p.InactiveTab = Mix(high, low, 0.16); p.Selection = Mix(high, low, 0.16); p.Pressed = Mix(high, low, 0.28);
+                    p.Border = strong ? low : Mix(high, low, 0.55);
+                    p.Text = Readable(Readable(Mix(low, Color.Black, 0.55), 7, p.Surface, p.Input, p.Background), 4.5, p.Selection, p.InactiveTab, p.Pressed);
+                    p.Muted = strong ? p.Text : Readable(Mix(low, Color.Black, 0.10), 4.5, p.Surface, p.Background, p.InactiveTab);
+                    p.AccentText = Color.White;
+                    p.Accent = Readable(low, 4.5, p.AccentText); p.AccentHover = Mix(p.Accent, Color.Black, 0.15); p.AccentPressed = Mix(p.Accent, Color.Black, 0.30);
+                    p.Error = Readable(Color.Firebrick, 4.5, p.Surface, p.Background);
+                }
+                p.SelectionText = p.Text;
+                schemes[key] = p;
+                return p;
+            }
+        }
+        public static AppearancePalette Resolve(string mode, bool? systemDark = null, bool? highContrast = null, string style = null)
         {
             bool contrast = highContrast ?? SystemInformation.HighContrast;
             bool dark = mode == "Dark" || (mode != "Light" && (systemDark ?? SystemIsDark()));
             if (contrast) return new AppearancePalette { HighContrast = true, Dark = SystemColors.Window.GetBrightness() < 0.5F,
                 Background = SystemColors.Control, Surface = SystemColors.Window, Input = SystemColors.Window, Text = SystemColors.WindowText,
                 Muted = SystemColors.WindowText, Border = SystemColors.WindowText, Accent = SystemColors.Highlight,
+                AccentText = SystemColors.HighlightText, AccentHover = SystemColors.Highlight, AccentPressed = SystemColors.Highlight, Pressed = SystemColors.Highlight,
                 Selection = SystemColors.Highlight, SelectionText = SystemColors.HighlightText, InactiveTab = SystemColors.Control, Error = SystemColors.WindowText };
-            return dark ? new AppearancePalette { Dark = true, Background = Color.FromArgb(21, 26, 32), Surface = Color.FromArgb(31, 39, 48),
-                Input = Color.FromArgb(24, 30, 38), Text = Color.FromArgb(234, 240, 248), Muted = Color.FromArgb(177, 192, 209),
-                Border = Color.FromArgb(78, 94, 113), Accent = Color.FromArgb(49, 100, 186), Selection = Color.FromArgb(48, 76, 117),
-                SelectionText = Color.White, InactiveTab = Color.FromArgb(57, 69, 85), Error = Color.FromArgb(255, 161, 154) }
-                : new AppearancePalette { Background = Color.FromArgb(244, 247, 251), Surface = Color.White, Input = Color.White,
-                    Text = Color.FromArgb(26, 39, 58), Muted = Color.FromArgb(75, 91, 112), Border = Color.FromArgb(138, 154, 174),
-                    Accent = Color.FromArgb(41, 100, 208), Selection = Color.FromArgb(213, 229, 250), SelectionText = Color.FromArgb(20, 45, 80),
-                    InactiveTab = Color.FromArgb(205, 216, 232), Error = Color.Firebrick };
+            return Scheme(AppBranding.Styles.Contains(style) ? style : "sage", dark);
         }
         public static void Apply(Control control, AppearancePalette palette)
         {
@@ -129,11 +212,14 @@ namespace BetterIcon.Tray
             }
             Button button = control as Button;
             if (button != null) {
+                bool primary = role == "PrimaryAction";
                 button.FlatStyle = FlatStyle.Flat; button.UseVisualStyleBackColor = false;
-                button.BackColor = role == "PrimaryAction" ? palette.Accent : palette.Surface;
-                button.ForeColor = role == "PrimaryAction" ? palette.HighContrast ? SystemColors.HighlightText : Color.White : palette.Text;
-                button.FlatAppearance.BorderColor = palette.Border; button.FlatAppearance.MouseOverBackColor = palette.Selection;
-                button.FlatAppearance.MouseDownBackColor = palette.Accent;
+                button.BackColor = primary ? palette.Accent : palette.Surface;
+                button.ForeColor = primary ? palette.AccentText : palette.Text;
+                button.FlatAppearance.BorderColor = palette.Border;
+                // A primary action keeps its own label color, so it stays in its accent family under the pointer.
+                button.FlatAppearance.MouseOverBackColor = primary ? palette.AccentHover : palette.Selection;
+                button.FlatAppearance.MouseDownBackColor = primary ? palette.AccentPressed : palette.Pressed;
             }
             if (control is ComboBox || control is TextBoxBase || control is NumericUpDown) control.BackColor = palette.Input;
             CheckBox check = control as CheckBox; if (check != null) check.UseVisualStyleBackColor = false;
@@ -300,7 +386,8 @@ namespace BetterIcon.Tray
                     Tag = style + "/" + variant, Image = AppBranding.Preview(style, variant.ToLowerInvariant(), 32),
                     ImageScaling = ToolStripItemImageScaling.None
                 };
-                item.Click += delegate { if (!busy) { preferences.AppIconStyle = style; preferences.AppIconVariant = variant; ChangeAppearance(); } };
+                // The app takes the chosen icon's color scheme, so a Dark or Light icon also sets that theme.
+                item.Click += delegate { if (!busy) { preferences.AppIconStyle = style; preferences.AppIconVariant = variant; preferences.AppearanceMode = variant; ChangeAppearance(); } };
                 appIconMenu.Items.Add(item);
             }
             foreach (ToolStripItem item in appIconMenu.Items) item.Padding = new Padding(4, 3, 8, 3);
@@ -362,7 +449,7 @@ namespace BetterIcon.Tray
         }
         void ApplyAppearance()
         {
-            appearancePalette = AppAppearance.Resolve(preferences.AppearanceMode);
+            appearancePalette = AppAppearance.Resolve(preferences.AppearanceMode, style: preferences.AppIconStyle);
             string variant = AppBranding.Variant(preferences.AppIconVariant, appearancePalette.Dark), key = preferences.AppIconStyle + "." + variant;
             if (activeAppIconKey != key) {
                 Icon replacement = AppBranding.Load(preferences.AppIconStyle, variant), previous = ownedAppIcon ?? Icon;
@@ -383,7 +470,7 @@ namespace BetterIcon.Tray
                 if (old != null) old.Dispose();
             }
             AppAppearance.Apply(this, appearancePalette);
-            foreach (ContextMenuStrip menu in new[] { trayMenu, iconMenu, importPackMenu, managePackMenu }) AppAppearance.ApplyMenu(menu, appearancePalette);
+            foreach (ContextMenuStrip menu in new[] { trayMenu, iconMenu, importPackMenu, managePackMenu, manageFilePackMenu }) AppAppearance.ApplyMenu(menu, appearancePalette);
             appIconMenu.BackColor = appearancePalette.Surface; appIconMenu.ForeColor = appearancePalette.Text;
             appIconMenu.Renderer = new AppIconMenuRenderer(appearancePalette);
             foreach (ToolStripItem item in appIconMenu.Items) item.ForeColor = appearancePalette.Text;
@@ -425,7 +512,7 @@ namespace BetterIcon.Tray
             }
             return image;
         }
-        void ApplyDialogAppearance(Form dialog) { dialog.Icon = Icon; AppAppearance.Apply(dialog, appearancePalette ?? AppAppearance.Resolve(preferences.AppearanceMode)); }
+        void ApplyDialogAppearance(Form dialog) { dialog.Icon = Icon; AppAppearance.Apply(dialog, appearancePalette ?? AppAppearance.Resolve(preferences.AppearanceMode, style: preferences.AppIconStyle)); }
         void DisposeAppearance()
         {
             if (appearanceSubscribed) { SystemEvents.UserPreferenceChanged -= OnSystemAppearanceChanged; appearanceSubscribed = false; }

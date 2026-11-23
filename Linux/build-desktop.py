@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a Linux installer with bundled or on-demand artwork."""
+"""Build the Linux installer. Packs are downloaded when picked, so it carries no pack artwork."""
 import argparse
 import hashlib
 import shutil
@@ -16,12 +16,12 @@ MAC = HERE.parent / "macOS"
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("artwork_zip", type=Path)
     parser.add_argument("output", type=Path)
-    parser.add_argument("--edition", choices=["Bundled", "OnDemand"], default="Bundled")
+    parser.add_argument("--artwork", type=Path, default=HERE.parent,
+                        help="the BetterIcon checkout, or a ZIP of its branding and hover strips")
     args = parser.parse_args()
     version = (HERE / "desktop/VERSION").read_text().strip()
-    name = f"BetterIcon-{version}-Linux-{args.edition}"
+    name = f"BetterIcon-{version}-Linux"
     args.output.mkdir(parents=True, exist_ok=True)
     dest = args.output / (name + ".tar.gz")
     if dest.exists():
@@ -35,8 +35,15 @@ def main():
         shutil.copy2(HERE.parent / "LICENSE", app / "LICENSE")
         shutil.copy2(HERE / "setup-desktop.py", staging)
         shutil.copy2(HERE / "README.md", staging)
-        subprocess.run([sys.executable, HERE.parent / "Shared/prepare_packs.py", app,
-                        args.artwork_zip, args.edition], check=True)
+        subprocess.run([sys.executable, HERE.parent / "Shared/prepare_packs.py", app, args.artwork], check=True)
+        # Each pack's download size, for the offer a new installation makes. macOS/pack-sizes.py writes the table from
+        # the pack artwork, which a build does not have, for the catalog whose SHA-256 its #catalog line records.
+        sizes = MAC / "PackSizes.tsv"
+        shutil.copyfile(sizes, app / "Catalog/pack-sizes.tsv")
+        catalog = hashlib.sha256((app / "Catalog/packs.tsv").read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+        if "#catalog\t" + catalog not in sizes.read_text(encoding="utf8").replace("\r\n", "\n").splitlines():
+            print("warning: macOS/PackSizes.tsv was made for another pack catalog. Run macOS/pack-sizes.py on a "
+                  "checkout with the artwork.", file=sys.stderr)
         for arch in ("arm64", "amd64"):
             env = dict(os.environ, CGO_ENABLED="0", GOOS="linux", GOARCH=arch)
             subprocess.run(["go", "build", "-trimpath", "-ldflags=-s -w",

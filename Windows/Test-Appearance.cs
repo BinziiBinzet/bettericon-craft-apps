@@ -341,15 +341,32 @@ static class AppearanceTests
         check(old.AppearanceMode == "System" && old.AppIconStyle == "sage" && old.AppIconVariant == "Auto", "Invalid appearance preferences safely fall back to the available defaults");
         check(AppAppearance.Resolve("System", true, false).Dark && !AppAppearance.Resolve("System", false, false).Dark && AppAppearance.Resolve("Dark", false, false).Dark && !AppAppearance.Resolve("Light", true, false).Dark, "System follows Windows while explicit Dark and Light override it");
         check(AppAppearance.Resolve("System", null, false).Dark == AppAppearance.SystemIsDark(), "System appearance reads the current Windows app theme without writing OS settings");
-        foreach (string mode in new[] { "Dark", "Light" }) {
-            AppearancePalette p = AppAppearance.Resolve(mode, null, false);
-            check(Contrast(p.Text, p.Surface) >= 4.5 && Contrast(p.Text, p.Input) >= 4.5 && Contrast(p.Muted, p.Background) >= 4.5 && Contrast(p.SelectionText, p.Selection) >= 4.5 && Contrast(Color.White, p.Accent) >= 4.5 && Contrast(p.Error, p.Surface) >= 4.5,
-                mode + " text, inputs, selected items, primary actions and errors meet normal-text contrast");
+        // Each app icon supplies the app's own colors: its dark tone for Dark, its light tone for Light.
+        foreach (string style in AppBranding.Styles) foreach (string mode in new[] { "Dark", "Light" }) {
+            AppearancePalette p = AppAppearance.Resolve(mode, null, false, style);
+            Color[] tones = AppBranding.Tones(style, mode.ToLowerInvariant());
+            Color own = style == "contrast" ? (mode == "Dark" ? Color.Black : Color.White) : tones[mode == "Dark" ? 0 : 1];
+            string name = AppBranding.Title(style) + " " + mode;
+            check(p.Dark == (mode == "Dark") && !p.HighContrast && p.Surface.ToArgb() == own.ToArgb() && Contrast(tones[0], tones[1]) >= 3,
+                name + " uses its icon's own " + mode.ToLowerInvariant() + " tone as the app background");
+            double weakest = new[] { Contrast(p.Text, p.Input), Contrast(p.Text, p.Background), Contrast(p.Text, p.InactiveTab), Contrast(p.Text, p.Pressed),
+                Contrast(p.Muted, p.Surface), Contrast(p.Muted, p.Background), Contrast(p.Muted, p.InactiveTab), Contrast(p.SelectionText, p.Selection),
+                Contrast(p.AccentText, p.Accent), Contrast(p.AccentText, p.AccentHover), Contrast(p.AccentText, p.AccentPressed), Contrast(p.Error, p.Surface), Contrast(p.Error, p.Background) }.Min();
+            check(Contrast(p.Text, p.Surface) >= 7 && weakest >= 4.5 && Contrast(p.Border, p.Surface) >= 1.5,
+                name + " text, inputs, selected items, primary actions and errors meet normal-text contrast (text " + Contrast(p.Text, p.Surface).ToString("0.0") + ", weakest " + weakest.ToString("0.0") + ")");
         }
-        AppearancePalette high = AppAppearance.Resolve("Dark", false, true);
-        check(high.HighContrast && high.Text == SystemColors.WindowText && high.Selection == SystemColors.Highlight && high.SelectionText == SystemColors.HighlightText, "Windows high contrast colors take precedence over appearance presets");
+        check(AppAppearance.Resolve("Dark", null, false).Surface == AppAppearance.Resolve("Dark", null, false, "sage").Surface && AppAppearance.Resolve("Light", null, false, "unknown").Surface == AppAppearance.Resolve("Light", null, false, "sage").Surface
+            && AppAppearance.Resolve("Dark", null, false, "slate").Surface != AppAppearance.Resolve("Dark", null, false, "clay").Surface,
+            "An unnamed or unknown icon falls back to Sage, and different icons give different schemes");
+        AppearancePalette high = AppAppearance.Resolve("Dark", false, true, "slate");
+        check(high.HighContrast && high.Text == SystemColors.WindowText && high.Selection == SystemColors.Highlight && high.SelectionText == SystemColors.HighlightText && high.AccentText == SystemColors.HighlightText, "Windows high contrast colors take precedence over every icon scheme");
         string[] resources = typeof(AppBranding).Assembly.GetManifestResourceNames();
-        check(resources.Count(name => name.StartsWith("BetterIcon.AppIcons.", StringComparison.Ordinal)) == 16 && AppBranding.Styles.All(style => new[] { "dark", "light" }.All(variant => resources.Contains(AppBranding.ResourceName(style, variant)))), "The built executable embeds all eight approved Dark and Light icon pairs");
+        check(AppBranding.Styles.Length == 10 && resources.Count(name => name.StartsWith("BetterIcon.AppIcons.", StringComparison.Ordinal)) == 20 && AppBranding.Styles.All(style => new[] { "dark", "light" }.All(variant => resources.Contains(AppBranding.ResourceName(style, variant)))), "The built executable embeds all ten Dark and Light icon pairs, including Grayscale and High contrast");
+        Func<string, string, bool> neutral = (style, variant) => AppBranding.Tones(style, variant).All(tone => Math.Abs(tone.R - tone.G) <= 1 && Math.Abs(tone.G - tone.B) <= 1);
+        Color[] blackOnWhite = AppBranding.Tones("contrast", "light"), whiteOnBlack = AppBranding.Tones("contrast", "dark");
+        check(neutral("grayscale", "dark") && neutral("grayscale", "light") && !neutral("slate", "dark")
+            && blackOnWhite[0].R <= 8 && blackOnWhite[1].R >= 247 && whiteOnBlack[0].R <= 8 && whiteOnBlack[1].R >= 247 && Contrast(whiteOnBlack[0], whiteOnBlack[1]) >= 18,
+            "The Grayscale icons hold no color and the High contrast icons are black and white");
         bool exactSmall = true;
         foreach (string style in AppBranding.Styles) foreach (string variant in new[] { "dark", "light" }) {
             using (Bitmap source = new Bitmap(Path.Combine(sourceFolder, "Assets", "AppIcons", "32px", "betterIcon_icon_" + style + "_" + variant + ".png")))
@@ -360,7 +377,7 @@ static class AppearanceTests
                 if (opaque < 500) exactSmall = false;
             }
         }
-        check(exactSmall, "All 16 embedded 32-pixel frames preserve the dedicated small artwork's opaque pixels exactly");
+        check(exactSmall, "Every embedded 32-pixel frame preserves the dedicated small artwork's opaque pixels exactly");
 
         Preferences pref = (Preferences)Field(form, "preferences");
         string savedMode = pref.AppearanceMode, savedStyle = pref.AppIconStyle, savedVariant = pref.AppIconVariant;
@@ -374,7 +391,7 @@ static class AppearanceTests
         try {
             form.ShowManager(); pages.SelectedIndex = 1;
             string[] expectedChoices = new[] { "Match app theme" }.Concat(AppBranding.Styles.SelectMany(style => new[] { AppBranding.Title(style) + " Dark", AppBranding.Title(style) + " Light" })).ToArray();
-            check(iconChoices.Items.Cast<ToolStripItem>().Select(item => item.Text).SequenceEqual(expectedChoices) && iconChoices.Items.OfType<ToolStripMenuItem>().All(item => item.Image != null && item.DropDownItems.Count == 0), "The app-icon menu is one image-and-name list with all sixteen variants and automatic pairing");
+            check(iconChoices.Items.Cast<ToolStripItem>().Select(item => item.Text).SequenceEqual(expectedChoices) && iconChoices.Items.OfType<ToolStripMenuItem>().All(item => item.Image != null && item.DropDownItems.Count == 0), "The app-icon menu is one image-and-name list with all twenty variants and automatic pairing");
             check(!Descendants(form).OfType<ComboBox>().Any(control => control.AccessibleName == "App theme" || control.AccessibleName == "BetterIcon icon style" || control.AccessibleName == "BetterIcon icon variant"), "Appearance dropdowns are replaced by the two footer buttons");
             SelectMode(form, "Dark");
             foreach (string mode in new[] { "Light", "System", "Dark" }) {
@@ -386,29 +403,42 @@ static class AppearanceTests
             check(iconChoices.Visible && (bool)typeof(LauncherForm).GetProperty("AppearanceMenuOpen", instance).GetValue(form, null) && Screen.FromControl(form).WorkingArea.Contains(iconChoices.Bounds), "The app-icon button opens its guarded menu entirely inside the monitor working area");
             check(iconChoices.Items.Cast<ToolStripItem>().Zip(iconChoices.Items.Cast<ToolStripItem>().Skip(1), (first, second) => first.Bounds.Bottom <= second.Bounds.Top && first.Bounds.Left == second.Bounds.Left).All(value => value), "App-icon choices form a nonoverlapping vertical list");
             iconChoices.Close();
-            AppearancePalette darkPalette = AppAppearance.Resolve("Dark");
-            check(((AppearancePalette)Field(form, "appearancePalette")).Dark && form.BackColor == (darkPalette.HighContrast ? darkPalette.Background : darkPalette.Surface) && ((Control)Field(form, "apps")).BackColor == darkPalette.Surface && ((Control)Field(form, "packPreview")).ForeColor == darkPalette.Text && !((ListView)Field(form, "apps")).OwnerDraw, "Dark appearance reaches the window and both grids retain native icon and label rendering");
-            check(menus.All(menu => menu.BackColor == AppAppearance.Resolve("Dark").Surface && menu.Items.Cast<ToolStripItem>().All(item => item.ForeColor == AppAppearance.Resolve("Dark").Text)), "Dark appearance reaches tray, icon, import and pack action menus including rebuilt items");
+            AppearancePalette darkPalette = AppAppearance.Resolve("Dark", style: pref.AppIconStyle);
+            ListView launcherGrid = (ListView)Field(form, "apps"), packGrid = (ListView)Field(form, "packPreview");
+            check(((AppearancePalette)Field(form, "appearancePalette")).Dark &&
+                form.BackColor == (darkPalette.HighContrast ? darkPalette.Background : darkPalette.Surface) &&
+                launcherGrid.BackColor == darkPalette.Surface && packGrid.ForeColor == darkPalette.Text &&
+                launcherGrid.OwnerDraw && !packGrid.OwnerDraw,
+                "Dark appearance reaches both grids with artwork highlighting confined to the launcher");
+            check(menus.All(menu => menu.BackColor == darkPalette.Surface && menu.Items.Cast<ToolStripItem>().All(item => item.ForeColor == darkPalette.Text)), "Dark appearance reaches tray, icon, import and pack action menus including rebuilt items");
             HashSet<string> signatures = new HashSet<string>();
+            Button applyButton = (Button)Field(form, "apply");
             foreach (string style in AppBranding.Styles) foreach (string variant in new[] { "dark", "light" }) {
-                chooseIcon(AppBranding.Title(style) + " " + (variant == "dark" ? "Dark" : "Light"));
+                string shade = variant == "dark" ? "Dark" : "Light";
+                chooseIcon(AppBranding.Title(style) + " " + shade);
                 using (Icon expected = AppBranding.Load(style, variant)) using (Icon small = AppBranding.Load(style, variant, SystemInformation.SmallIconSize.Width)) using (Bitmap expectedPreview = AppBranding.Preview(style, variant, 32)) {
                     string signature = IconPixels(expected); signatures.Add(signature);
                     Preferences written = json.Deserialize<Preferences>(File.ReadAllText(preferencesPath));
-                    check(IconPixels(form.Icon) == signature && IconPixels(tray.Icon) == IconPixels(small) && Pixels(iconButton.Image) == Pixels(expectedPreview) && written.AppIconStyle == style && written.AppIconVariant == (variant == "dark" ? "Dark" : "Light") && iconChoices.Items.OfType<ToolStripMenuItem>().Count(item => item.Checked) == 1,
+                    check(IconPixels(form.Icon) == signature && IconPixels(tray.Icon) == IconPixels(small) && Pixels(iconButton.Image) == Pixels(expectedPreview) && written.AppIconStyle == style && written.AppIconVariant == shade && iconChoices.Items.OfType<ToolStripMenuItem>().Count(item => item.Checked) == 1,
                         "Selecting " + AppBranding.Title(style) + " " + variant + " updates the window, tray, preview and saved preference together");
+                    AppearancePalette scheme = AppAppearance.Resolve(shade, style: style), applied = (AppearancePalette)Field(form, "appearancePalette");
+                    check(written.AppearanceMode == shade && applied == scheme && form.BackColor == (scheme.HighContrast ? scheme.Background : scheme.Surface) && launcherGrid.BackColor == scheme.Surface && launcherGrid.ForeColor == scheme.Text
+                        && applyButton.BackColor == scheme.Accent && applyButton.ForeColor == scheme.AccentText && menus.All(menu => menu.BackColor == scheme.Surface),
+                        "Selecting " + AppBranding.Title(style) + " " + variant + " gives the app that icon's color scheme");
                 }
             }
-            check(signatures.Count == 16, "Every supplied color and variant produces distinct embedded artwork");
+            check(signatures.Count == 20, "Every supplied color and variant produces distinct embedded artwork");
             using (Icon small = AppBranding.Load(pref.AppIconStyle, AppBranding.Variant(pref.AppIconVariant, AppAppearance.Resolve(pref.AppearanceMode).Dark), SystemInformation.SmallIconSize.Width))
                 check(tray.Icon.Size == small.Size && tray.Icon.Width <= 32, "The notification-area icon explicitly uses a small frame rather than the large window icon handle");
             chooseIcon("Sage Dark"); chooseIcon("Match app theme"); SelectMode(form, "Dark");
             using (Icon sage = AppBranding.Load("sage", "dark")) check(IconPixels(form.Icon) == IconPixels(sage), "Sage Dark is the default icon for Dark appearance");
             SelectMode(form, "Light");
-            AppearancePalette lightPalette = AppAppearance.Resolve("Light");
+            AppearancePalette lightPalette = AppAppearance.Resolve("Light", style: "sage");
             using (Icon sage = AppBranding.Load("sage", "light")) check(IconPixels(form.Icon) == IconPixels(sage) && !((AppearancePalette)Field(form, "appearancePalette")).Dark && form.BackColor == (lightPalette.HighContrast ? lightPalette.Background : lightPalette.Surface), "Switching to Light immediately selects the matching light icon and control palette");
             chooseIcon("Sage Dark");
-            using (Icon sage = AppBranding.Load("sage", "dark")) check(IconPixels(form.Icon) == IconPixels(sage) && !((AppearancePalette)Field(form, "appearancePalette")).Dark, "A pinned Dark icon stays Dark in a Light app theme");
+            using (Icon sage = AppBranding.Load("sage", "dark")) check(IconPixels(form.Icon) == IconPixels(sage) && ((AppearancePalette)Field(form, "appearancePalette")).Dark && pref.AppearanceMode == "Dark", "Choosing a Dark icon in a Light app switches the app to that icon's dark scheme");
+            SelectMode(form, "Light");
+            using (Icon sage = AppBranding.Load("sage", "dark")) check(IconPixels(form.Icon) == IconPixels(sage) && !((AppearancePalette)Field(form, "appearancePalette")).Dark, "A pinned Dark icon stays Dark when the theme button switches the app to Light");
             chooseIcon("Match app theme"); SelectMode(form, "System");
             Invoke(form, "OnSystemAppearanceChanged", null, new UserPreferenceChangedEventArgs(UserPreferenceCategory.General));
             Application.DoEvents();

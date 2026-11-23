@@ -56,6 +56,10 @@ namespace BetterIcon.Windows
         public string InstallerIdentity;
         public string LaunchTarget;
         public string LaunchFingerprint;
+        // The link carries a Windows Installer (Darwin) descriptor, whether or not its product is still installed.
+        public bool Advertised;
+        // MsiGetComponentPathW's install state for an advertised link that resolves; 3 means installed locally.
+        public int ComponentState = -100;
     }
 
     public static class ShellLink
@@ -118,6 +122,7 @@ namespace BetterIcon.Windows
                     uint capacity = (uint)executable.Capacity;
                     int state = MsiGetComponentPathW(product.ToString(), component.ToString(), executable, ref capacity);
                     info.LaunchTarget = state.ToString() + ":" + executable;
+                    info.ComponentState = state;
                 }
                 value.Clear(); link.GetArguments(value, value.Capacity); info.Arguments = value.ToString();
                 value.Clear(); link.GetWorkingDirectory(value, value.Capacity); info.WorkingDirectory = value.ToString();
@@ -146,6 +151,8 @@ namespace BetterIcon.Windows
                 // environment targets and other launch-related extra data blocks.
                 IShellLinkDataList data = (IShellLinkDataList)instance;
                 uint flags; data.GetFlags(out flags);
+                // SLDF_HAS_DARWINID: a Windows Installer descriptor, kept even when its product is gone.
+                info.Advertised = (flags & 0x1000u) != 0;
                 // IPersistFile also drops a relative-path hint when a copied
                 // shortcut is on a different drive. Target/PIDL (or MSI launch
                 // identity) are checked independently, so this is not a launch change.

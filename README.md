@@ -11,7 +11,7 @@ BetterIcon puts your installed ArtCraft apps in one launcher, accessible from th
 
 ### Launch an app from the keyboard
 
-Press your launcher shortcut, type the first few letters of an app name, and press **Enter** or **Return**. In the Windows example below, typing `fil` selects FilmCraft from a grid of **HyGel** icons by OmegaDarling. You can also double-click a tile. To change the shortcut, click it in the lower-left corner.
+Press your launcher shortcut, type the first few letters of an app name, and press **Enter** or **Return**. In the Windows example below, typing `fil` selects FilmCraft from a grid of **HyGel** icons by OmegaDarling. BetterIcon 1.27 opens an app with one click and lightens the icon under the pointer or keyboard selection. To change the shortcut, click it in the lower-left corner.
 
 <img src="docs/screenshots/launcher-windows.webp" width="720" alt="Windows Launcher showing 12 ArtCraft apps in two rows with OmegaDarling’s HyGel icons and a Ctrl+Alt+A shortcut in the lower left.">
 
@@ -81,7 +81,7 @@ BetterIcon recognizes the official ArtCraft apps, including ArtCraft Launcher, F
 ### macOS
 
 - Open the BetterIcon disk image and drag **BetterIcon** into Applications. Open it once to add the menu bar icon.
-- In **Manage Icons**, choose a pack and click **Apply icons…**. Review the application paths before applying. **Restore all defaults…** restores their original icons. [Mac guide](macOS/README.md)
+- In **Manage Icons**, choose an app icon pack and click **Apply icons…**. Review the application paths before applying. **Restore app defaults…** restores their original icons. Choose a file type icon pack beside it to change file icons. [Mac guide](macOS/README.md)
 
 ## Contributing & Forking
 

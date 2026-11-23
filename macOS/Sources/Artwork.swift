@@ -3,7 +3,66 @@ import ImageIO
 
 enum Artwork {
     static let maxBytes = 16 * 1024 * 1024
-    static let formats = ["svg", "ico", "png", "icns"]
+    // In order of preference when a personal pack offers one icon in several formats. WebP goes directly ahead of PNG.
+    static let formats = ["svg", "ico", "webp", "png", "icns"]
+    /// Why a WebP file cannot be used. The texts are the same on every platform.
+    static let webpAnimated = "Animated WebP artwork is not supported."
+    static let webpDamaged = "The WebP file is damaged or incomplete."
+    static let webpMislabeled = "The file is named .webp but is not a WebP image."
+    static let webpOversized = "WebP artwork must be at most 4096 pixels per side."
+    /// Follows the animated cause where the user chose the file.
+    static let stillImage = " Choose a still image."
+    /// The WebP byte rule every platform applies before it decodes: why the file's first bytes (at least 30) and its
+    /// length rule it out, or nil when they pass. Integers are little-endian. A file whose damage lies behind a valid
+    /// header passes.
+    static func webpProblem(_ head: Data, length: Int) -> String? {
+        let b = [UInt8](head.prefix(30))
+        guard length >= 30, length <= maxBytes, b.count == 30 else { return webpDamaged }
+        func u16(_ i: Int) -> Int { Int(b[i]) | Int(b[i + 1]) << 8 }
+        func u24(_ i: Int) -> Int { u16(i) | Int(b[i + 2]) << 16 }
+        func u32(_ i: Int) -> Int { u24(i) | Int(b[i + 3]) << 24 }
+        guard Array(b[0..<4]) == Array("RIFF".utf8), Array(b[8..<12]) == Array("WEBP".utf8) else { return webpMislabeled }
+        // Bytes after the RIFF chunk are allowed. A RIFF chunk longer than the file is a truncated file.
+        guard u32(4) + 8 <= length else { return webpDamaged }
+        let width: Int, height: Int
+        switch Array(b[12..<16]) {
+        case Array("VP8 ".utf8):
+            guard b[23] == 0x9D, b[24] == 0x01, b[25] == 0x2A else { return webpDamaged }
+            (width, height) = (u16(26) & 0x3FFF, u16(28) & 0x3FFF)
+        case Array("VP8L".utf8):
+            guard b[20] == 0x2F else { return webpDamaged }
+            let bits = u32(21)
+            (width, height) = ((bits & 0x3FFF) + 1, ((bits >> 14) & 0x3FFF) + 1)
+        case Array("VP8X".utf8):
+            // The animation flag refuses even a one-frame animation, as on every platform.
+            if b[20] & 0x02 != 0 { return webpAnimated }
+            (width, height) = (u24(24) + 1, u24(27) + 1)
+        default: return webpDamaged
+        }
+        guard (1...4096).contains(width), (1...4096).contains(height) else { return webpOversized }
+        return nil
+    }
+    /// Why a pack's artwork file cannot be used, or nil when it can. Only WebP is checked: the byte rule, then ImageIO's
+    /// reading of the header, which costs a fraction of a millisecond. ImageIO does not look at the image data here, and
+    /// it decodes image data that was damaged behind a valid header without an error, so such a file is not caught.
+    static func problem(_ url: URL) -> String? {
+        guard url.pathExtension.lowercased() == "webp" else { return nil }
+        guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]),
+            values.isRegularFile == true, values.isSymbolicLink != true, let size = values.fileSize, (1...maxBytes).contains(size),
+            let handle = try? FileHandle(forReadingFrom: url)
+        else { return webpDamaged }
+        let head = (try? handle.read(upToCount: 30)) ?? Data()
+        try? handle.close()
+        if let problem = webpProblem(head, length: size) { return problem }
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+            CGImageSourceGetType(source) as String? == "org.webmproject.webp"
+        else { return webpMislabeled }
+        let framed = (0..<CGImageSourceGetCount(source)).contains { index in
+            let p = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [String: Any]
+            return p?[kCGImagePropertyPixelWidth as String] as? Int != nil && p?[kCGImagePropertyPixelHeight as String] as? Int != nil
+        }
+        return framed ? nil : webpDamaged
+    }
     static func load(_ file: URL) throws -> Data {
         let values = try file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
         guard values.isRegularFile == true, values.isSymbolicLink != true, let size = values.fileSize,
@@ -15,7 +74,10 @@ enum Artwork {
     }
     @discardableResult static func validate(_ data: Data, ext: String) throws -> Int {
         guard data.count > 0, data.count <= maxBytes, formats.contains(ext) else {
-            throw Problem("Choose SVG, ICO, PNG or ICNS artwork up to 16 MB.")
+            throw Problem("Choose SVG, ICO, PNG, ICNS or WebP artwork up to 16 MB.")
+        }
+        if ext == "webp", let cause = webpProblem(data.prefix(30), length: data.count) {
+            throw Problem(cause == webpAnimated ? cause + stillImage : cause)
         }
         if ext == "svg" {
             guard let xml = String(data: data, encoding: .utf8),
@@ -32,15 +94,17 @@ enum Artwork {
         }
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
             let type = CGImageSourceGetType(source) as String?,
-            type == ["png": "public.png", "ico": "com.microsoft.ico", "icns": "com.apple.icns"][ext]
+            type == ["png": "public.png", "ico": "com.microsoft.ico", "icns": "com.apple.icns", "webp": "org.webmproject.webp"][ext]
         else { throw Problem("The file contents do not match the image extension.") }
         var maximum = 0
         for index in 0..<CGImageSourceGetCount(source) {
             guard let p = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [String: Any],
                 let w = p[kCGImagePropertyPixelWidth as String] as? Int,
-                let h = p[kCGImagePropertyPixelHeight as String] as? Int,
-                (1...4096).contains(w), (1...4096).contains(h)
-            else { throw Problem("Artwork must be at most 4096 pixels per side.") }
+                let h = p[kCGImagePropertyPixelHeight as String] as? Int
+            else { throw Problem("The image could not be decoded.") }
+            guard (1...4096).contains(w), (1...4096).contains(h) else {
+                throw Problem("Artwork must be at most 4096 pixels per side.")
+            }
             maximum = max(maximum, w, h)
         }
         guard maximum > 0,
@@ -51,6 +115,22 @@ enum Artwork {
                 ] as CFDictionary) != nil
         else { throw Problem("The image could not be decoded.") }
         return maximum
+    }
+    /// WebP artwork is kept as PNG, which every part of the app and the other platforms read.
+    static func stored(_ data: Data, ext: String) throws -> (String, Data) {
+        guard ext == "webp" else { return (ext, data) }
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+            let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
+        else { throw Problem("The image could not be decoded.") }
+        let png = NSMutableData()
+        guard let output = CGImageDestinationCreateWithData(png, "public.png" as CFString, 1, nil) else {
+            throw Problem("Could not encode artwork.")
+        }
+        CGImageDestinationAddImage(output, image, nil)
+        guard CGImageDestinationFinalize(output), png.length > 0, png.length <= maxBytes else {
+            throw Problem("The WebP image is too large to keep as a PNG of up to 16 MB.")
+        }
+        return ("png", png as Data)
     }
     static func dimension(_ url: URL) -> Int {
         if url.pathExtension.lowercased() == "svg" { return 4096 }

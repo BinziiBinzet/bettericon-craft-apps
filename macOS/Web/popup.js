@@ -1,7 +1,11 @@
 "use strict";
 const el = (id) => document.getElementById(id);
 const send = (action, data = {}) => window.webkit.messageHandlers.betterIcon.postMessage({ action, ...data });
-const names = ["Clay", "Copper", "Mauve", "Ochre", "Sage", "Slate", "Stone", "Teal"];
+// Each BetterIcon app icon, in menu order. The app takes its colors from the chosen one.
+const styles = [
+  ["clay", "Clay"], ["copper", "Copper"], ["mauve", "Mauve"], ["ochre", "Ochre"], ["sage", "Sage"],
+  ["slate", "Slate"], ["stone", "Stone"], ["teal", "Teal"], ["grayscale", "Grayscale"], ["contrast", "High contrast"],
+];
 const appearanceOrder = ["Dark", "Light", "System"];
 const selected = { apps: "", preview: "" };
 let model,
@@ -22,6 +26,7 @@ function make(tag, content) {
 function tab(name, focus = true) {
   closePackPicker();
   page = name;
+  document.body.dataset.page = name;
   for (const id of ["launcher", "manage"]) {
     el(id).hidden = id !== name;
     el(id + "Tab").setAttribute("aria-selected", String(id === name));
@@ -44,14 +49,16 @@ function iconURL(base, size) {
   return base + "?size=" + Math.min(4096, Math.round(size * window.devicePixelRatio));
 }
 function packActions(group = "apps") {
-  const p = group === "files" ? model.filePack : model.pack;
-  return [
+  const files = group === "files",
+    p = files ? model.filePack : model.pack;
+  const items = [
     ["Customize…", () => send("editor", { mode: "customize", group }), !p.default],
     ["Edit pack…", () => send("editor", { mode: "edit", group }), p.personal],
     ["Export ZIP…", () => send("export", { group }), p.personal],
-    ["Remove pack", () => send("remove", { group }), !p.default],
-    ["Restore built-in packs", () => send("unhide"), true],
+    [files ? "Remove file pack" : "Remove app pack", () => send("remove", { group }), !p.default],
   ];
+  if (!files) items.push(["Restore built-in packs", () => send("unhide"), true]);
+  return items;
 }
 function closeMenu() {
   el("menu").hidden = true;
@@ -105,9 +112,8 @@ function colorMenu() {
       p.variant === "auto",
     ],
   ];
-  for (const name of names)
+  for (const [color, name] of styles)
     for (const variant of ["dark", "light"]) {
-      const color = name.toLowerCase();
       items.push([
         name + (variant === "dark" ? " Dark" : " Light"),
         () => send("brand", { color, variant }),
@@ -128,9 +134,40 @@ function tileMenu(item, x, y) {
     y,
   );
 }
+let hoveredApp = null;
+function highlightHoveredApp(tile) {
+  if (hoveredApp === tile) return;
+  hoveredApp?.classList.remove("hovered");
+  hoveredApp = tile;
+  tile?.classList.add("hovered");
+  el("apps").classList.toggle("pointer", Boolean(tile));
+}
+// A subtle sign that a click landed: the artwork is drawn smaller and darker while the button is held.
+let pressedApp = null;
+function pressApp(tile) {
+  if (pressedApp === tile) return;
+  pressedApp?.classList.remove("pressed");
+  pressedApp = tile;
+  tile?.classList.add("pressed");
+}
+el("apps").onpointerdown = e => pressApp(working || e.button !== 0 || e.ctrlKey ? null : e.target.closest(".tile"));
+el("apps").onpointermove = e => {
+  const tile = working ? null : e.target.closest(".tile");
+  if (pressedApp && tile !== pressedApp) pressApp(null);
+  highlightHoveredApp(tile);
+};
+el("apps").onpointerleave = () => {
+  pressApp(null);
+  highlightHoveredApp(null);
+};
+for (const released of ["pointerup", "pointercancel", "blur"]) window.addEventListener(released, () => pressApp(null));
 function grid(id, items) {
   const area = el(id),
     previous = area.scrollTop;
+  if (id === "apps") {
+    highlightHoveredApp(null);
+    pressApp(null);
+  }
   const nodes = items.map((item) => {
     const b = make("button");
     b.className = "tile";
@@ -153,10 +190,11 @@ function grid(id, items) {
       for (const sibling of area.children) sibling.setAttribute("aria-selected", String(sibling === b));
       area.focus({ preventScroll: true });
     };
-    b.onclick = select;
-    b.ondblclick = () => {
-      if (id === "apps" && !working) send("launch", { id: item.id });
-    };
+    b.onclick = id === "apps" ? e => {
+      if (working || e.button !== 0 || e.ctrlKey) return;
+      select();
+      if (e.detail <= 1) send("launch", { id: item.id });
+    } : select;
     b.oncontextmenu = (e) => {
       e.preventDefault();
       select();
@@ -169,6 +207,30 @@ function grid(id, items) {
 }
 function filtered() {
   return model.apps.filter((app) => app.name.toLowerCase().startsWith(prefix.toLowerCase()));
+}
+// The file type pack's artwork, beside the app pack's. It is a preview only.
+function fileTiles() {
+  const area = el("filePreview");
+  const tiles = (model.filePreview || []).map((file) => {
+    const tile = make("div");
+    tile.className = "tile";
+    tile.setAttribute("role", "listitem");
+    tile.title = file.hint || file.name;
+    const img = make("img");
+    img.alt = "";
+    img.draggable = false;
+    img.src = iconURL(file.image, model.prefs.size);
+    tile.append(img, make("span", file.name));
+    return tile;
+  });
+  area.replaceChildren(...tiles);
+  area.hidden = !tiles.length;
+}
+// The colors of the chosen BetterIcon app icon.
+function applyTheme(theme) {
+  const css = document.documentElement.style;
+  for (const [name, value] of Object.entries(theme || {}))
+    css.setProperty("--" + name.replace(/[A-Z]/g, (letter) => "-" + letter.toLowerCase()), value);
 }
 function grids() {
   const visible = filtered();
@@ -204,30 +266,39 @@ function update(next) {
   const gen = ++viewGeneration;
   model = next;
   const p = model.prefs,
-    pack = model.pack;
+    pack = model.pack,
+    files = model.filePack,
+    kind = (chosen) => (chosen.personal ? "Personal pack" : "Built-in pack");
   document.documentElement.dataset.dark = String(model.dark);
+  applyTheme(model.theme);
   document.body.classList.toggle("iconOnly", !p.names);
   setPackButtons(model);
   packUpdateCount(model.packUpdateCount);
-  const samples = el("fileSamples");
-  samples.replaceChildren(...(model.fileSamples || []).map(file => {
-    const item = make("span"), image = document.createElement("img");
-    image.alt = "";
-    image.src = file.image;
-    item.append(image, document.createTextNode(file.name));
-    return item;
-  }));
-  samples.hidden = !samples.childElementCount;
-  text("applyFiles", model.fileAction || "Apply project file icons…");
-  el("applyFiles").disabled = !model.fileCount;
+  fileTiles();
+  // With the original file icons chosen, the one action is to put them back.
+  text("applyFiles", files.default ? "Restore original file icons…" : "Apply file icons…");
+  el("applyFiles").classList.toggle("primary", !files.default);
+  // On the Mac and Linux a pack can also draw file types outside BetterIcon's list. Its count line then comes as fileSummary.
+  el("applyFiles").disabled = !files.default && !model.fileCount && !model.fileSummary;
+  el("restoreFiles").hidden = files.default;
+  el("removeFiles").disabled = files.default;
+  // On the Mac a pack's file icons can cover whole folders, which BetterIcon then keeps up to date.
+  const folders = model.fileFolders || [];
+  text(
+    "fileDetail",
+    (files.default
+      ? "Original file icons from your installed apps."
+      : (model.fileSummary || model.fileCount + (model.fileCount === 1 ? " file type" : " file types")) + " / " + kind(files)) +
+      (folders.length ? " · " + folders.length + (folders.length === 1 ? " folder" : " folders") + " kept up to date" : ""),
+  );
+  el("fileDetail").title = folders.join("\n");
   el("apply").disabled = !pack.default && !model.preview.length;
   text(
     "detail",
-    pack.default
-      ? "Original icons for your installed apps. Restore defaults below to undo BetterIcon changes."
-      : model.preview.length + " icons / " + (pack.personal ? "Personal pack" : "Built-in pack"),
+    pack.default ? "Original icons for your installed apps." : model.preview.length + " icons / " + kind(pack),
   );
   el("remove").disabled = pack.default;
+  el("restore").hidden = pack.default;
   el("names").checked = p.names;
   el("slider").max = model.maxSize;
   size(p.size);
@@ -241,8 +312,66 @@ function update(next) {
   el("appearance").innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true">' + glyphs[p.theme] + "</svg>";
   const nextTheme = appearanceOrder[(appearanceOrder.indexOf(p.theme) + 1) % 3];
   el("appearance").title = p.theme + " appearance. Switch to " + nextTheme + ".";
+  loginItem(model.loginItem);
+  offer(model.downloadOffer, model.downloads);
   grids();
   if (gen === viewGeneration && model.status) text("status", model.status);
+}
+// Mac only: whether macOS opens BetterIcon at login. The box shows what macOS says. While macOS waits for the user to
+// allow it, a note under the tabs says where, in both tabs.
+function loginItem(login) {
+  el("loginRow").hidden = !login;
+  el("loginNotice").hidden = !login || !login.waiting;
+  document.body.classList.toggle("hasLoginNote", Boolean(login && login.waiting));
+  if (!login) return;
+  const pane = login.pane || "System Settings > General > Login Items";
+  el("openAtLogin").checked = login.on;
+  el("loginRow").title = login.waiting ? "Waiting for you to allow BetterIcon in " + pane + "." : "";
+  text("loginNoticeText", "BetterIcon opens at login once you allow it in " + pane + ".");
+  el("loginNoticeText").title = el("loginNoticeText").textContent;
+}
+function megabytes(group) {
+  const mb = group.bytes / 1e6,
+    size = (mb < 10 ? mb.toFixed(1) : String(Math.round(mb))) + " MB";
+  return group.known ? size : group.bytes ? "at least " + size : "size unknown";
+}
+// Mac only: a new installation offers once to download every app icon pack and every file type icon pack.
+const offerGroups = [
+  ["apps", "offerApps", "All app icon packs"],
+  ["files", "offerFiles", "All file type icon packs"],
+];
+function offer(next, downloads) {
+  const shown = Boolean(next || downloads);
+  el("offer").hidden = !shown;
+  document.body.classList.toggle("hasOffer", shown);
+  // While the chosen packs download, and afterwards until it is closed, the offer shows how the downloads go.
+  el("offerAsk").hidden = Boolean(downloads) || !next;
+  el("offerProgress").hidden = !downloads;
+  if (downloads) {
+    text("offerProgressText", downloads.line);
+    el("offerProgressText").title = downloads.line;
+    el("offerBar").hidden = downloads.done;
+    el("offerClose").hidden = !downloads.done;
+  }
+  if (!next || downloads) return;
+  for (const [key, box, noun] of offerGroups) {
+    const group = next[key];
+    el(box + "Row").hidden = !group.count;
+    if (!group.count) el(box).checked = false;
+    text(box + "Text", noun + " · " + group.count + (group.count === 1 ? " pack · " : " packs · ") + megabytes(group));
+  }
+  offerButton();
+}
+function offerChoice() {
+  const [apps, files] = offerGroups.map(([key, box]) => el(box).checked && !el(box + "Row").hidden);
+  return { apps, files };
+}
+function offerButton() {
+  const { apps, files } = offerChoice(),
+    next = model.downloadOffer,
+    group = apps && files ? next.both : apps ? next.apps : files ? next.files : null;
+  el("offerDownload").disabled = !group;
+  text("offerDownload", group ? "Download " + megabytes(group) : "Download");
 }
 function packUpdateCount(count) {
   const button = el("refreshPacks"), hasUpdates = count > 0;
@@ -261,7 +390,7 @@ function busy(message) {
   el("refreshPacks").disabled = working;
   el("busy").hidden = !working;
   el("busy").firstElementChild.textContent = message || "";
-  for (const section of [el("launcher"), el("manage"), document.querySelector("nav")])
+  for (const section of [el("launcher"), el("manage"), document.querySelector("nav"), el("offer"), el("loginNotice")])
     section.inert = working;
   for (const dialog of document.querySelectorAll("dialog[open]")) dialog.inert = working;
   if (!working) for (const dialog of document.querySelectorAll("dialog")) dialog.inert = false;
@@ -287,7 +416,9 @@ function editor(info) {
       send("clearAssignment", { craft });
       assignment(craft, "");
     };
-    row.append(make("span", craft), file, choose, clear);
+    const label = make("span", info.labels?.[craft] || craft);
+    label.title = info.hints?.[craft] || label.textContent;
+    row.append(label, file, choose, clear);
     return row;
   });
   el("assignments").replaceChildren(...rows);
@@ -337,7 +468,7 @@ el("packs").onclick = () => openPackPicker("apps");
 el("refreshPacks").onclick = () => send("refreshPacks");
 el("filePacks").onclick = () => openPackPicker("files");
 el("packs").onchange = () => send("select", { id: el("packs").value, group: "apps" });
-el("applyFiles").onclick = () => send("reviewFiles", { restore: false });
+el("applyFiles").onclick = () => send("reviewFiles", { restore: model.filePack.default });
 el("restoreFiles").onclick = () => send("reviewFiles", { restore: true });
 el("packs").oncontextmenu = (e) => {
   e.preventDefault();
@@ -345,7 +476,8 @@ el("packs").oncontextmenu = (e) => {
 };
 el("filePacks").oncontextmenu = e => { e.preventDefault(); menu(packActions("files"), e.clientX, e.clientY); };
 el("new").onclick = () => send("editor", { mode: "new" });
-el("remove").onclick = () => send("remove");
+el("remove").onclick = () => send("remove", { group: "apps" });
+el("removeFiles").onclick = () => send("remove", { group: "files" });
 el("import").onclick = () =>
   atButton("import", [
     ["From ZIP…", () => send("import", { zip: true })],
@@ -354,6 +486,13 @@ el("import").onclick = () =>
 el("apply").onclick = () => send("review", { restore: model.pack.default });
 el("restore").onclick = () => send("review", { restore: true });
 el("names").onchange = () => send("names", { value: el("names").checked });
+el("openAtLogin").onchange = () => send("openAtLogin", { value: el("openAtLogin").checked });
+el("offerApps").onchange = el("offerFiles").onchange = () => offerButton();
+el("offerDownload").onclick = () => send("downloadPacks", offerChoice());
+el("offerLater").onclick = el("offerSlimLater").onclick = () => send("skipPacks");
+el("offerChoose").onclick = () => requestTab("manage");
+el("offerClose").onclick = () => send("closeDownloads");
+el("loginSettings").onclick = el("loginSettingsSlim").onclick = () => send("openLoginSettings");
 el("slider").oninput = () => {
   size(el("slider").value);
 };
@@ -413,6 +552,7 @@ document.addEventListener("keydown", (e) => {
     return;
   }
   const id = page === "launcher" ? "apps" : "preview";
+  if (id === "apps") highlightHoveredApp(null);
   if (page === "manage" && !el("preview").contains(document.activeElement)) return;
   const items = id === "apps" ? filtered() : model.preview;
   let i = items.findIndex((item) => item.id === selected[id]);
