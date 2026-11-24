@@ -34,8 +34,10 @@ namespace BetterIcon.Tray
         sealed class Rows : NativeWindow
         {
             readonly PackPicker picker;
-            IntPtr? pointer;
+            IntPtr? pointer, procedure;
             public Rows(PackPicker owner) { picker = owner; }
+            public void Attach(IntPtr list) { AssignHandle(list); procedure = WindowHooks.Procedure(list); }
+            public void LetGo() { if (procedure.HasValue) WindowHooks.LetGo(this, procedure.Value); }
             object Hit(IntPtr point, out Rectangle screen)
             {
                 screen = Rectangle.Empty;
@@ -93,8 +95,9 @@ namespace BetterIcon.Tray
             if (DropDownWidth != widest) DropDownWidth = widest;
             var info = new ComboInfo { Size = Marshal.SizeOf(typeof(ComboInfo)) };
             if (GetComboBoxInfo(Handle, ref info) && info.List != rows.Handle) {
+                // A list held from before went with the picker's earlier window.
                 if (rows.Handle != IntPtr.Zero) rows.ReleaseHandle();
-                if (info.List != IntPtr.Zero) rows.AssignHandle(info.List);
+                if (info.List != IntPtr.Zero) rows.Attach(info.List);
             }
             base.OnDropDown(e);
         }
@@ -159,8 +162,7 @@ namespace BetterIcon.Tray
         }
         protected override void OnHandleDestroyed(EventArgs e)
         {
-            if (rows != null) rows.ResetHover();
-            if (rows != null && rows.Handle != IntPtr.Zero) rows.ReleaseHandle();
+            if (rows != null) { rows.ResetHover(); rows.LetGo(); }
             base.OnHandleDestroyed(e);
         }
         protected override void Dispose(bool disposing)

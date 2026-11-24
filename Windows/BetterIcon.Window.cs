@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace BetterIcon.Tray
@@ -114,18 +115,26 @@ namespace BetterIcon.Tray
         {
             readonly LauncherForm owner;
             readonly Control control;
+            IntPtr procedure;
+            bool detached;
             public ResizeHitWindow(LauncherForm owner, Control control)
             {
                 this.owner = owner; this.control = control;
-                control.HandleCreated += HandleCreated; control.HandleDestroyed += HandleDestroyed;
+                control.HandleCreated += HandleCreated;
                 control.ControlAdded += owner.RoundedControlAdded;
-                if (control.IsHandleCreated) AssignHandle(control.Handle);
+                if (control.IsHandleCreated) Attach();
             }
-            void HandleCreated(object sender, EventArgs e) { AssignHandle(control.Handle); }
-            void HandleDestroyed(object sender, EventArgs e) { if (Handle != IntPtr.Zero) ReleaseHandle(); }
+            void Attach() { AssignHandle(control.Handle); procedure = WindowHooks.Procedure(Handle); }
+            // The hook lets go of a destroyed window by itself (see WindowHooks). One it still holds when the control
+            // gets a new window went without telling it.
+            void HandleCreated(object sender, EventArgs e)
+            {
+                if (Handle != IntPtr.Zero && Handle != control.Handle) ReleaseHandle();
+                if (Handle == IntPtr.Zero) Attach();
+            }
             protected override void WndProc(ref Message message)
             {
-                if (message.Msg == 0x0084 && owner.Enabled && !owner.IsDisposed) {
+                if (!detached && message.Msg == 0x0084 && owner.Enabled && !owner.IsDisposed) {
                     int hit = owner.ResizeHitTest(HitTestPoint(message.LParam));
                     if (hit >= 10 && hit <= 17) { message.Result = new IntPtr(-1); return; } // HTTRANSPARENT, same UI thread.
                 }
@@ -133,10 +142,33 @@ namespace BetterIcon.Tray
             }
             public void Dispose()
             {
-                control.HandleCreated -= HandleCreated; control.HandleDestroyed -= HandleDestroyed;
+                detached = true;
+                control.HandleCreated -= HandleCreated;
                 control.ControlAdded -= owner.RoundedControlAdded;
-                if (Handle != IntPtr.Zero) ReleaseHandle();
+                WindowHooks.LetGo(this, procedure);
             }
+        }
+    }
+
+    // WinForms takes a NativeWindow off a window by putting back the window procedure it replaced. When another subclass
+    // came after it, such as the one a ToolTip adds to each control it explains, that cannot be done, and WinForms gives
+    // the window DefWindowProc instead: everything beneath is cut out, the control's own procedure too. The control never
+    // hears that its window is destroyed, and later tries to destroy it again, which fails as a call from another thread.
+    // So a hook lets go of a live window only while it is still the window's outermost procedure. Otherwise it stays and
+    // passes everything on, and NativeWindow lets go by itself as the window is destroyed (WM_NCDESTROY), after the
+    // procedures beneath it have seen that message.
+    static class WindowHooks
+    {
+        [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] static extern IntPtr GetWindowLongPtr64(IntPtr window, int index);
+        [DllImport("user32.dll", EntryPoint = "GetWindowLongW")] static extern IntPtr GetWindowLong32(IntPtr window, int index);
+        [DllImport("user32.dll")] static extern bool IsWindow(IntPtr window);
+        // The window's outermost procedure (GWLP_WNDPROC); a hook reads it just after taking the window.
+        internal static IntPtr Procedure(IntPtr window) { return IntPtr.Size == 8 ? GetWindowLongPtr64(window, -4) : GetWindowLong32(window, -4); }
+        internal static void LetGo(NativeWindow hook, IntPtr procedure)
+        {
+            IntPtr window = hook.Handle;
+            // A window that is already gone has no chain left to cut.
+            if (window != IntPtr.Zero && (!IsWindow(window) || Procedure(window) == procedure)) hook.ReleaseHandle();
         }
     }
 }
