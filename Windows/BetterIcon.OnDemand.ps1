@@ -255,6 +255,45 @@ function Remove-SupersededPacks {
     $count
 }
 
+function Clear-BetterIconDownloadedPack {
+    # Remove pack's "Clear local copy": every download of the pack on this computer goes (the copy in use, earlier copies
+    # and those of the packs it replaced), each by Remove-PackCopy's rules, and then the receipts that name nothing any more.
+    # The pack is then listed as Download again and downloads when chosen. The pack list, other packs' downloads, personal
+    # packs and the previews stay. A copy whose lock is held or whose files are open stays whole, and so does the receipt
+    # that names it; the answer counts such copies. The tray never asks for the applied pack.
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Theme)
+    $catalog = Get-DownloadCatalog
+    if (!$catalog.Contains($Theme)) {
+        $replacement = (Get-BetterIconPackAliases)[$Theme]
+        if ($replacement) { $Theme = $replacement }
+    }
+    $pack = $catalog[$Theme]
+    if (!$pack) { throw 'This pack is not in the installed catalog.' }
+    $state = Get-PackState
+    $receipts = Join-Path $state 'pack-catalog/installed'
+    $left = 0
+    $copies = @(if ([IO.Directory]::Exists($pack.Path)) { $pack.Path }) + @(Get-PackCopies $pack $state)
+    foreach ($copy in $copies) {
+        $removed = $false
+        try { $removed = [bool](Remove-PackCopy $copy $null $state) } catch { Write-Verbose "Cannot remove the download ${copy}: $($_.Exception.Message)" }
+        if (!$removed -and [IO.Directory]::Exists($copy)) { $left++ }
+    }
+    # A receipt goes once the downloads it names are gone: the pack's own and those of the packs it replaced.
+    $ids = @($pack.Id) + @(foreach ($alias in (Get-BetterIconPackAliases).GetEnumerator()) { if ($alias.Value -ceq $pack.Id) { $alias.Key } })
+    foreach ($id in $ids) {
+        $receipt = Join-Path $receipts ((Get-PathId (Join-Path $state $id)) + '.tsv')
+        if (![IO.File]::Exists($receipt)) { continue }
+        try {
+            $kept = $false
+            foreach ($named in @((Read-PackSnapshot ([IO.File]::ReadAllLines($receipt)) $state).Values)) { if ([IO.Directory]::Exists($named.Path)) { $kept = $true } }
+            if (!$kept) { [IO.File]::Delete($receipt) }
+        } catch { Write-Verbose "Cannot read the receipt of ${id}: $($_.Exception.Message)" }
+    }
+    $script:DownloadCatalog = $null
+    $left
+}
+
 function Get-DownloadCatalog {
     if ($null -ne $script:DownloadCatalog) { return $script:DownloadCatalog }
     $state = Get-PackState

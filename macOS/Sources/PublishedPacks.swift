@@ -1,10 +1,11 @@
 import AppKit
 
-// One entry is one design: a file format with the other extensions that share its artwork.
+// One entry is one format. Older packs can use the artwork of its fallback format.
 struct ProjectFormat: Decodable {
     let Key: String
     let Application: String
     let Aliases: [String]?
+    let Fallback: String?
     var extensions: [String] { [Key] + (Aliases ?? []) }
     var label: String {
         let aliases = Aliases ?? []
@@ -290,10 +291,15 @@ struct PublishedPacks {
         if count == 0 { return others.prefix(1).uppercased() + others.dropFirst() }
         return "\(count) file \(count == 1 ? "type" : "types"), plus " + others
     }
-    // The artwork for every format a pack draws: its own design, or the one for all its app's files.
-    func fileArt(_ pack: Pack) -> [String: URL] {
+    // Only Apply needs to expand older artwork to the extensions the design also covers.
+    func fileArt(_ pack: Pack, includeFallbacks: Bool = false) -> [String: URL] {
         Dictionary(uniqueKeysWithValues: formats.compactMap { format in
-            (pack.documents[format.Key] ?? pack.appFiles[format.Application]).map { (format.Key, $0) }
+            if let own = pack.documents[format.Key] { return (format.Key, own) }
+            if let fallback = format.Fallback {
+                guard includeFallbacks else { return nil }
+                if let older = pack.documents[fallback] { return (format.Key, older) }
+            }
+            return pack.appFiles[format.Application].map { (format.Key, $0) }
         })
     }
     // The designs in a file type pack, by app: the one for all of an app's files, then each format's own.
@@ -307,7 +313,10 @@ struct PublishedPacks {
             if let shared = pack.appFiles[app] ?? pack.unlisted[app] {
                 // A personal pack keeps its art for each format, so only a published pack's art covers formats.
                 let covered = pack.appFiles[app] == nil ? []
-                    : formats.filter { $0.Application == app && pack.documents[$0.Key] == nil }.map(\.label)
+                    : formats.filter { format in
+                        format.Application == app && pack.documents[format.Key] == nil
+                            && format.Fallback.flatMap { pack.documents[$0] } == nil
+                    }.map(\.label)
                 let others = pack.unlisted[app] == nil ? [] : ["Other file types " + Craft.displayName(app) + " opens"]
                 tiles.append(FileTile(name: app, hint: ([app + " files"] + covered + others).joined(separator: "\n"), art: shared))
             }

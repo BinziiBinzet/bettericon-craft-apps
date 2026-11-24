@@ -516,6 +516,50 @@ func TestSupersededDownloads(t *testing.T) {
 	if _, err := command("prune", ""); err == nil {
 		t.Fatal("a removal for a pack without a name was accepted")
 	}
+
+	// Clear local copy: forget takes every download of the pack and its receipt. The pack stays listed, to download
+	// again; folders that hold anything else, and the other pack's downloads, stay.
+	offer(photoTwo, photoWebP, film, filmWebP, document, word, wordWebP, deck, neighbour)
+	must("acquire", keep)
+	otherCopies := copies(other)
+	packs := must("forget", keep)
+	v = packs[keep]
+	if v.Status != "Download" || len(v.Icons) != 0 {
+		t.Fatalf("after forget: %v, %+v", copies(keep), v)
+	}
+	for _, name := range []string{mixed, extra, "not-a-signature", ".loading-kept"} {
+		if _, err := os.Lstat(filepath.Join(downloads, name)); err != nil {
+			t.Fatalf("forget took %s: %v", name, err)
+		}
+	}
+	// In a folder this pack shares with another, as a pack's app icons and its file type set do, only this pack's
+	// files go; so does this pack's file beside a file of the user's.
+	if read(filepath.Join(downloads, mixed, filepath.FromSlash(neighbour.file))) != "two packs" ||
+		read(filepath.Join(downloads, mixed, filepath.FromSlash(photoOne.file))) != "" ||
+		read(filepath.Join(downloads, extra, filepath.FromSlash(photoOne.file))) != "" ||
+		read(filepath.Join(downloads, extra, "notes.txt")) != "with a file of the user's" {
+		t.Fatal("forget took another pack's file or a file of the user's, or left this pack's file in a shared folder")
+	}
+	for _, name := range []string{earlier, current, newer} {
+		if _, err := os.Lstat(filepath.Join(downloads, name)); err == nil {
+			t.Fatalf("forget left the download %s", name)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(state, "acquired", checksum([]byte(keep)))); err == nil {
+		t.Fatal("forget left the pack's receipt")
+	}
+	if packs[other].Status != "Downloaded" || !slices.Equal(copies(other), otherCopies) {
+		t.Fatalf("forget changed another pack: %v, %+v", copies(other), packs[other])
+	}
+	// Downloading it again works, and forgetting a pack that is not downloaded is no error.
+	if v = must("acquire", keep)[keep]; v.Status != "Downloaded" || read(v.Icons["PhotoCraft"]) != "photo two" {
+		t.Fatalf("a download after forget: %+v", v)
+	}
+	must("forget", keep)
+	must("forget", keep)
+	if _, err := command("forget"); err == nil {
+		t.Fatal("forget without a pack was accepted")
+	}
 }
 
 // Once after it has started, the app asks for the downloads that updates left behind before BetterIcon removed them:

@@ -293,6 +293,16 @@ import WebKit
         try check(
             apps.count == 3 && apps.contains(where: { $0.isAlias && $0.craft == "FilmCraft" }),
             "real bundles, aliases, and exclusion rules")
+        let launchable = AppCatalog.launchEntries(apps)
+        try check(
+            launchable.count == 2 && launchable.contains(where: { $0.craft == "FilmCraft" && !$0.isAlias })
+                && !launchable.contains(where: \.isAlias) && launchable.map(\.url) == apps.filter { !$0.isAlias }.map(\.url),
+            "an alias of a listed app shares that app's Launcher entry, and the app itself is the entry, in the same order")
+        let elsewhere = URL(fileURLWithPath: "/Volumes/Elsewhere/FilmCraft.app")
+        let lone = AppEntry(name: "Film elsewhere", craft: "FilmCraft", url: alias, launchURL: elsewhere, bundleID: "local.bettericon.test.film", scope: .personal)
+        try check(
+            AppCatalog.launchEntries(apps + [lone]).contains(lone),
+            "an alias of an app that is not listed keeps its own Launcher entry")
         // ArtCraft Launcher leads the grid. The other apps follow by name.
         let leadFolder = root.appendingPathComponent("Lead order")
         try fm.createDirectory(at: leadFolder, withIntermediateDirectories: true)
@@ -325,6 +335,20 @@ import WebKit
         _ = try published.list("acquire", id: "Craft-Icons-Komplett/Standard")
         _ = try published.list("acquire", id: "Craft-Icons-Mike22/CraftApps AIO November - Dark")
         packs = try published.list("acquire", id: "Craft-Icons-Zach/Edgework")
+        // Remove pack's Clear local copy: the helper deletes the pack's download; the pack stays listed, to download again.
+        let edgeFiles = packs.first { $0.name == "Edgework" }!.icons.values.map(\.path)
+        let forgotten = try published.list("forget", id: "Craft-Icons-Zach/Edgework").first { $0.name == "Edgework" }
+        let cardboardKept = try published.list().first { $0.name == "Cardboard" }?.status == "Downloaded"
+        // Counted now: the download below puts the files back at the same paths.
+        let edgeLeft = edgeFiles.filter { fm.fileExists(atPath: $0) }.count
+        packs = try published.list("acquire", id: "Craft-Icons-Zach/Edgework")
+        let edgeAgain = packs.first { $0.name == "Edgework" }?.status
+        try check(
+            !edgeFiles.isEmpty && forgotten?.status == "Download" && forgotten?.icons.isEmpty == true
+                && edgeLeft == 0 && cardboardKept && edgeAgain == "Downloaded",
+            "Clear local copy deletes a pack's download and keeps it listed and other packs downloaded, and it downloads again: "
+                + "\(edgeFiles.count) files, after \(forgotten?.status ?? "missing") with \(forgotten?.icons.count ?? -1) icons, "
+                + "\(edgeLeft) left, Cardboard kept \(cardboardKept), again \(edgeAgain ?? "missing")")
         let cardboard = packs.first { $0.name == "Cardboard" }!
         let edge = packs.first { $0.name == "Edgework" }!
         let photoArt = cardboard.icons["PhotoCraft"]!
@@ -339,8 +363,21 @@ import WebKit
         let standardArt = published.fileArt(standard), standardTiles = published.fileTiles(standard)
         try check(!cardboard.canFiles && published.fileArt(cardboard).isEmpty && standard.appFiles.count == 14
             && standardArt.count == 27 && standardArt[".psd"] == standard.appFiles["PhotoCraft"] && standardArt[".anicraft"] == nil
-            && standardTiles.count == 14 && standardTiles.contains { $0.name == "PhotoCraft" && $0.hint.contains(".png, .jpg +16") },
+            && standardTiles.count == 14 && standardTiles.contains {
+                $0.name == "PhotoCraft" && $0.hint.contains("\n.png\n") && $0.hint.contains("\n.jpg\n")
+            },
             "an app's file artwork covers every file type that app opens, and an app icon pack has none")
+        let engine = FolderIcons(formats: published.formats)
+        let glb = root.appendingPathComponent("sample.GLB")
+        let obj = root.appendingPathComponent("sample.obj")
+        var meshes = Pack(id: "meshes", name: "Meshes", author: "", icons: [:], documents: [".obj": photoArt])
+        try check(published.fileArt(meshes)[".glb"] == nil
+            && engine.artwork(for: glb, in: published.fileArt(meshes, includeFallbacks: true)) == photoArt,
+            "a legacy OBJ design still covers a GLB in Apply without adding a stored assignment")
+        meshes.documents[".glb"] = filmArt
+        let exact = published.fileArt(meshes, includeFallbacks: true)
+        try check(engine.artwork(for: glb, in: exact) == filmArt && engine.artwork(for: obj, in: exact) == photoArt,
+            "GLB and OBJ use their own artwork when both designs are present")
         let mixedPack = packs.first { $0.id == "Craft-Icons-Mike22/CraftApps AIO November - Dark" }!
         try check(
             mixedPack.status == "Downloaded" && mixedPack.icons.count == 15 && mixedPack.appFiles.count == 14
@@ -663,8 +700,10 @@ import WebKit
             }
             throw Problem("Interface timed out: " + source)
         }
-        try await until("typeof model !== 'undefined' && model && model.apps.length===3 && !working")
+        try await until("typeof model !== 'undefined' && model && model.apps.length===2 && !working")
         try check(true, "actual app discovers fixture apps and creates its grids")
+        let gridNames = try await js("model.apps.map(a => a.name).join('|')") as? String ?? ""
+        try check(gridNames == "FilmCraft|PhotoCraft", "the Launcher shows FilmCraft once, not again for its alias: \(gridNames)")
         // In core, the user changed PhotoCraft's icon after Apply. The app notices at its start and leaves it alone.
         try await until("model.status.startsWith('PhotoCraft keeps the icon you gave it.')")
         try check(true, "at its start BetterIcon notices an icon the user gave an app after Apply, leaves it alone and says so")
@@ -724,7 +763,7 @@ import WebKit
             (() => {
                 const button = el('refreshPacks'), dot = getComputedStyle(button, '::after');
                 return page === 'launcher' && !working && !button.disabled && dot.width === '7px' &&
-                    button.title === 'Refresh available icon packs' &&
+                    button.title === 'Check for new icon packs and for updates to the packs you have.' &&
                     button.getAttribute('aria-describedby') === 'packUpdateDescription' &&
                     el('packUpdateDescription').textContent === '2 new or updated icon packs available.';
             })()
@@ -756,12 +795,18 @@ import WebKit
                     document.querySelectorAll('#refreshPacks').length === 1 &&
                     document.querySelector('label[for=packs]').textContent === 'App icon pack' &&
                     document.querySelector('label[for=filePacks]').textContent === 'File type icon pack' &&
-                    button.title === 'Refresh available icon packs' &&
-                    button.getAttribute('aria-label') === button.title &&
+                    button.title === 'Check for new icon packs and for updates to the packs you have.' &&
+                    button.getAttribute('aria-label') === 'Refresh available icon packs' &&
                     button.querySelector('svg path') !== null;
             })()
             """)
         try check(refreshLayout as? Bool == true, "the app and file type pickers share one row with a single refresh button at its right")
+        let untipped = try await js("""
+            [...document.querySelectorAll('button, input, select')]
+                .filter(c => !c.closest('#packOptions') && !(c.title || c.closest('[title]')))
+                .map(c => c.id || c.textContent.trim()).join(' | ')
+            """) as? String ?? "?"
+        try check(untipped.isEmpty, "every button, box and field in the window has a tooltip that says what it does: \(untipped)")
         let captions = try await js("""
             (() => {
                 const shown = [...document.querySelectorAll('#manage .actions button')].filter(b => !b.hidden);
@@ -850,7 +895,7 @@ import WebKit
         let fileTypePack = try await js("""
             (() => {
               const tiles = [...el('filePreview').children], a = el('preview').getBoundingClientRect(), b = el('filePreview').getBoundingClientRect();
-              return tiles.length === 14 && tiles.some(t => t.textContent === 'PhotoCraft' && t.title.includes('.psd, .psb')) &&
+              return tiles.length === 14 && tiles.some(t => t.textContent === 'PhotoCraft' && t.title.includes('.psd') && t.title.includes('.psb')) &&
                 model.fileCount === 27 && el('fileDetail').textContent === '27 file types / Built-in pack' &&
                 b.left >= a.right && Math.abs(a.top - b.top) < 1 && Math.abs(a.width - b.width) <= 1 &&
                 el('applyFiles').classList.contains('primary') && !el('restoreFiles').hidden && !el('removeFiles').disabled;
@@ -1102,12 +1147,12 @@ import WebKit
                 && ["#7f726d #42312c", "not colored"].contains(chrome?["scroll"] ?? ""),
             "the loading bars take Clay Dark's colors too, the button gray with an accent chunk that moves, or fades with Reduce Motion on, and the scroll bars take them where this WebKit can color them")
         _ = try await js("el('new').click();true")
-        try await until("el('editor').open&&el('assignments').children.length===57")
+        try await until("el('editor').open&&el('assignments').children.length===116")
         let fileRows = try await js("""
-            [...el('assignments').children].some(r => r.firstChild.textContent === '.psd, .psb (PhotoCraft)') &&
-                [...el('assignments').children].filter(r => r.firstChild.textContent.includes('(')).length === 37
+            [...el('assignments').children].some(r => r.firstChild.textContent === '.psb (PhotoCraft)') &&
+                [...el('assignments').children].filter(r => r.firstChild.textContent.includes('(')).length === 96
             """)
-        try check(fileRows as? Bool == true, "the pack editor lists 20 apps and 37 file type designs with their apps")
+        try check(fileRows as? Bool == true, "the pack editor lists 20 apps and 96 file formats with their apps")
         _ = try await js("el('editor').close();true")
         try await until("!el('editor').open")
         try check(true, "personal editor lists all canonical ArtCraft apps")
@@ -4690,7 +4735,7 @@ import WebKit
         _ = await settled(host)
         _ = await js(host, "send('editor', {mode: 'edit', group: 'files'}); true")
         let row = await jsUntil(host, """
-            el('editor').open && el('assignments').children.length === 58 &&
+            el('editor').open &&
                 [...el('assignments').children].some(r => r.firstChild.textContent === 'Other PhotoCraft files' &&
                     r.children[1].textContent === 'PhotoCraft-files.png')
             """)

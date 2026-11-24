@@ -200,6 +200,41 @@ def default_app(kind):
     return match.group(1) if match else None
 
 
+def launch_tiles(cat, photo):
+    """An app's menu entry and a copy of it on the Desktop share one Launcher tile; a renamed copy, or one that runs
+    another command, keeps its own. Every entry stays in the catalog for Apply and Restore."""
+    from catalog import launch_entries
+    desktop_dir = Path(GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DESKTOP) or home / "Desktop")
+    created = not desktop_dir.exists()
+    desktop_dir.mkdir(parents=True, exist_ok=True)
+    data = photo.read_text()
+    same, renamed, other = (desktop_dir / name for name in ("PhotoCraft copy.desktop", "PhotoCraft renamed.desktop",
+                                                             "PhotoCraft safe.desktop"))
+    same.write_text(data)
+    renamed.write_text(re.sub(r"(?m)^Name=.*$", "Name=PhotoCraft with OpenFill", data, count=1))
+    other.write_text(re.sub(r"(?m)^Exec=(.*)$", r"Exec=\1 --safe-mode", data, count=1))
+    for path in (same, renamed, other):
+        path.chmod(0o755)
+    try:
+        cat.discover()
+        photos = [e for e in cat.entries.values() if e.craft == "PhotoCraft"]
+        tiles = [e for e in launch_entries(list(cat.entries.values())) if e.craft == "PhotoCraft"]
+        files = sorted(Path(e.file).name for e in tiles)
+        order = [e.id for e in launch_entries(list(cat.entries.values()))]
+        kept_order = order == [k for k in cat.entries if k in order]
+        ok = (len(photos) == 4 and len(tiles) == 3 and photo.name in files and same.name not in files and
+              renamed.name in files and other.name in files and kept_order)
+    finally:
+        for path in (same, renamed, other):
+            path.unlink(missing_ok=True)
+        if created:
+            desktop_dir.rmdir()
+        cat.discover()
+    check(ok, "an app's menu entry and an identical copy on the Desktop share one Launcher tile, the menu entry's, while a "
+          "renamed copy and one with another command keep their own, in the catalog's order" +
+          ("" if ok else f"; catalog {[Path(e.file).name for e in photos]}, tiles {files}, order kept {kept_order}"))
+
+
 def desktop_database(cat, backend, pack, photo, formats):
     """BetterIcon's rebuilds of the user's desktop database: set off only by desktop entries BetterIcon wrote, keeping the
     default app of every file type a themed app shares, run also when the file icon work fails, and a missing tool
@@ -3043,6 +3078,42 @@ def superseded_in_app(app, settle):
     ok = (answered is False and during == [[]] and after_dialog and held and after_review and
           waited == [(["Craft-Icons-Fixture/Under a dialog"], False), (["Craft-Icons-Fixture/Under a review"], False)])
     check(ok, SUPERSEDED_APP_TITLES[4] + ("" if ok else f"; under the dialog {during}, asked {waited}"))
+    # Remove pack on a downloaded published pack: the applied pack's copy can't be cleared, and Clear local copy deletes
+    # the download and keeps the pack listed, to download again.
+    if chosen is None:
+        check(False, "Remove pack clears a downloaded pack's local copy and keeps it listed; the applied pack's copy stays")
+        return
+    key, asked = chosen["ID"], []
+    previous = {name: app.catalog.prefs.get(name) for name in ("appliedPack", "selected", "fileSelected", "hidden")}
+    files = [Path(path) for path in chosen["Icons"].values()]
+
+    def answer(pick):
+        def choose(title, details, answers, tips):
+            asked.append((list(answers), len(tips) == len(answers) and all(tips)))
+            return pick
+        return choose
+    try:
+        app.catalog.update(appliedPack=key)
+        with patch.object(app, "choose", answer(-1)):
+            app.remove_pack(app.packs.all[key])
+        applied_kept = (asked == [(["Remove from list"], True)] and all(path.is_file() for path in files) and
+                        key not in app.catalog.prefs["hidden"])
+        app.catalog.update(appliedPack=previous["appliedPack"] if previous["appliedPack"] != key else DEFAULT_ID, selected=key)
+        with patch.object(app, "choose", answer(0)):
+            app.remove_pack(app.packs.all[key])
+        row = next((row for row in app.packs.run("list") if row["ID"] == key), {})
+        cleared = (asked[1:] == [(["Clear local copy", "Remove from list"], True)] and row.get("Status") == "Download" and
+                   not any(path.exists() for path in files) and app.packs.all[key].status == "Download" and
+                   key not in app.catalog.prefs["hidden"] and app.catalog.prefs.get("selected") == DEFAULT_ID and
+                   "Cleared the local copy" in app.status)
+        app.packs.use_rows(app.packs.acquire(key), [key])
+        again = app.packs.all[key].status == "Downloaded"
+    finally:
+        app.catalog.update(**previous)
+        app.render()
+    ok = applied_kept and cleared and again
+    check(ok, "Remove pack clears a downloaded pack's local copy and keeps it listed; the applied pack's copy stays" +
+          ("" if ok else f"; asked {asked}, applied kept {applied_kept}, cleared {cleared}, downloads again {again}"))
 
 
 def rgba(image, x, y):
@@ -3253,8 +3324,9 @@ def webp_imports(packs):
         made.append(key)
         docs = packs.all[key].documents
         art = {k: png_pixbuf(path.read_bytes()) for k, path in docs.items()}
-        photo = [k for k, f in packs.formats.items() if f["Application"] == "PhotoCraft"]
-        ok = (set(docs) == set(photo) and reddish(rgba(art[".pcraft"], 16, 16)) and
+        photo = {k for k, f in packs.formats.items() if f["Application"] == "PhotoCraft" and not f.get("Fallback")}
+        ok = (set(docs) == photo | {".webp"} and docs[".webp"].read_bytes() == WEBP["A16"]
+              and reddish(rgba(art[".pcraft"], 16, 16)) and
               rgba(art[".psd"], 16, 16) == (0, 255, 0, 128) and bluish(rgba(art[".png"], 16, 16)))
         check(ok, "FileTypes WebP names map to formats and fan out" + ("" if ok else f"; {sorted(docs)}"))
         try:
@@ -3730,6 +3802,17 @@ def unlisted_rules(project, types, art, other_art, folder, packs, made, keys):
           "bettericon-project-texturecraftfiles-" not in gio_info(types.samples["example.bitestl"]))
     check(ok, "a file type that also covers a listed suffix stays with the listed rule, and generic and inode types "
           "never take the art" + ("" if ok else f"; {sorted(ready)} / {sorted(both)}"))
+    # A MIME type with its own extension can use exact artwork even when it shared the OBJ design in older packs.
+    kinds = {"example.obj": "model/test-obj", "example.glb": "model/test-glb"}
+    original_guess = Gio.content_type_guess
+    with patch.object(Gio, "content_type_guess", side_effect=lambda name, data:
+                      (kinds[name], False) if name in kinds else original_guess(name, data)), \
+            patch("project_icons.opener", side_effect=lambda kind: "TextureCraft" if kind in kinds.values() else None):
+        legacy, _ = project.targets({".obj": art})
+        exact_art = art.with_name("glb.png")
+        exact, _ = project.targets({".obj": art, ".glb": exact_art})
+    check(legacy["model/test-glb"]["source"] == art and exact["model/test-glb"]["source"] == exact_art
+          and exact["model/test-obj"]["source"] == art, "GLB takes exact art for its own MIME type and falls back to OBJ for an older pack")
     # The real catalog helper over fixture packs: explicit art with a damaged WebP twin, format-labelled art, a mix,
     # another app's explicit art, and explicit art not downloaded yet.
     base = "Craft-Icons-Bitest"
@@ -3907,7 +3990,7 @@ def unlisted_later(project, types, art, other_art, folder, packs, pack, made, ke
                                                              "FileTypes/TextureCraft_files.webp": WEBP["A13"]}))
     made.append(key)
     imported = packs.all[key]
-    texture_formats = {k for k, f in packs.formats.items() if f["Application"] == "TextureCraft"}
+    texture_formats = {k for k, f in packs.formats.items() if f["Application"] == "TextureCraft" and not f.get("Fallback")}
     stored = imported.unlisted.get("TextureCraft")
     edited = packs.save("Explicit edited", "Fixture", {**imported.documents, "PhotoCraft": pack.icons["PhotoCraft"]},
                         editing=key)
@@ -4374,7 +4457,7 @@ def unlisted_summary(app, settle, js):
         shutil.rmtree(folder)
         settle()
         app.render()
-    count = len([key for key, fmt in app.packs.formats.items() if fmt["Application"] == "TextureCraft"])
+    count = sum(fmt["Application"] == "TextureCraft" and not fmt.get("Fallback") for fmt in app.packs.formats.values())
     line = f"{count} file {'type' if count == 1 else 'types'}, plus other TextureCraft files"
     ok = (seen == ["Other LightCraft files", False, "Other LightCraft files / Personal pack"] and
           f"{raw} (*.bitestraw)" in text and "LightCraft opens these other file types by default." in text and
@@ -4721,7 +4804,7 @@ def core():
     dunkel_art, dunkel_tiles = packs.file_art(dunkel), packs.file_tiles(dunkel)
     check(not pack.can_files and not packs.file_art(pack) and len(dunkel.app_files) == 14 and len(dunkel_art) == 27 and
           dunkel_art[".psd"] == dunkel.app_files["PhotoCraft"] and ".anicraft" not in dunkel_art and len(dunkel_tiles) == 14 and
-          any(t["name"] == "PhotoCraft" and ".png, .jpg +16" in t["hint"] for t in dunkel_tiles),
+          any(t["name"] == "PhotoCraft" and ".png" in t["hint"].splitlines() and ".jpg" in t["hint"].splitlines() for t in dunkel_tiles),
           "an app's file artwork covers every file type that app opens, and an app icon pack has none")
     mixed = packs.all[both]
     check(mixed.status == "Downloaded" and len(mixed.icons) == 15 and len(mixed.app_files) == 14 and len(packs.file_art(mixed)) == 28,
@@ -4758,6 +4841,7 @@ def core():
     check(photo.name in apps_for("application/x-bitest-photo") and photo.name not in database.read_text(),
           "after its copy is restored, the system entry gives the app its file types, and the user's desktop database no longer lists the copy")
     desktop_database(cat, backend, pack, photo, packs.formats)
+    launch_tiles(cat, photo)
     entry_updates(cat, backend, photo, packs.formats)
     new_apps(cat, backend, photo, packs.formats)
     entry_rules(cat, backend, photo, packs.formats)
@@ -4824,15 +4908,15 @@ def core():
     picture.write_bytes(pack.icons["PhotoCraft"].read_bytes())
     common = {".png": pack.icons["FilmCraft"], ".pcraft": pack.icons["FilmCraft"]}
     ready, skipped = project.targets(common)
-    check("image/png" not in ready and skipped == [".png, .jpg +16"] and project.review(common) == [".pcraft"],
+    check("image/png" not in ready and skipped == [".png"] and project.review(common) == [".pcraft"],
           "a common file type another app opens is left alone")
     Gio.DesktopAppInfo.new_from_filename(str(photo)).set_as_default_for_type("image/png")
     ready, skipped = project.targets(common)
     check("image/png" in ready and "image/jpeg" not in ready and not skipped and
-          project.review(common) == [".pcraft", ".png, .jpg +16"],
+          project.review(common) == [".pcraft", ".png"],
           "a common file type is included once an ArtCraft app is its default application")
     project.apply(common)
-    check("bettericon-project-png-" in file_info(picture) and project.applied() == [".pcraft", ".png, .jpg +16"],
+    check("bettericon-project-png-" in file_info(picture) and project.applied() == [".pcraft", ".png"],
           "GIO resolves the icon of a common file type an ArtCraft app opens")
     common_drawn(project, picture, ready)
     many = [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tif", ".tiff", ".ico", ".tga", ".svg"]
@@ -5346,12 +5430,18 @@ def gui():
         const button = el('refreshPacks'), picker = el('filePacks');
         const b = button.getBoundingClientRect(), p = picker.getBoundingClientRect();
         const label = 'Refresh available icon packs';
-        return button.title === label && button.getAttribute('aria-label') === label &&
+        return button.title === 'Check for new icon packs and for updates to the packs you have.' &&
+            button.getAttribute('aria-label') === label &&
             button.classList.contains('has-pack-updates') &&
             el('packUpdateDescription').textContent === '1 new or updated icon pack available.' &&
             b.width > 0 && b.left > p.right && Math.abs(b.top - p.top) <= 1 &&
             Math.abs(b.height - p.height) <= 1 && !button.disabled;
     })()"""), "first open shows the startup badge and accessible count without changing the refresh tooltip")
+    untipped = js("""[...document.querySelectorAll('button, input, select')]
+        .filter(c => !c.closest('#packOptions') && !(c.title || c.closest('[title]')))
+        .map(c => c.id || c.textContent.trim()).join(' | ')""")
+    check(untipped == "", "every button, box and field in the window has a tooltip that says what it does" +
+          ("" if untipped == "" else f"; none on {untipped}"))
     check(js("""(() => {
         const a = el('packs').getBoundingClientRect(), f = el('filePacks').getBoundingClientRect();
         const shown = [...document.querySelectorAll('#manage .actions button')].filter(b => !b.hidden);
@@ -5482,7 +5572,7 @@ def gui():
     check(len(set(base.glob("*")) - prior) == 1, "only the clicked pack was downloaded")
     check(wait(lambda: js("[...el('filePreview').querySelectorAll('img')].every(i=>i.complete&&i.naturalWidth>0)")) and js("""(() => {
         const tiles = [...el('filePreview').children], a = el('preview').getBoundingClientRect(), b = el('filePreview').getBoundingClientRect();
-        return tiles.length === 14 && tiles.some(t => t.textContent === 'PhotoCraft' && t.title.includes('.psd, .psb')) &&
+        return tiles.length === 14 && tiles.some(t => t.textContent === 'PhotoCraft' && t.title.includes('.psd') && t.title.includes('.psb')) &&
             model.fileCount === 27 && el('fileDetail').textContent === '27 file types / Built-in pack' &&
             b.left >= a.right && Math.abs(a.top - b.top) <= 1 && Math.abs(a.width - b.width) <= 1 &&
             el('applyFiles').classList.contains('primary') && !el('restoreFiles').hidden && !el('removeFiles').disabled;
@@ -5560,10 +5650,10 @@ def gui():
     check(wait(lambda: js("model.prefs.color==='sage' && model.prefs.variant==='auto' && model.prefs.theme==='System'")) and
           Catalog().prefs["theme"] == "System", "Match app theme and the theme button return to the system appearance")
     js("el('new').click();true")
-    check(wait(lambda: js("el('editor').open && el('assignments').children.length===57")) and js("""
-        [...el('assignments').children].some(r => r.firstChild.textContent === '.psd, .psb (PhotoCraft)') &&
-            [...el('assignments').children].filter(r => r.firstChild.textContent.includes('(')).length === 37"""),
-          "the pack editor lists 20 apps and 37 file type designs with their apps")
+    check(wait(lambda: js("el('editor').open && el('assignments').children.length===116")) and js("""
+        [...el('assignments').children].some(r => r.firstChild.textContent === '.psb (PhotoCraft)') &&
+            [...el('assignments').children].filter(r => r.firstChild.textContent.includes('(')).length === 96"""),
+          "the pack editor lists 20 apps and 96 file formats with their apps")
     js("el('editor').close();true")
     check(wait(lambda: not pop.modal and js("!el('editor').open")), "closing the editor returns to Manage Icons")
     js("el('packs').click();el('packOptions').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));true")
@@ -5783,16 +5873,21 @@ def gui():
           "Restore file icons returns the file types to their original icons")
     restored(app.projects, sample, "Restore file icons removes every icon file, folder and stored image BetterIcon made, "
              "including those for themes installed after Apply, and GTK draws the themes' icons again")
-    # Each list has its own remove button.
+    # Each list has its own remove button. The downloaded pack asks Clear local copy (0) or Remove from list (1).
     asked = len(reviewed)
-    answer_review(Gtk.ResponseType.OK)
+    answer_review(1)
     js("el('removeFiles').click();true")
     check(wait(lambda: len(reviewed) == asked + 1 and not pop.native and
                js("model.filePack.default && !model.packs.some(p => p.id === 'Craft-Icons-Komplett/Standard')")) and
-          js("model.pack.id") == personal_app, "Remove file pack hides the chosen file type pack and keeps the app pack")
+          js("model.pack.id") == personal_app and "\n\nClear local copy deletes its downloaded files." in texts[-1],
+          "Remove file pack hides the chosen file type pack and keeps the app pack")
     js("send('unhide');true")
-    check(wait(lambda: js("model.packs.some(p => p.id === 'Craft-Icons-Komplett/Standard')")),
-          "Restore built-in packs brings the hidden file type pack back")
+    check(wait(lambda: js("model.packs.some(p => p.id === 'Craft-Icons-Komplett/Standard')")) and
+          app.packs.all["Craft-Icons-Komplett/Standard"].status == "Download",
+          "Restore built-in packs brings the hidden file type pack back, to download again")
+    # The checks below use its artwork.
+    app.packs.use_rows(app.packs.acquire("Craft-Icons-Komplett/Standard"), ["Craft-Icons-Komplett/Standard"])
+    app.render()
     unlisted_review(app, settle, js, answer_review, reviewed, texts)
     unlisted_live(app, settle, js)
     unlisted_summary(app, settle, js)

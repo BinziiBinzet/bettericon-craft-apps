@@ -328,6 +328,30 @@ def discover(apps_dir, folders=()):
     return dict(sorted(entries.items(), key=lambda pair: (pair[1].craft != LEAD, pair[1].name.casefold())))
 
 
+def launch_entries(entries):
+    """The entries the Launcher shows: one per app and launch. Entries with the same name that run the same command, such
+    as an app's menu entry and a copy of it on the Desktop, share one tile, and the applications folder's entry is the
+    tile. A differently named entry, or one that runs another command, keeps its own. Apply and Restore still work on
+    every entry. The order is kept."""
+    def command(entry):
+        try:
+            line = entry.info.get_commandline()
+        except Exception:
+            line = None
+        return line.strip() if isinstance(line, str) and line.strip() else None
+
+    best = {}
+    for index, entry in enumerate(entries):
+        line = command(entry)
+        # An entry whose command is unknown keeps its own tile.
+        key = (entry.craft, entry.name.strip().casefold(), line) if line else ("", "", str(entry.file))
+        held = best.get(key)
+        if held is None or (entry.standard and not entries[held].standard):
+            best[key] = index
+    kept = set(best.values())
+    return [entry for index, entry in enumerate(entries) if index in kept]
+
+
 def desktop_icon(data, icon):
     lines = data.decode("utf-8").splitlines(keepends=True)
     active, section = False, None

@@ -1,5 +1,14 @@
 # Windows installer changelog
 
+## 1.30.0 - 2026-11-24
+
+- BetterIcon recognizes artwork for all 96 listed file extensions. All nine OmegaDarling file type packs now include 96 designs, including separate GLB, glTF, and OBJ art. Older packs still cover the extensions of their original file groups.
+- Windows Explorer uses one icon per file class. BetterIcon uses the matching extension's artwork when a class opens just that extension.
+- An app no longer appears twice in the Launcher when its installer puts a copy of its Start menu shortcut on the desktop. Shortcuts with the same name that open the same program with the same arguments share one entry in the Launcher and in the tray's launch menu, and the Start menu's shortcut is the one shown. A shortcut with another name or other arguments, such as "PhotoCraft with OpenFill", keeps its own entry. **Apply icons** and **Restore** still change every copy.
+- Every button, box, field and menu item has a tooltip that says what it does: both tabs, the pack lists and their menus, the size controls, Apply and Restore, the tray menu, and the pack editor, hotkey and location dialogs.
+- **Remove app pack** and **Remove file pack** ask, for a published pack downloaded to this PC, whether to **Clear local copy** or **Remove from list**. Clearing deletes the pack's downloaded files and keeps it in the list, marked **Download**, to download again when you choose it; a list that showed it moves to the original icons. Removing from the list deletes them too and hides the pack until **Restore built-in packs**. The applied app pack's copy can't be cleared, because BetterIcon puts icons back after app updates and gives new apps the pack from its files; it can still be hidden, keeping its files. A copy whose files another program has open stays; clear the pack again once they are closed. Personal packs and packs that aren't downloaded are removed as before.
+- macOS and Linux get the same changes. On the Mac a Finder alias of a listed app shares that app's tile; on Linux a copy of a desktop entry on the Desktop shares the entry's tile.
+
 ## 1.29.1 - 2026-11-24
 
 - Updating a pack fetches only the files that changed. Every file the earlier download already holds, and that still matches its published checksum, is taken from this PC; a damaged file is fetched again. Where this PC can't read WebP, an update of a pack whose PNG files are unchanged fetches nothing.

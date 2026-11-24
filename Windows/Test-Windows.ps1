@@ -118,6 +118,7 @@ try {
     Assert ($plan.Count -eq 5 -and @($plan | Where-Object Status -eq 'Ready').Count -eq 5) 'Aliases and custom launcher names match; unrelated links excluded'
     $discovered = @(Get-BetterIconApplication -ShortcutDirectory @($links,$links))
     Assert ($discovered.Count -eq 5 -and @($discovered | Where-Object { $_.Shortcut -notin $paths }).Count -eq 0) 'Tray inventory deduplicates paths and preserves supported custom launchers'
+    Assert (@($discovered | Where-Object { -not $_.PSObject.Properties['Arguments'] -or $_.Arguments -cne [BetterIcon.Windows.ShellLink]::Read($_.Shortcut).Arguments }).Count -eq 0) 'Tray inventory reports each shortcut''s launch arguments, so the Launcher can tell copies of one shortcut from variants'
     $broken = New-TestLink (Join-Path $testRoot 'broken') 'FilmCraft'
     $shell = New-Object -ComObject WScript.Shell
     $brokenLink = $shell.CreateShortcut($broken); $brokenLink.TargetPath = Join-Path $testRoot 'does-not-exist.exe'; $brokenLink.Save()

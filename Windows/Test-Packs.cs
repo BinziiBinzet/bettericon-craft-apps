@@ -23,7 +23,7 @@ static class PackTests
         check(komplett.Length == 5 && komplett.All(t => t.IconCount == 0 && t.Icons.Length == 0 && t.FileIconCount == 14 && t.AppFileIcons.Count == 14 && t.AppFileIcons.Values.All(File.Exists)),
             "Komplett's document artwork is file type artwork for the apps it draws");
         check(mike.Length == 3 && mike.All(t => t.IconCount == 15 && t.AppFileIcons.Count == 14 && t.AppFileIcons.ContainsKey("PhotoCraft") && t.AppFileIcons.Values.All(File.Exists))
-            && catalog.Themes.Count(t => t.HasFileIcons) == 17 && catalog.Themes.Sum(t => t.FileIconCount) == 445,
+            && catalog.Themes.Count(t => t.HasFileIcons) == 17 && catalog.Themes.Sum(t => t.FileIconCount) == 976,
             "A pack can carry app icons and file type artwork together");
         FileArtwork documents = ProjectFormat.Artwork(komplett[0]);
         check(documents.Tiles().Count == 14 && documents.Expanded().ContainsKey(".pdf") && documents.Expanded().ContainsKey(".docx") && documents.Expanded().ContainsKey(".pcraft") && !documents.Formats.Any(),

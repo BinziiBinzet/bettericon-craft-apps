@@ -1,5 +1,5 @@
 # Download size in bytes and file count of each pack in the installer's catalog where the computer reads WebP, then the size where it can't. Written by macOS/pack-sizes.py.
-#catalog	bf842a07b7e096ef09ac79f9e753baee41c713fdbcbe0c97a8ff760a5024892c
+#catalog	8c6c06bdac5654bac8fcadb7d6cf04f27c8716c137338f952da44ced001c6ba6
 Craft-Icons-4NovemberKilo/Mascots	1401282	9	56021705
 Craft-Icons-Cryogenn/ArtCraft iconPackage - Dark	351324	8	646862
 Craft-Icons-Cryogenn/ArtCraft iconPackage - Light	286242	8	1044558
@@ -20,23 +20,23 @@ Craft-Icons-Mike22/CraftApps AIO November - Light	606904	29	619111
 Craft-Icons-Mike22/CraftApps AIO November - Monochrome	482275	29	482275
 Craft-Icons-VimiummuimiV/Modern Flat	166778	13	1282181
 Craft-Icons-Zach/Cardboard	3400528	20	49152353
-Craft-Icons-Zach/Cardboard_filetypes	1716472	37	23762888
+Craft-Icons-Zach/Cardboard_filetypes	4276800	96	61640487
 Craft-Icons-Zach/Edgework	115446	20	115446
-Craft-Icons-Zach/Edgework_filetypes	906582	37	2009980
+Craft-Icons-Zach/Edgework_filetypes	2443220	96	5398686
 Craft-Icons-Zach/Foldmark	229184	20	229184
-Craft-Icons-Zach/Foldmark_filetypes	948470	37	2315424
+Craft-Icons-Zach/Foldmark_filetypes	2588712	96	6188202
 Craft-Icons-Zach/HyGel	1894822	20	29965452
-Craft-Icons-Zach/HyGel_filetypes	1190938	37	9565830
+Craft-Icons-Zach/HyGel_filetypes	3262884	96	25034091
 Craft-Icons-Zach/Ink	659178	20	9905266
-Craft-Icons-Zach/Ink_filetypes	881598	37	6035465
+Craft-Icons-Zach/Ink_filetypes	2408428	96	15949920
 Craft-Icons-Zach/Irridiant	7338612	20	35738135
-Craft-Icons-Zach/Irridiant_filetypes	1330116	37	5633155
+Craft-Icons-Zach/Irridiant_filetypes	3537902	96	14862096
 Craft-Icons-Zach/KnivesAndFeathers	2918230	20	48592627
-Craft-Icons-Zach/KnivesAndFeathers_filetypes	1394460	37	10964107
+Craft-Icons-Zach/KnivesAndFeathers_filetypes	3672132	96	28960149
 Craft-Icons-Zach/NegativeSpace	1339380	20	26040943
-Craft-Icons-Zach/NegativeSpace_filetypes	1045168	37	7253314
+Craft-Icons-Zach/NegativeSpace_filetypes	2870096	96	19372000
 Craft-Icons-Zach/Pop	1496532	20	25333037
-Craft-Icons-Zach/Pop_filetypes	818618	37	4999221
+Craft-Icons-Zach/Pop_filetypes	2283224	96	13410747
 Craft-Icons-circleb/Root	1031254	15	14802248
 Craft-Icons-kOdeNeRA/Minimal Symbols	147920	11	1240023
 Craft-Icons-kristofp/Engraved Animals	968902	3	6743421

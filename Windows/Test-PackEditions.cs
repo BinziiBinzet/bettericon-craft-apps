@@ -187,8 +187,8 @@ static partial class PackEditionTests
                 ThemeEntry[] incomplete = packs.Where(t => !t.NeedsDownload && t.Icons.Length != t.IconCount).ToArray();
                 Check(incomplete.Length == 0, "Every pack already on this computer holds an icon for each app it lists" + (incomplete.Length == 0 ? "" : ": " + String.Join(", ", incomplete.Select(t => t.Id + " " + t.Icons.Length + "/" + t.IconCount))));
                 var filePacks = fileCombo.Items.OfType<ThemeEntry>().ToArray();
-                // Komplett's five and Mike22's three packs (14 file icons each), and OmegaDarling's nine file type packs (37 each).
-                Check(fileCombo.SelectedIndex == 0 && filePacks.Length == 17 && filePacks.Sum(t => t.FileIconCount) == 445 && filePacks.All(t => t.HasFileIcons && t.NeedsDownload == lean) && !packs.Any(t => t.Pack == "Craft-Icons-Komplett")
+                // Komplett's five and Mike22's three packs (14 file icons each), plus OmegaDarling's nine packs with 96 each.
+                Check(fileCombo.SelectedIndex == 0 && filePacks.Length == 17 && filePacks.Sum(t => t.FileIconCount) == 976 && filePacks.All(t => t.HasFileIcons && t.NeedsDownload == lean) && !packs.Any(t => t.Pack == "Craft-Icons-Komplett")
                     && filePacks.All(t => t.ToString().EndsWith(lean ? " (Download)" : " (Included)")),
                     "First launch lists the seventeen file type packs separately, starting from the original file icons" +
                     (filePacks.Length == 17 ? "" : ": " + filePacks.Length + " packs, " + filePacks.Sum(t => t.FileIconCount) + " file icons"));
@@ -476,7 +476,7 @@ static partial class PackEditionTests
                     combo.Top == refresh.Top && Math.Abs(combo.Height - refresh.Height) <= 1 &&
                     combo.Bottom <= combo.Parent.ClientSize.Height && combo.Width > refresh.Width,
                     "The refresh button is visible directly to the right of the icon pack picker");
-                Check(refresh.AccessibleName == refreshLabel && Field<ToolTip>(form, "appearanceTips").GetToolTip(refresh) == refreshLabel,
+                Check(refresh.AccessibleName == refreshLabel && Field<ToolTip>(form, "appearanceTips").GetToolTip(refresh) == "Check for new icon packs and for updates to the packs you have.",
                     "The icon-only refresh button has a descriptive hover tooltip and accessible name");
                 tray.Show(form, new Point(15, 15)); Application.DoEvents();
                 Check(command().Enabled, "The real tray context menu offers Refresh available icon packs");

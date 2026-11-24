@@ -1141,6 +1141,34 @@ namespace BetterIcon.Tray
                 Apply(dialog, palette); return dialog.ShowDialog(owner) == DialogResult.OK;
             }
         }
+        // A question with several answers, each a button with its tooltip, and Cancel. Answers the index of the chosen answer,
+        // or -1 for Cancel. The first answer is the default.
+        public static int Choose(Form owner, string title, string message, AppearancePalette palette, string[] answers, string[] tips)
+        {
+            using (Form dialog = new Form { Text = title, Font = owner.Font, StartPosition = FormStartPosition.CenterParent, ClientSize = new Size(580, 220), MinimumSize = new Size(480, 220), MinimizeBox = false, MaximizeBox = false, Icon = owner.Icon })
+            using (ToolTip tooltips = new ToolTip()) {
+                TableLayoutPanel layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(20), ColumnCount = 1, RowCount = 2 };
+                layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+                layout.Controls.Add(new Label { Text = message, Dock = DockStyle.Fill }, 0, 0);
+                FlowLayoutPanel buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, AutoSize = true };
+                Button no = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, AutoSize = true, MinimumSize = new Size(100, 32) };
+                tooltips.SetToolTip(no, "Keep the pack as it is.");
+                buttons.Controls.Add(no); dialog.CancelButton = no;
+                int chosen = 0;
+                Button first = null;
+                for (int i = answers.Length - 1; i >= 0; i--) {
+                    int index = i;
+                    Button answer = new Button { Text = answers[i], DialogResult = DialogResult.OK, AutoSize = true, MinimumSize = new Size(120, 32), Tag = i == 0 ? "PrimaryAction" : null };
+                    answer.Click += delegate { chosen = index; };
+                    if (tips != null && i < tips.Length) tooltips.SetToolTip(answer, tips[i]);
+                    buttons.Controls.Add(answer);
+                    if (i == 0) first = answer;
+                }
+                layout.Controls.Add(buttons, 0, 1); dialog.Controls.Add(layout); dialog.AcceptButton = first;
+                Apply(dialog, palette);
+                return dialog.ShowDialog(owner) == DialogResult.OK ? chosen : -1;
+            }
+        }
     }
 
     public sealed partial class LauncherForm
@@ -1204,7 +1232,11 @@ namespace BetterIcon.Tray
                 item.Click += delegate { if (!busy) { preferences.AppIconStyle = style; preferences.AppIconVariant = variant; preferences.AppearanceMode = variant; ChangeAppearance(); } };
                 appIconMenu.Items.Add(item);
             }
-            foreach (ToolStripItem item in appIconMenu.Items) item.Padding = new Padding(4, 3, 8, 3);
+            foreach (ToolStripItem item in appIconMenu.Items) {
+                item.Padding = new Padding(4, 3, 8, 3);
+                if (item.Tag as string != "Auto") item.ToolTipText = "Use this as BetterIcon's own icon, in the tray and on its window.";
+            }
+            ExplainMenu(appIconMenu);
             appIconMenu.Closing += delegate(object sender, ToolStripDropDownClosingEventArgs e) {
                 suppressAppIconClick = e.CloseReason == ToolStripDropDownCloseReason.AppClicked && appIconButton.RectangleToScreen(appIconButton.ClientRectangle).Contains(Cursor.Position);
             };
@@ -1276,7 +1308,7 @@ namespace BetterIcon.Tray
             }
             string description = AppBranding.Title(preferences.AppIconStyle) + " " + (variant == "dark" ? "Dark" : "Light");
             appIconButton.AccessibleDescription = description + (preferences.AppIconVariant == "Auto" ? "; matches the app theme." : "; fixed icon variant.");
-            appearanceTips.SetToolTip(appIconButton, "Choose app icon: " + description);
+            appearanceTips.SetToolTip(appIconButton, "BetterIcon's own icon and colors: " + description + ". Click to choose another.");
             foreach (ToolStripMenuItem item in appIconMenu.Items) item.Checked = (string)item.Tag == (preferences.AppIconVariant == "Auto" ? "Auto" : preferences.AppIconStyle + "/" + preferences.AppIconVariant);
             if (appIconMenu.Items.Count > 0) {
                 ToolStripItem automatic = appIconMenu.Items[0]; Image old = automatic.Image;
@@ -1292,7 +1324,7 @@ namespace BetterIcon.Tray
             string next = preferences.AppearanceMode == "Dark" ? "Light" : preferences.AppearanceMode == "Light" ? "System" : "Dark";
             appearanceModeButton.AccessibleName = "App theme: " + preferences.AppearanceMode;
             appearanceModeButton.AccessibleDescription = "Click to switch to " + next + ". Cycles Dark, Light and System.";
-            appearanceTips.SetToolTip(appearanceModeButton, preferences.AppearanceMode + " theme; click for " + next);
+            appearanceTips.SetToolTip(appearanceModeButton, preferences.AppearanceMode + " appearance. Click to switch to " + next + ".");
             Image oldGlyph = appearanceModeButton.Image;
             appearanceModeButton.Image = AppThemeGlyph(preferences.AppearanceMode, appearancePalette.Text);
             if (oldGlyph != null) oldGlyph.Dispose();
