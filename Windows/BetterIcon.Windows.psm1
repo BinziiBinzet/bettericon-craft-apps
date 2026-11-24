@@ -1,6 +1,6 @@
 # BetterIcon-Craft Apps Windows support.
 Set-StrictMode -Version Latest
-$script:Version = '1.29.1'
+$script:Version = '1.29.2'
 $script:SvgArtworkType = $null
 # The worker's own copy of BetterIcon.WebP.cs, compiled on first use (Get-WebpArtworkType).
 $script:WebpArtworkType = $null
@@ -707,7 +707,7 @@ function Get-BetterIconApplication {
                 if ($hasPin) { $appliedIcon = $pinIcons[$key] }
                 elseif ($verifiedBackup -and $change -in '','Updated','Edited') { $appliedIcon = Get-VerifiedManagedIcon $entry $states[$scope].Directory $info $change }
                 [pscustomobject]@{ Application = $app; Name = $file.BaseName; Shortcut = $file.FullName; Change = $change;
-                    Target = $target; AppliedIconPath = [string]$appliedIcon;
+                    Target = $target; Arguments = [string]$info.Arguments; AppliedIconPath = [string]$appliedIcon;
                     AppliedIconScope = $(if ($appliedIcon) { if ($hasPin) { 'CurrentUser' } else { $scope } } else { '' });
                     Scope = $scope; IconPath = $(if ($implicitIcon) { $target } else { $info.IconPath }); IconIndex = $(if ($implicitIcon) { 0 } else { $info.IconIndex });
                     OriginalIconPath = $originalPath; OriginalIconIndex = $originalIndex; RestoreAvailable = ($verifiedBackup -or $hasPin); UsingDefaultIcon = ($usingDefault -and -not $hasPin) }
@@ -1984,4 +1984,4 @@ function Restore-BetterIcon {
     finally { $lock.Dispose() }
 }
 
-Export-ModuleMember -Function Get-BetterIconVersion,Get-BetterIconRepository,Get-BetterIconStateDirectory,Get-BetterIconTheme,Get-BetterIconThemeIcon,Get-BetterIconBytes,Get-BetterIconApplication,Get-BetterIconPlan,Install-BetterIconTheme,Restore-BetterIcon,Install-BetterIconDownloadedPack,Update-BetterIconPackCatalog,Get-BetterIconPackUpdates,Get-BetterIconPackAliases,Get-BetterIconReapplyPlan,Invoke-BetterIconReapply
+Export-ModuleMember -Function Get-BetterIconVersion,Get-BetterIconRepository,Get-BetterIconStateDirectory,Get-BetterIconTheme,Get-BetterIconThemeIcon,Get-BetterIconBytes,Get-BetterIconApplication,Get-BetterIconPlan,Install-BetterIconTheme,Restore-BetterIcon,Install-BetterIconDownloadedPack,Clear-BetterIconDownloadedPack,Update-BetterIconPackCatalog,Get-BetterIconPackUpdates,Get-BetterIconPackAliases,Get-BetterIconReapplyPlan,Invoke-BetterIconReapply

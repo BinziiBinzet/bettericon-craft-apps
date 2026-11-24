@@ -167,6 +167,21 @@ struct AppCatalog {
             return url
         }
     }
+    /// The apps the Launcher and the menu bar's launch menu show: one per app copy that opens. An alias, such as one on
+    /// the Desktop, shares the entry of the app it opens when that app is listed too; the app itself is then the entry.
+    /// Apply and Restore still work on every entry. The order is kept.
+    static func launchEntries(_ apps: [AppEntry]) -> [AppEntry] {
+        var best = [String: Int]()
+        for (index, app) in apps.enumerated() {
+            let key = app.launchURL.standardizedFileURL.path
+            guard let held = best[key] else { best[key] = index; continue }
+            let current = apps[held]
+            func rank(_ entry: AppEntry) -> Int { (entry.isAlias ? 2 : 0) + (entry.scope == .shared ? 1 : 0) }
+            if rank(app) < rank(current) { best[key] = index }
+        }
+        let kept = Set(best.values)
+        return apps.enumerated().filter { kept.contains($0.offset) }.map(\.element)
+    }
     func discover(extraFolders: [URL] = []) -> [AppEntry] {
         var entries = [String: AppEntry]()
         let home = fm.homeDirectoryForCurrentUser.standardizedFileURL.path + "/"

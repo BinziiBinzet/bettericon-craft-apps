@@ -76,6 +76,12 @@ namespace BetterIcon.Tray
                 finally { save.Enabled = cancel.Enabled = grid.Enabled = packName.Enabled = packAuthor.Enabled = ControlBox = true; }
             };
             buttons.Controls.Add(cancel); buttons.Controls.Add(save); layout.Controls.Add(buttons, 0, 5);
+            ToolTip tips = new ToolTip(); Disposed += delegate { tips.Dispose(); };
+            tips.SetToolTip(packName, "The name your pack has in the lists.");
+            tips.SetToolTip(packAuthor, "Who made the pack. It shows after the pack name.");
+            tips.SetToolTip(grid, "Click Choose... to pick an SVG, PNG, ICO or WebP image for an app or file type, or Clear to leave it out so it keeps its original icon.");
+            tips.SetToolTip(cancel, "Close without saving.");
+            tips.SetToolTip(save, "Save the pack. It doesn't change any icons until you apply it.");
             Controls.Add(layout); AcceptButton = save; CancelButton = cancel;
         }
     }
@@ -204,6 +210,84 @@ namespace BetterIcon.Tray
 
     public sealed partial class LauncherForm
     {
+        // What each control and menu item does, shown when the pointer rests on it.
+        internal static class Tips
+        {
+            public const string LauncherTab = "Your installed ArtCraft apps. Click one to open it, or type part of its name and press Enter.";
+            public const string ManageTab = "Choose icon packs for your apps and files, apply them, or put the original icons back.";
+            public const string AppPack = "The icons your apps get from Apply icons. Click to choose another pack; hover a name to see sample icons. Right-click for more.";
+            public const string FilePack = "The icons your files get from Apply file icons. Click to choose another pack; hover a name to see sample icons. Right-click for more.";
+            public const string Refresh = "Check for new icon packs and for updates to the packs you have.";
+            public const string Import = "Add an icon pack from a ZIP file or a folder of artwork.";
+            public const string NewPack = "Make your own icon pack from your own artwork.";
+            public const string RemoveApp = "Remove the chosen app pack. For a downloaded pack you choose: clear only its local copy, or also take it off the list. A pack you made is deleted. Icons you applied stay.";
+            public const string RemoveFile = "Remove the chosen file type pack. For a downloaded pack you choose: clear only its local copy, or also take it off the list. A pack you made is deleted. Icons you applied stay.";
+            public const string ClearLocal = "Delete the pack's downloaded files from this PC. It stays in the list and downloads again when you choose it.";
+            public const string RemoveFromList = "Delete the pack's downloaded files and take it off the list. Restore built-in packs brings it back.";
+            public const string Names = "Show each app's name under its icon in the Launcher.";
+            public const string Size = "How large the app icons are in the Launcher. Ctrl and the mouse wheel over the icons change it too.";
+            public const string SizeValue = "Type an exact icon size in pixels, then press Enter.";
+            public const string Reset = "Set the Launcher icons back to their default size.";
+            public const string Apply = "Give your apps the chosen pack's icons. You see the list before anything changes.";
+            public const string ApplyDefaults = "Put every app's original icon back. You see the list before anything changes.";
+            public const string Restore = "Put your apps' original icons back. You see the list before anything changes.";
+            public const string ApplyFiles = "Give your files the chosen file type pack's icons. You see the list before anything changes.";
+            public const string RestoreOriginalFiles = "Put your files' original icons back. You see the list before anything changes.";
+            public const string AppTile = "Click to open. Right-click to choose its icon or restore its default.";
+            public const string PreviewTile = "Right-click to choose this app's icon or restore its default.";
+            public static readonly Dictionary<string, string> Menu = new Dictionary<string, string>(StringComparer.Ordinal) {
+                { "Open BetterIcon", "Open the BetterIcon window." },
+                { "Launch an ArtCraft app", "Open one of your installed ArtCraft apps." },
+                { "Change icon theme", "Choose an app icon pack in Manage Icons. Hover a name to see sample icons." },
+                { "Pack actions", "Customize, edit, export or restore icon packs." },
+                { "Refresh installed apps", "Look again for installed ArtCraft apps and their shortcuts." },
+                { "Refresh available icon packs", Refresh },
+                { "Restore original icons...", "Put your apps' original icons back. You see the list before anything changes." },
+                { "Manage Icons...", "Open the Manage Icons tab." },
+                { "Change hotkey...", "Change the keyboard shortcut that opens the Launcher." },
+                { "Open at login", "Start BetterIcon in the tray when you sign in to Windows." },
+                { "Exit BetterIcon", "Close BetterIcon. Applied icons stay, but they are not put back after app updates until BetterIcon runs again." },
+                { "From ZIP...", "Add a pack from a ZIP file." },
+                { "From folder...", "Add a pack from a folder of artwork." },
+                { "Customize...", "Make your own copy of this pack, then change any of its icons." },
+                { "Edit pack...", "Change the name, author or artwork of this pack you made." },
+                { "Export ZIP...", "Save this pack you made as a ZIP file to share or keep." },
+                { "Restore built-in packs", "Bring back the published packs you removed." },
+                { "Match app theme", "Use the dark or light BetterIcon icon to match the window's appearance." },
+            };
+        }
+        // Gives every item of a menu and its submenus the tooltip that says what it does, unless it has its own.
+        static void ExplainMenu(ToolStrip strip)
+        {
+            if (strip == null) return;
+            strip.ShowItemToolTips = true;
+            foreach (ToolStripItem item in strip.Items) {
+                string tip;
+                if (String.IsNullOrEmpty(item.ToolTipText) && item.Text != null && Tips.Menu.TryGetValue(item.Text, out tip)) item.ToolTipText = tip;
+                ToolStripMenuItem parent = item as ToolStripMenuItem;
+                if (parent != null && parent.HasDropDownItems) ExplainMenu(parent.DropDown);
+            }
+        }
+        void ExplainControls()
+        {
+            pages.ShowToolTips = true;
+            launcherPage.ToolTipText = Tips.LauncherTab; settingsPage.ToolTipText = Tips.ManageTab;
+            appearanceTips.SetToolTip(themes, Tips.AppPack); appearanceTips.SetToolTip(fileThemes, Tips.FilePack);
+            appearanceTips.SetToolTip(refreshPacksButton, Tips.Refresh);
+            appearanceTips.SetToolTip(removePackButton, Tips.RemoveApp); appearanceTips.SetToolTip(removeFilePackButton, Tips.RemoveFile);
+            appearanceTips.SetToolTip(showAppNames, Tips.Names);
+            appearanceTips.SetToolTip(iconSizeSlider, Tips.Size); appearanceTips.SetToolTip(iconSizeValue, Tips.SizeValue);
+            appearanceTips.SetToolTip(resetIconSize, Tips.Reset);
+            appearanceTips.SetToolTip(restore, Tips.Restore); appearanceTips.SetToolTip(restoreFiles, Tips.RestoreOriginalFiles);
+            ExplainActionButtons();
+            foreach (ContextMenuStrip menu in new[] { importPackMenu, managePackMenu, manageFilePackMenu }) ExplainMenu(menu);
+        }
+        // Apply's tooltips follow their captions, which change with the chosen packs.
+        void ExplainActionButtons()
+        {
+            appearanceTips.SetToolTip(apply, apply.Text.StartsWith("Restore", StringComparison.Ordinal) ? Tips.ApplyDefaults : Tips.Apply);
+            appearanceTips.SetToolTip(applyFiles, applyFiles.Text.StartsWith("Restore", StringComparison.Ordinal) ? Tips.RestoreOriginalFiles : Tips.ApplyFiles);
+        }
         readonly TabControl pages = new ThemedTabControl();
         readonly TabPage launcherPage = new TabPage("Launcher"), settingsPage = new TabPage("Manage Icons");
         readonly IconGridView packPreview = new IconGridView(), filePreview = new IconGridView();
@@ -446,7 +530,7 @@ namespace BetterIcon.Tray
             };
             refreshPacksButton.Paint += DrawRefreshPacksButton;
             refreshPacksButton.Click += async delegate { await ReadCatalog(true); await RestoreChosenPacks(); };
-            appearanceTips.SetToolTip(refreshPacksButton, refreshPacksButton.AccessibleName);
+            appearanceTips.SetToolTip(refreshPacksButton, Tips.Refresh);
             packButtons.Add(refreshPacksButton);
             pickerRow.Controls.Add(themes, 0, 1);
             pickerRow.Controls.Add(fileThemes, 1, 1);
@@ -464,7 +548,9 @@ namespace BetterIcon.Tray
             importPackMenu.Items.Add("From ZIP...", null, delegate { ImportPack(true); });
             importPackMenu.Items.Add("From folder...", null, delegate { ImportPack(false); });
             import.Click += delegate { importPackMenu.Show(import, new Point(0, import.Height)); };
+            appearanceTips.SetToolTip(import, Tips.Import);
             Button create = PackButton("New pack...", 120, delegate { EditPack(false, false); });
+            appearanceTips.SetToolTip(create, Tips.NewPack);
             managePackMenu.Items.Add("Customize...", null, delegate { EditPack(true, false); });
             managePackMenu.Items.Add("Edit pack...", null, delegate { EditPack(true, true); });
             managePackMenu.Items.Add("Export ZIP...", null, delegate { ExportPack(SelectedTheme); });
@@ -479,9 +565,9 @@ namespace BetterIcon.Tray
             fileThemes.ContextMenuStrip = manageFilePackMenu;
             // Each list has its own remove button, so it is clear which chosen pack goes.
             removePackButton.Text = "Remove app pack"; removePackButton.AccessibleName = "Remove app icon pack";
-            removePackButton.Click += delegate { RemovePack(SelectedTheme); };
+            removePackButton.Click += async delegate { await RemovePack(SelectedTheme); };
             removeFilePackButton.Text = "Remove file pack"; removeFilePackButton.AccessibleName = "Remove file type icon pack";
-            removeFilePackButton.Click += delegate { RemovePack(SelectedFileTheme); };
+            removeFilePackButton.Click += async delegate { await RemovePack(SelectedFileTheme); };
             Button[] packActions = { import, create, removePackButton, removeFilePackButton };
             foreach (Button button in packActions) SettingsButton(button);
             packActionRow = new ButtonRow(actions, packActions, packActions, 4);
@@ -696,11 +782,11 @@ namespace BetterIcon.Tray
                 packPreview.Items.Clear(); ClearPackArtwork();
                 if (theme != null && theme.IsDefault) foreach (AppEntry app in catalog.Apps.GroupBy(a => a.Application).Select(g => g.First()).OrderBy(a => !AppOrder.Leads(a.Application)).ThenBy(a => a.Application)) {
                     AddArtwork(packArtwork, packSources, app.OriginalIconPath, app.OriginalIconIndex);
-                    packPreview.Items.Add(new ListViewItem(app.Application, packArtwork.Count - 1) { Tag = app.Application, ToolTipText = app.Application + " - ArtCraft default" });
+                    packPreview.Items.Add(new ListViewItem(app.Application, packArtwork.Count - 1) { Tag = app.Application, ToolTipText = app.Application + " - ArtCraft default" + Environment.NewLine + Tips.PreviewTile });
                 }
                 else if (theme != null) foreach (ThemeIcon icon in theme.Icons.OrderBy(i => !AppOrder.Leads(i.Application)).ThenBy(i => i.Application)) {
                     AddArtwork(packArtwork, packSources, PreviewPath(icon), 0);
-                    packPreview.Items.Add(new ListViewItem(icon.Application, packArtwork.Count - 1) { Tag = icon.Application, ToolTipText = icon.Application });
+                    packPreview.Items.Add(new ListViewItem(icon.Application, packArtwork.Count - 1) { Tag = icon.Application, ToolTipText = icon.Application + Environment.NewLine + Tips.PreviewTile });
                 }
                 if (!renderingArtwork) { UpdateIconSizeLimit(); ResizePackIcons(); }
             }
@@ -741,6 +827,7 @@ namespace BetterIcon.Tray
             removeFilePackButton.Enabled = !busy && files != null;
             // With the original file icons chosen, the one action is to put them back.
             applyFiles.Text = files == null ? "Restore original file icons..." : "Apply file icons...";
+            ExplainActionButtons();
             // Only applying a pack is the accented action; putting icons back is a plain button.
             string role = files == null ? null : "PrimaryAction";
             if (!Object.Equals(applyFiles.Tag, role)) {
@@ -823,20 +910,76 @@ namespace BetterIcon.Tray
             }
             finally { SetBusy(false, null); }
         }
-        void RemovePack(ThemeEntry selected)
+        // Remove app pack and Remove file pack. A published pack downloaded to this PC asks whether to clear only its local
+        // copy, so it stays listed and downloads again when chosen, or also to take it off the list. The applied app pack's
+        // copy stays: BetterIcon puts icons back after app updates, and gives new apps the pack, from its files. A personal
+        // pack, and a published one with nothing downloaded, has one choice: off the list.
+        async Task RemovePack(ThemeEntry selected)
         {
             if (busy || selected == null || selected.IsDefault) return;
-            string note = "Remove " + selected + " from your library? Applied icons will stay as they are."
-                // One pack can hold both kinds of artwork; removing it takes it out of both lists.
-                + (selected.IconCount > 0 && selected.OffersFileIcons ? " It leaves both the app and the file type list." : "")
-                + (selected.Managed ? "" : " You can restore built-in packs later.");
-            if (!AppAppearance.Message(this, "Remove icon pack", note, appearancePalette, true)) return;
+            // One pack can hold both kinds of artwork; removing it takes it out of both lists.
+            bool both = selected.IconCount > 0 && selected.OffersFileIcons;
+            bool local = !selected.Managed && (selected.Downloaded || selected.UpdateAvailable);
+            if (!local) {
+                string note = "Remove " + selected + " from your library? Applied icons will stay as they are."
+                    + (both ? " It leaves both the app and the file type list." : "")
+                    + (selected.Managed ? "" : " You can restore built-in packs later.");
+                if (AppAppearance.Message(this, "Remove icon pack", note, appearancePalette, true)) HidePack(selected, "Pack removed from your library.");
+                return;
+            }
+            if (catalog != null && catalog.CurrentPackId(preferences.AppliedTheme) == selected.Id) {
+                string note = selected + " is your applied app pack. BetterIcon keeps its files to put your icons back after app updates, so its local copy can't be cleared. "
+                    + "Apply another pack or restore app defaults first. You can still take it off the list; its files stay."
+                    + (both ? " It leaves both the app and the file type list." : "");
+                if (AppAppearance.Choose(this, "Remove icon pack", note, appearancePalette, new[] { "Remove from list" },
+                    new[] { "Take the pack off the list and keep its files. Restore built-in packs brings it back." }) == 0)
+                    HidePack(selected, "Pack removed from the list. Its files stay while it is applied.");
+                return;
+            }
+            string question = "What should go for " + selected + "?\r\n\r\n"
+                + "Clear local copy deletes its downloaded files. The pack stays in the list and downloads again when you choose it. "
+                + "Remove from list deletes them too and takes the pack off the list until you choose Restore built-in packs. Icons you applied stay as they are."
+                + (both ? " The pack is in both the app and the file type list." : "");
+            int choice = AppAppearance.Choose(this, "Remove icon pack", question, appearancePalette, new[] { "Clear local copy", "Remove from list" },
+                new[] { Tips.ClearLocal, Tips.RemoveFromList });
+            if (choice < 0 || !await ClearDownloadedPack(selected)) return;
+            if (choice == 1) HidePack(selected, "Pack removed from the list, and its local copy deleted.");
+        }
+        void HidePack(ThemeEntry selected, string done)
+        {
             try {
                 library.Remove(selected);
                 if (preferences.FileTheme == selected.Id) preferences.FileTheme = null;
-                ReloadLibrary(null); status.Text = "Pack removed from your library.";
+                ReloadLibrary(null); status.Text = done;
             }
             catch (Exception error) { Report(error); }
+        }
+        // Deletes a published pack's downloaded files, which the worker removes with their receipt, so the pack is listed as
+        // Download again. A list that shows the pack moves to the original icons first: its preview reads the files that go,
+        // and a chosen pack that is not on this PC would download again at the next start. Answers whether it was cleared.
+        async Task<bool> ClearDownloadedPack(ThemeEntry pack)
+        {
+            string name = pack.DisplayName;
+            if (SelectedTheme != null && SelectedTheme.Id == pack.Id) preferences.Theme = ThemeEntry.DefaultThemeId;
+            if (preferences.FileTheme == pack.Id) preferences.FileTheme = null;
+            int left;
+            SetBusy(true, "Clearing the local copy of " + name + "...");
+            try {
+                await PackSweepEnded();
+                WorkerReply reply = await worker.Run(new WorkerRequest { Action = "ClearPack", Theme = pack.Id }, false);
+                left = reply.PackCopiesLeft;
+            }
+            catch (Exception error) { if (!IsDisposed && !Disposing) { SetBusy(false, null); Report(error); } return false; }
+            if (IsDisposed || Disposing) return false;
+            SetBusy(false, null);
+            await ReadCatalog(false);
+            string chosen = SelectedTheme == null || SelectedTheme.Id == pack.Id ? ThemeEntry.DefaultThemeId : SelectedTheme.Id;
+            ReloadPacks(chosen, preferences.FileTheme);
+            SavePreferences();
+            status.Text = left > 0
+                ? "Some of " + name + "'s files are open in another program, so part of its local copy stays. Close them and clear the pack again."
+                : "Cleared the local copy of " + name + ". It downloads again when you choose it.";
+            return true;
         }
         void EditFilePack(bool edit)
         {

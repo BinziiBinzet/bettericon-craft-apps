@@ -420,6 +420,70 @@ func (l *library) prune(only string) error {
 	}
 	return failed
 }
+// forget removes a pack's download from this computer, for the app's "Clear local copy": its receipt, and in every
+// signature folder each file of this pack's artwork, from the copy in use and any earlier one; and the same for the packs
+// it replaced. Folders left empty go too. The pack stays in the list, to download again. The receipts go first, so list
+// never names a download that is half removed. A file another pack's receipt names stays, as do other packs' files in a
+// folder they share with this pack (a pack's app icons and its file type set download into one folder), anything that
+// is no pack artwork, links, personal packs and the previews. A pack that is not downloaded is no error.
+func (l *library) forget(id string) error {
+	ids := append([]string{id}, l.previousIDs(id)...)
+	mine := map[string]bool{}
+	for _, x := range ids {
+		mine[x] = true
+	}
+	// The files other packs' receipts name, by signature folder and file.
+	kept := map[string]bool{}
+	for other, p := range l.acquired() {
+		if mine[other] {
+			continue
+		}
+		for _, a := range p.Assets {
+			kept[p.signature()+"/"+a.File] = true
+		}
+	}
+	for _, x := range ids {
+		if err := os.Remove(filepath.Join(l.state, "acquired", checksum([]byte(x)))); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+	}
+	var failed error
+	for _, folder := range l.signatureFolders() {
+		root := filepath.Join(l.state, "downloads", folder)
+		var doomed, dirs []string
+		_ = filepath.WalkDir(root, func(file string, entry fs.DirEntry, err error) error {
+			if err != nil {
+				return nil
+			}
+			if entry.IsDir() {
+				dirs = append(dirs, file)
+				return nil
+			}
+			rel, e := filepath.Rel(root, file)
+			if e != nil || !entry.Type().IsRegular() {
+				return nil
+			}
+			rel = filepath.ToSlash(rel)
+			if p, _, ok := l.identify(rel); ok && mine[p.ID] && !kept[folder+"/"+rel] {
+				doomed = append(doomed, file)
+			}
+			return nil
+		})
+		for _, file := range doomed {
+			if err := os.Remove(file); err != nil && !errors.Is(err, fs.ErrNotExist) && failed == nil {
+				failed = err
+			}
+		}
+		if len(doomed) == 0 {
+			continue
+		}
+		// Deepest first, so a folder emptied by its subfolders goes too. A folder that still holds anything stays.
+		for i := len(dirs) - 1; i >= 0; i-- {
+			_ = os.Remove(dirs[i])
+		}
+	}
+	return failed
+}
 func (l *library) thumbnail(id string) (string, error) {
 	p, ok := l.previews[id]
 	if !ok {
@@ -490,6 +554,11 @@ func run(args []string) (any, error) {
 		default:
 			return nil, errors.New("Expected one pack or none")
 		}
+	case "forget":
+		if len(args) != 4 || args[3] == "" {
+			return nil, errors.New("Missing pack")
+		}
+		err = l.forget(l.currentID(args[3]))
 	case "preview":
 		// "files" asks for the strip of the pack's file type artwork.
 		if len(args) != 4 && (len(args) != 5 || args[4] != "files") {

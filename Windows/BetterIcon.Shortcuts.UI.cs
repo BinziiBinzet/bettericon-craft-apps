@@ -46,6 +46,10 @@ namespace BetterIcon.Tray
             FlowLayoutPanel buttons = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Top, FlowDirection = FlowDirection.RightToLeft, Margin = Padding.Empty };
             Button cancel = new Button { Text = "Cancel", Name = "CancelScope", DialogResult = DialogResult.Cancel, AutoSize = true, MinimumSize = new Size(100, 34), Margin = Padding.Empty };
             buttons.Controls.Add(cancel); layout.Controls.Add(buttons, 0, 3); Controls.Add(layout);
+            ToolTip tips = new ToolTip(); Disposed += delegate { tips.Dispose(); };
+            tips.SetToolTip(current, "Only your own shortcuts: your Desktop, Start menu and taskbar pins. You see the list next.");
+            tips.SetToolTip(all, "The shortcuts everyone on this PC shares. Windows asks for administrator access. You see the list next.");
+            tips.SetToolTip(cancel, "Close without changing any icons.");
             CancelButton = cancel; AcceptButton = current;
         }
         Button Choice(string title, string detail, string scope)

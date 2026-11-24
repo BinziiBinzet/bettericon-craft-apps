@@ -123,6 +123,12 @@ namespace BetterIcon.Tray
             accept.Click += delegate { string failure = save(selection()); if (failure == null) { DialogResult = DialogResult.OK; Close(); } else error.Text = failure; };
             buttons.Controls.Add(cancel); buttons.Controls.Add(accept);
             layout.Controls.Add(enabled, 0, 0); layout.Controls.Add(modifiers, 0, 1); layout.Controls.Add(keyRow, 0, 2); layout.Controls.Add(description, 0, 3); layout.Controls.Add(error, 0, 4); layout.Controls.Add(buttons, 0, 5);
+            ToolTip tips = new ToolTip(); Disposed += delegate { tips.Dispose(); };
+            tips.SetToolTip(enabled, "Let the keyboard shortcut open the Launcher from any app.");
+            foreach (CheckBox modifier in new[] { control, alt, shift }) tips.SetToolTip(modifier, "Hold this key down with the key below.");
+            tips.SetToolTip(key, "The key you press with the checked modifier keys.");
+            tips.SetToolTip(cancel, "Close without changing the shortcut.");
+            tips.SetToolTip(accept, "Use this keyboard shortcut.");
             Controls.Add(layout); AcceptButton = accept; CancelButton = cancel; update();
         }
     }

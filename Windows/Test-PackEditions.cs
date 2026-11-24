@@ -476,7 +476,7 @@ static partial class PackEditionTests
                     combo.Top == refresh.Top && Math.Abs(combo.Height - refresh.Height) <= 1 &&
                     combo.Bottom <= combo.Parent.ClientSize.Height && combo.Width > refresh.Width,
                     "The refresh button is visible directly to the right of the icon pack picker");
-                Check(refresh.AccessibleName == refreshLabel && Field<ToolTip>(form, "appearanceTips").GetToolTip(refresh) == refreshLabel,
+                Check(refresh.AccessibleName == refreshLabel && Field<ToolTip>(form, "appearanceTips").GetToolTip(refresh) == "Check for new icon packs and for updates to the packs you have.",
                     "The icon-only refresh button has a descriptive hover tooltip and accessible name");
                 tray.Show(form, new Point(15, 15)); Application.DoEvents();
                 Check(command().Enabled, "The real tray context menu offers Refresh available icon packs");

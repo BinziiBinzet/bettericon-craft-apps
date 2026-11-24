@@ -216,6 +216,11 @@ try {
             if ($scope -ne 'CurrentUser') { throw 'Downloads are stored in the current user account.' }
             $reply.RemovedPackCopies = [int](& $module { Remove-SupersededPacks })
         }
+        'ClearPack' {
+            # Remove pack's "Clear local copy": the pack's downloads and receipt go, so it is listed as Download again.
+            if ($scope -ne 'CurrentUser') { throw 'Downloads are stored in the current user account.' }
+            $reply.PackCopiesLeft = [int](Clear-BetterIconDownloadedPack -Theme $request.Theme)
+        }
         'SetupStatus' {
             # What Setup's optional downloads page offers: the packs of each list that are not on this computer yet, and
             # their download sizes. A pack with both kinds of artwork is in both lists and downloads once.

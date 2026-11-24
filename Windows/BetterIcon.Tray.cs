@@ -24,6 +24,7 @@ namespace BetterIcon.Tray
         public string Name { get; set; }
         public string Shortcut { get; set; }
         public string Target { get; set; }
+        public string Arguments { get; set; }
         public string AppliedIconPath { get; set; }
         public string AppliedIconScope { get; set; }
         public string Scope { get; set; }
@@ -53,6 +54,37 @@ namespace BetterIcon.Tray
         // The app whose icon leads every grid of app icons.
         public const string Lead = "ArtCraftLauncher";
         public static bool Leads(string application) { return String.Equals(application, Lead, StringComparison.OrdinalIgnoreCase); }
+    }
+
+    // The Launcher and the tray's launch menu show one entry per app and launch. Shortcuts with the same name that open
+    // the same program with the same arguments, such as an app's Start menu shortcut and the copy its installer puts on
+    // the desktop, share one entry. A differently named shortcut, such as "PhotoCraft with OpenFill", keeps its own. The Start menu's shortcut wins over a desktop one, then a personal one over a shared one.
+    // Apply and Restore still work on every shortcut.
+    public static class LaunchEntries
+    {
+        public static string[] StartMenuRoots()
+        {
+            return new[] { Environment.SpecialFolder.Programs, Environment.SpecialFolder.CommonPrograms }
+                .Select(folder => Environment.GetFolderPath(folder)).Where(folder => !String.IsNullOrEmpty(folder)).ToArray();
+        }
+        public static AppEntry[] Pick(IEnumerable<AppEntry> apps, IEnumerable<string> startMenuRoots)
+        {
+            if (apps == null) return new AppEntry[0];
+            string[] roots = (startMenuRoots ?? new string[0]).Where(root => !String.IsNullOrEmpty(root)).Select(root => root.TrimEnd('\\') + "\\").ToArray();
+            Func<AppEntry, int> place = app => app.Shortcut != null && roots.Any(root => app.Shortcut.StartsWith(root, StringComparison.OrdinalIgnoreCase)) ? 0 : 1;
+            return apps.Select((app, index) => new { App = app, Index = index })
+                .GroupBy(item => Key(item.App) ?? "\u0001" + item.Index, StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.OrderBy(item => place(item.App)).ThenBy(item => item.App.Scope == "AllUsers" ? 1 : 0).ThenBy(item => item.Index).First())
+                .OrderBy(item => item.Index).Select(item => item.App).ToArray();
+        }
+        static string Key(AppEntry app)
+        {
+            // A shortcut with no known program keeps its own entry.
+            if (String.IsNullOrWhiteSpace(app.Target)) return null;
+            string target = app.Target.Trim().Trim('"');
+            try { target = System.IO.Path.GetFullPath(Environment.ExpandEnvironmentVariables(target)); } catch (Exception) { }
+            return (app.Application ?? "") + "\n" + (app.Name ?? "").Trim() + "\n" + target + "\n" + (app.Arguments ?? "").Trim();
+        }
     }
 
     public sealed class ThemeEntry
@@ -215,12 +247,16 @@ namespace BetterIcon.Tray
         public AppEntry[] Apps { get; set; }
         // After RemoveSupersededPacks: how many copies of downloaded packs, left by earlier updates, were removed.
         public int RemovedPackCopies { get; set; }
+        // After ClearPack: how many of the pack's downloads stayed because their files were in use.
+        public int PackCopiesLeft { get; set; }
     }
     // Optional developer fixture configuration. Both fields are required so a
     // disposable test cannot accidentally fall back to the user's real folders.
     public sealed class FixtureConfig
     {
         public string[] ShortcutDirectory { get; set; }
+        // Which of the fixture's shortcut folders stand in for the Start menu. Without it, none does.
+        public string[] StartMenuDirectory { get; set; }
         public string StateDirectory { get; set; }
         public bool KeepOpenForAutomation { get; set; }
         public bool AutomaticPackChecks { get; set; }
@@ -759,6 +795,7 @@ namespace BetterIcon.Tray
             launcherFooter.Controls.Add(launcherShortcut);
             launcherPage.Controls.Add(apps); launcherPage.Controls.Add(filterHint); launcherPage.Controls.Add(launcherFooter);
             BuildSettingsPage(testing);
+            ExplainControls();
             BuildLoadingIndicator();
             iconMenu.ShowItemToolTips = true; iconMenu.Items.Add(chooseAppIcon); iconMenu.Items.Add(restoreIconDefault);
             chooseAppIcon.Click += async delegate { AppEntry target = iconMenuTarget; if (!busy && target != null) await ChooseAppIcon(target); };
@@ -1156,6 +1193,10 @@ namespace BetterIcon.Tray
             preferences.AppliedTheme = theme == null ? ThemeEntry.DefaultThemeId : theme.Id;
             preferences.AppliedArtwork = theme == null || theme.IsDefault ? null : theme.Icons.ToDictionary(icon => icon.Application, icon => PreviewPath(icon));
         }
+        string[] LaunchRoots()
+        {
+            return fixtureSettings != null ? fixtureSettings.StartMenuDirectory ?? new string[0] : LaunchEntries.StartMenuRoots();
+        }
         void RenderApps()
         {
             if (catalog == null) return;
@@ -1165,14 +1206,14 @@ namespace BetterIcon.Tray
                 ClearAppArtwork();
                 ThemeEntry theme = AppliedTheme();
                 bool defaults = preferences.AppliedTheme == ThemeEntry.DefaultThemeId;
-                foreach (AppEntry entry in catalog.Apps) {
+                foreach (AppEntry entry in LaunchEntries.Pick(catalog.Apps, LaunchRoots())) {
                     bool original = defaults || (preferences.DefaultShortcuts ?? new string[0]).Contains(entry.Shortcut, StringComparer.OrdinalIgnoreCase);
                     // A shortcut someone changed outside BetterIcon shows the icon it has now.
                     bool ownIcon = entry.Change == "Custom" || entry.Change == "Replaced" || entry.Change == "Reverted";
                     string artwork = original || ownIcon ? null : AppliedArtwork(theme, entry);
                     bool originalSource = original || String.IsNullOrWhiteSpace(entry.IconPath);
                     AddArtwork(appArtwork, appSources, artwork ?? Environment.ExpandEnvironmentVariables((originalSource ? entry.OriginalIconPath : entry.IconPath) ?? ""), artwork != null ? 0 : originalSource ? entry.OriginalIconIndex : entry.IconIndex);
-                    ListViewItem item = new ListViewItem(entry.Name, appArtwork.Count-1) { Tag = entry, ToolTipText = entry.Name + Environment.NewLine + entry.Shortcut };
+                    ListViewItem item = new ListViewItem(entry.Name, appArtwork.Count-1) { Tag = entry, ToolTipText = entry.Name + Environment.NewLine + entry.Shortcut + Environment.NewLine + Tips.AppTile };
                     appTiles.Add(item);
                 }
                 if (!renderingArtwork) { UpdateIconSizeLimit(); ResizeAppIcons(); }
@@ -1299,7 +1340,7 @@ namespace BetterIcon.Tray
             trayMenu.Items.Clear();
             ToolStripMenuItem manager = new ToolStripMenuItem("Open BetterIcon"); manager.Click += delegate { ShowManager(); }; trayMenu.Items.Add(manager);
             ToolStripMenuItem launchMenu = new ToolStripMenuItem("Launch an ArtCraft app");
-            if (catalog != null) foreach (AppEntry entry in catalog.Apps) {
+            if (catalog != null) foreach (AppEntry entry in LaunchEntries.Pick(catalog.Apps, LaunchRoots())) {
                 AppEntry captured = entry;
                 ToolStripMenuItem item = new ToolStripMenuItem(entry.Name + (entry.Scope == "AllUsers" ? " (shared)" : ""));
                 item.Click += delegate { Launch(captured); }; launchMenu.DropDownItems.Add(item);
@@ -1347,6 +1388,7 @@ namespace BetterIcon.Tray
             trayMenu.Items.Add(new ToolStripSeparator());
             AddLoginItem();
             ToolStripMenuItem quit = new ToolStripMenuItem("Exit BetterIcon") { Enabled = !busy }; quit.Click += delegate { ExitLauncher(); }; trayMenu.Items.Add(quit);
+            ExplainMenu(trayMenu);
             if (appearancePalette != null) AppAppearance.ApplyMenu(trayMenu, appearancePalette);
         }
         bool Review(string title, string description, IEnumerable<string[]> rows, bool canApply, string accept, string subject = "Shortcut")

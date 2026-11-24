@@ -171,6 +171,25 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
     private var activeTab = PopupTab.launcher
     /// The status line before there is any news.
     private static let idleStatus = "Changes are reviewed before they are applied."
+    /// What each menu bar menu item does, shown when the pointer rests on it.
+    static let menuTips: [String: String] = [
+        "Open BetterIcon": "Open the BetterIcon window.",
+        "Launch an ArtCraft app": "Open one of your installed ArtCraft apps.",
+        "Refresh available icon packs": "Check for new icon packs and for updates to the packs you have.",
+        "Change icon theme": "Choose an app icon pack in Manage Icons. Hover a name to see sample icons.",
+        "Pack actions": "Customize, edit, export or restore icon packs.",
+        "Customize…": "Make your own copy of this pack, then change any of its icons.",
+        "Edit pack…": "Change the name, author or artwork of this pack you made.",
+        "Export ZIP…": "Save this pack you made as a ZIP file to share or keep.",
+        "Restore built-in packs": "Bring back the published packs you removed.",
+        "Refresh installed apps": "Look again for installed ArtCraft apps.",
+        "Include another apps folder…": "Also look for ArtCraft apps in a folder you choose.",
+        "Restore original icons…": "Put your apps' original icons back. You see the list before anything changes.",
+        "Manage Icons…": "Open the Manage Icons tab.",
+        "Change hotkey…": "Change the keyboard shortcut that opens the Launcher.",
+        "Open at Login": "Start BetterIcon in the menu bar when you log in.",
+        "Exit BetterIcon": "Quit BetterIcon. Applied icons stay, but they are not put back after app updates until BetterIcon runs again.",
+    ]
     private var status = Application.idleStatus, keyStatus = ""
     private var editing: Pack?, editingGroup = "apps", files = [String: URL]()
     private var appearanceObserver: NSKeyValueObservation?
@@ -579,7 +598,7 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
             }
             return appliedFile(app.craft).map { scheme.link($0) } ?? original(app)
         }
-        let tiles: [[String: String]] = apps.map { app in
+        let tiles: [[String: String]] = AppCatalog.launchEntries(apps).map { app in
             [
                 "id": app.url.path, "name": app.name, "craft": app.craft, "hint": app.name + "\n" + app.url.path,
                 "image": current(app),
@@ -1282,8 +1301,83 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
         status = message
         _ = alert("BetterIcon", message, buttons: ["OK"])
     }
+    /// Remove app pack and Remove file pack. A published pack downloaded to this Mac asks whether to clear only its local
+    /// copy, so it stays listed and downloads again when chosen, or also to take it off the list. The copy of a pack that
+    /// is applied stays: BetterIcon puts icons back after app updates, gives new apps the pack and keeps folders' file
+    /// icons up to date from its files. A personal pack, and a published one with nothing downloaded, has one choice.
+    private func removePack(_ p: Pack) {
+        guard !p.isDefault, !working else { return }
+        let both = p.canApps && p.canFiles
+        let local = !p.personal && ["Downloaded", "Update available"].contains(p.status)
+        let ids = Set([p.id] + p.previousIDs)
+        let applied = ids.contains(prefs.appliedPack ?? "") || (prefs.fileFolders ?? [:]).values.contains { ids.contains($0) }
+        let inBoth = both ? " It leaves both the app and the file type list." : ""
+        if !local {
+            let info = (p.personal
+                ? "Remove this personal pack from your library. Applied icons keep their artwork."
+                : "Hide this built-in pack. Restore built-in packs brings it back.") + inBoth
+            if alert("Remove " + p.name + "?", info, buttons: ["Remove pack", "Cancel"]) == 0 { hidePack(p, "Pack removed.") }
+            return
+        }
+        if applied {
+            let info = p.name + " is applied. BetterIcon keeps its files to put your icons back after app updates and to keep "
+                + "file icons up to date, so its local copy can't be cleared. Apply another pack or restore the original icons "
+                + "first. You can still take it off the list; its files stay." + inBoth
+            if alert("Remove " + p.name + "?", info, buttons: ["Remove from list", "Cancel"],
+                tips: ["Take the pack off the list and keep its files. Restore built-in packs brings it back."]) == 0
+            {
+                hidePack(p, "Pack removed from the list. Its files stay while it is applied.")
+            }
+            return
+        }
+        let info = "Clear local copy deletes its downloaded files. The pack stays in the list and downloads again when you "
+            + "choose it. Remove from list deletes them too and takes the pack off the list until you choose Restore built-in "
+            + "packs. Icons you applied stay as they are." + (both ? " The pack is in both the app and the file type list." : "")
+        let choice = alert(
+            "Remove " + p.name + "?", info, buttons: ["Clear local copy", "Remove from list", "Cancel"],
+            tips: [
+                "Delete the pack's downloaded files from this Mac. It stays in the list and downloads again when you choose it.",
+                "Delete the pack's downloaded files and take it off the list. Restore built-in packs brings it back.",
+            ])
+        guard choice == 0 || choice == 1 else { return }
+        // A list that shows the pack moves away first: its preview reads the files that go.
+        if ids.contains(prefs.selected) { prefs.selected = Pack.defaults.id }
+        if ids.contains(prefs.fileSelected ?? "") { prefs.fileSelected = nil }
+        let name = p.name
+        background(
+            "Clearing the local copy of " + name + "…", work: { try self.published.list("forget", id: p.id) },
+            done: { rows in
+                self.builtins = rows
+                if choice == 1 {
+                    self.hidePack(p, "Pack removed from the list, and its local copy deleted.")
+                } else {
+                    self.status = "Cleared the local copy of " + name + ". It downloads again when you choose it."
+                    self.rangeForSelection()
+                    self.savePrefs()
+                    self.render()
+                }
+            },
+            onError: { error in
+                self.savePrefs()
+                self.render()
+                self.report(error.localizedDescription)
+            })
+    }
+    private func hidePack(_ p: Pack, _ done: String) {
+        do {
+            try library.remove(p)
+            if p.id == prefs.fileSelected { prefs.fileSelected = nil }
+            if p.id == prefs.selected { prefs.selected = fallback.id }
+            status = done
+            rangeForSelection()
+            savePrefs()
+            // The folders it kept are no longer watched, as when their pack is not on this Mac.
+            keepFoldersUpToDate(rescan: .changed)
+            render()
+        } catch { report(error.localizedDescription) }
+    }
     @discardableResult private func alert(
-        _ title: String, _ info: String, buttons: [String], accessory: NSView? = nil
+        _ title: String, _ info: String, buttons: [String], accessory: NSView? = nil, tips: [String] = []
     ) -> Int {
         nativePanel = true
         defer { nativePanel = false }
@@ -1293,6 +1387,7 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
         a.informativeText = info
         a.icon = NSApp.applicationIconImage
         for label in buttons { a.addButton(withTitle: label) }
+        for (button, tip) in zip(a.buttons, tips) { button.toolTip = tip }
         if buttons.last == "Cancel" { a.buttons.last?.keyEquivalent = "\u{1b}" }
         a.accessoryView = accessory
         a.window.appearance = window.appearance
@@ -2015,29 +2110,7 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
             } catch { call("showError", ["id": "keyError", "message": error.localizedDescription]) }
         case "import": importPack(zip: data["zip"] as? Bool ?? true)
         case "export": exportPack(group: data["group"] as? String ?? "apps")
-        case "remove":
-            let p = data["group"] as? String == "files" ? fileSelection : selected
-            if !p.isDefault
-                && alert(
-                    "Remove " + p.name + "?",
-                    (p.personal
-                        ? "Remove this personal pack from your library. Applied icons keep their artwork."
-                        : "Hide this built-in pack. Restore built-in packs brings it back.")
-                        + (p.canApps && p.canFiles ? " It leaves both the app and the file type list." : ""),
-                    buttons: ["Remove pack", "Cancel"]) == 0
-            {
-                do {
-                    try library.remove(p)
-                    if p.id == prefs.fileSelected { prefs.fileSelected = nil }
-                    if p.id == prefs.selected { prefs.selected = fallback.id }
-                    status = "Pack removed."
-                    rangeForSelection()
-                    savePrefs()
-                    // The folders it kept are no longer watched, as when their pack is not on this Mac.
-                    keepFoldersUpToDate(rescan: .changed)
-                    render()
-                } catch { report(error.localizedDescription) }
-            }
+        case "remove": removePack(data["group"] as? String == "files" ? fileSelection : selected)
         case "unhide": unhide()
         case "openAtLogin": setOpenAtLogin(data["value"] as? Bool ?? false)
         case "openLoginSettings": loginItem?.openSettings()
@@ -2080,6 +2153,7 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
             -> NSMenuItem
         {
             let entry = NSMenuItem(title: title, action: #selector(menuAction), keyEquivalent: "")
+            entry.toolTip = Self.menuTips[title]
             entry.target = self
             entry.tag = menuBlocks.count
             menuBlocks.append(action)
@@ -2089,6 +2163,7 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
         }
         func sub(_ name: String) -> NSMenu {
             let entry = NSMenuItem(title: name, action: nil, keyEquivalent: "")
+            entry.toolTip = Self.menuTips[name]
             let child = NSMenu()
             child.autoenablesItems = false
             entry.submenu = child
@@ -2097,7 +2172,7 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
         }
         _ = add("Open BetterIcon", to: menu) { self.show() }
         let launchMenu = sub("Launch an ArtCraft app")
-        for app in apps {
+        for app in AppCatalog.launchEntries(apps) {
             _ = add(app.name + (app.scope == .shared ? " (shared)" : ""), to: launchMenu) { self.launch(app) }
         }
         if apps.isEmpty { _ = add("No ArtCraft apps found", to: launchMenu, enabled: false) {} }

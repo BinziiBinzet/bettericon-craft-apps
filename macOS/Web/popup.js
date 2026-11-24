@@ -63,6 +63,20 @@ function packActions(group = "apps") {
 function closeMenu() {
   el("menu").hidden = true;
 }
+// What each menu item does, shown when the pointer rests on it.
+const menuTips = {
+  "Customize…": "Make your own copy of this pack, then change any of its icons.",
+  "Edit pack…": "Change the name, author or artwork of this pack you made.",
+  "Export ZIP…": "Save this pack you made as a ZIP file to share or keep.",
+  "Remove app pack": "Remove this pack. For a downloaded pack you choose: clear only its local copy, or also take it off the list.",
+  "Remove file pack": "Remove this pack. For a downloaded pack you choose: clear only its local copy, or also take it off the list.",
+  "Restore built-in packs": "Bring back the published packs you removed.",
+  "Choose icon…": "Pick an image of your own for this app.",
+  "Restore ArtCraft default": "Put this app's original icon back. You see the change before it happens.",
+  "From ZIP…": "Add a pack from a ZIP file.",
+  "From folder…": "Add a pack from a folder of artwork.",
+  "Match app theme": "Use the dark or light BetterIcon icon to match the window's appearance.",
+};
 function menu(items, x, y, above = false, right = false) {
   if (working) return;
   const node = el("menu");
@@ -79,6 +93,7 @@ function menu(items, x, y, above = false, right = false) {
       b.append(img);
     }
     b.append(document.createTextNode(label));
+    b.title = menuTips[label] || (icon ? "Use this as BetterIcon's own icon." : "");
     b.disabled = !enabled;
     if (checked) b.className = "chosen";
     b.onclick = () => {
@@ -175,7 +190,9 @@ function grid(id, items) {
     b.tabIndex = -1;
     b.dataset.key = item.id;
     b.dataset.craft = item.craft;
-    b.title = item.hint || item.name;
+    b.title = (item.hint || item.name) + "\n" + (id === "apps"
+      ? "Click to open. Right-click to choose its icon or restore its default."
+      : "Right-click to choose this app's icon or restore its default.");
     b.setAttribute("role", "option");
     b.setAttribute("aria-label", item.name);
     b.setAttribute("aria-selected", String(item.id === selected[id]));
@@ -303,15 +320,18 @@ function update(next) {
   el("slider").max = model.maxSize;
   size(p.size);
   text("apply", pack.default ? "Restore ArtCraft defaults…" : "Apply icons…");
+  el("apply").title = pack.default
+    ? "Put every app's original icon back. You see the list before anything changes."
+    : "Give your apps the chosen pack's icons. You see the list before anything changes.";
   text("version", "Better Icon for ArtCraft version " + model.version);
   el("version").href = model.projectURL;
   showShortcut(model.shortcut);
   const variant = p.variant === "auto" ? (model.dark ? "dark" : "light") : p.variant;
   el("brand").firstElementChild.src = model.brands[p.color + "_" + variant];
-  el("brand").title = "BetterIcon app icon";
+  el("brand").title = "Choose BetterIcon's own icon and colors.";
   el("appearance").innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true">' + glyphs[p.theme] + "</svg>";
   const nextTheme = appearanceOrder[(appearanceOrder.indexOf(p.theme) + 1) % 3];
-  el("appearance").title = p.theme + " appearance. Switch to " + nextTheme + ".";
+  el("appearance").title = p.theme + " appearance. Click to switch to " + nextTheme + ".";
   loginItem(model.loginItem);
   offer(model.downloadOffer, model.downloads);
   grids();
@@ -326,7 +346,7 @@ function loginItem(login) {
   if (!login) return;
   const pane = login.pane || "System Settings > General > Login Items";
   el("openAtLogin").checked = login.on;
-  el("loginRow").title = login.waiting ? "Waiting for you to allow BetterIcon in " + pane + "." : "";
+  el("loginRow").title = login.waiting ? "Waiting for you to allow BetterIcon in " + pane + "." : "Start BetterIcon in the menu bar when you log in.";
   text("loginNoticeText", "BetterIcon opens at login once you allow it in " + pane + ".");
   el("loginNoticeText").title = el("loginNoticeText").textContent;
 }
@@ -409,9 +429,11 @@ function editor(info) {
     file.id = "file-" + craft;
     const choose = make("button", "Choose…");
     choose.type = "button";
+    choose.title = "Pick an image for this. PNG, WebP, SVG and ICO work.";
     choose.onclick = () => send("pickAssignment", { craft });
     const clear = make("button", "Clear");
     clear.type = "button";
+    clear.title = "Leave this out of the pack, so it keeps its original icon.";
     clear.onclick = () => {
       send("clearAssignment", { craft });
       assignment(craft, "");
@@ -443,6 +465,7 @@ function hotkey(info) {
       i.type = "checkbox";
       i.id = "mod-" + label;
       i.checked = k[label.toLowerCase()];
+      l.title = "Hold this key down with the key below.";
       l.append(i, document.createTextNode(info.labels?.[label] || label));
       return l;
     }),

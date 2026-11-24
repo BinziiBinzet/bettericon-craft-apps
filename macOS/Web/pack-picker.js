@@ -12,7 +12,9 @@ function setPackButtons(state) {
     button.value = pack.id;
     const row = state.packs.find(item => item.id === pack.id) || pack;
     label.textContent = packTitle(row, group) + (row.status ? "  ·  " + row.status : "");
-    button.title = label.textContent;
+    button.title = label.textContent + "\n" + (group === "files"
+      ? "The icons your files get from Apply file icons. Click to choose another pack; hover a name to see sample icons. Right-click for more."
+      : "The icons your apps get from Apply icons. Click to choose another pack; hover a name to see sample icons. Right-click for more.");
     button.replaceChildren(label);
   }
 }

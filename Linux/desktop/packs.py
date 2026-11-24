@@ -248,6 +248,24 @@ class Packs:
                 self._acquiring.pop(key, None)
             running.set()
 
+    def forget(self, key):
+        """Remove pack's Clear local copy: have the helper delete every download of the pack and its receipt, so it is
+        listed as Download again, and return the helper's list. A download of the pack that is running is waited for
+        first, and one that starts meanwhile waits, as in prune."""
+        while True:
+            with self._acquiring_lock:
+                running = self._acquiring.get(key)
+                if running is None:
+                    running = self._acquiring[key] = threading.Event()
+                    break
+            running.wait()
+        try:
+            return self.run("forget", key)
+        finally:
+            with self._acquiring_lock:
+                self._acquiring.pop(key, None)
+            running.set()
+
     def prune(self, keys):
         """Have the helper remove the earlier downloads of these packs, which the download now in use supersedes, and
         return {pack: cause} for the packs where that failed. An update is a new download beside the earlier one. The

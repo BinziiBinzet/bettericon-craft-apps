@@ -583,6 +583,22 @@ try {
             $raceAfter.Path -eq $raceSecond.Path -and [IO.File]::Exists((Join-Path $raceSecond.Path 'PhotoCraft.png')) -and [IO.File]::ReadAllText((Join-Path $raceSecond.Path 'PhotoCraft.png')) -ceq 'race two' -and
             $raceLeft -and $raceNext -eq 1 -and !(Test-Path -LiteralPath $raceFirst.Path) -and (Race-Pack).Downloaded) 'A removal that read a pack''s receipt before an update of the pack finished keeps the update''s copy, and the earlier copy goes the next time'
 
+        # ---- Remove pack's "Clear local copy" ------------------------------------------------------------------------
+        $clearReceipt = & $module { param($id) $state = Get-PackState; Join-Path (Join-Path $state 'pack-catalog/installed') ((Get-PathId (Join-Path $state $id)) + '.tsv') } $raceId
+        $cleared = Race-Pack
+        # A file of the copy that another program has open keeps the copy, and its receipt, whole.
+        $open = [IO.File]::Open((Join-Path $cleared.Path 'PhotoCraft.png'), 'Open', 'Read', 'None')
+        try { $busyLeft = [int](Clear-BetterIconDownloadedPack -Theme $raceId) } finally { $open.Dispose() }
+        $whileOpen = Race-Pack
+        Check ($busyLeft -eq 1 -and $whileOpen.Downloaded -and [IO.File]::Exists($clearReceipt) -and [IO.File]::ReadAllText((Join-Path $whileOpen.Path 'PhotoCraft.png')) -ceq 'race two') 'Clear local copy leaves a download whose files are open whole, with its receipt, and says so'
+        $clearLeft = [int](Clear-BetterIconDownloadedPack -Theme $raceId)
+        $afterClear = Race-Pack
+        Check ($clearLeft -eq 0 -and $afterClear.Status -eq 'Download' -and !$afterClear.Downloaded -and !$afterClear.UpdateAvailable -and !(Test-Path -LiteralPath $cleared.Path) -and !(Test-Path -LiteralPath ($cleared.Path + '.lock')) -and
+            ![IO.File]::Exists($clearReceipt) -and @(Get-ChildItem -LiteralPath (Join-Path $raceState 'downloads') -Directory -Recurse -Filter '.removing-*' -ErrorAction SilentlyContinue).Count -eq 0) 'Clear local copy deletes the pack''s download and receipt, and the pack is listed to download again'
+        Install-BetterIconDownloadedPack -Theme $raceId
+        $again = Race-Pack
+        Check ($again.Downloaded -and [IO.File]::ReadAllText((Join-Path $again.Path 'PhotoCraft.png')) -ceq 'race two' -and [int](Clear-BetterIconDownloadedPack -Theme $raceId) -eq 0 -and [int](Clear-BetterIconDownloadedPack -Theme $raceId) -eq 0 -and (Race-Pack).Status -eq 'Download') 'A cleared pack downloads again when chosen, and clearing a pack that is not downloaded changes nothing'
+
         # ---- Read-only files in the copy an update takes its unchanged files from ----------------------------------------
         $env:BETTERICON_DOWNLOAD_STATE = Join-Path $root 'readonly'
         $lockedState = $env:BETTERICON_DOWNLOAD_STATE; $lockedId = 'Craft-Icons-Locked/Set'; $lk = $lockedId + '/'

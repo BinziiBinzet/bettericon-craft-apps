@@ -49,6 +49,38 @@ static class TrayTests
         if (!ok) throw new Exception(name);
         Console.WriteLine("PASS: " + name);
     }
+    static void CheckLaunchEntries()
+    {
+        string menu = @"C:\Fixture\Start Menu\Programs", shared = @"C:\Fixture\ProgramData\Start Menu\Programs";
+        string desktop = @"C:\Fixture\Desktop", publicDesktop = @"C:\Fixture\Public\Desktop";
+        string effect = @"C:\Program Files\EffectCraft\effectcraft.exe", photo = @"C:\Program Files\PhotoCraft\photocraft.exe";
+        Func<string, string, string, string, string, AppEntry> entry = (app, name, shortcut, target, arguments) => new AppEntry {
+            Application = app, Name = name, Shortcut = shortcut, Target = target, Arguments = arguments,
+            Scope = shortcut.StartsWith(@"C:\Fixture\Public", StringComparison.OrdinalIgnoreCase) || shortcut.StartsWith(@"C:\Fixture\ProgramData", StringComparison.OrdinalIgnoreCase) ? "AllUsers" : "CurrentUser" };
+        // As the worker sorts them: by name, then scope, then shortcut. The desktop copy comes first.
+        AppEntry effectDesktop = entry("EffectCraft", "EffectCraft", publicDesktop + @"\EffectCraft.lnk", effect, "");
+        AppEntry effectMenu = entry("EffectCraft", "EffectCraft", shared + @"\EffectCraft.lnk", effect.ToUpperInvariant(), "");
+        AppEntry photoMenu = entry("PhotoCraft", "PhotoCraft", menu + @"\PhotoCraft.lnk", photo, "");
+        AppEntry photoShared = entry("PhotoCraft", "PhotoCraft", shared + @"\PhotoCraft.lnk", photo, "");
+        AppEntry photoVariant = entry("PhotoCraft", "PhotoCraft with OpenFill", desktop + @"\PhotoCraft with OpenFill.lnk", photo, "--openfill");
+        AppEntry photoArguments = entry("PhotoCraft", "PhotoCraft", desktop + @"\PhotoCraft.lnk", photo, "--safe-mode");
+        AppEntry noTarget1 = entry("FilmCraft", "FilmCraft", desktop + @"\FilmCraft.lnk", "", ""), noTarget2 = entry("FilmCraft", "FilmCraft", desktop + @"\FilmCraft.lnk", null, "");
+        string[] roots = { menu, shared };
+        AppEntry[] picked = LaunchEntries.Pick(new[] { effectDesktop, effectMenu }, roots);
+        Check(picked.Length == 1 && picked[0] == effectMenu, "An app's Start menu shortcut and its installer's desktop copy share one Launcher entry, and the Start menu's wins");
+        picked = LaunchEntries.Pick(new[] { photoShared, photoMenu }, roots);
+        Check(picked.Length == 1 && picked[0] == photoMenu, "Of two Start menu copies of a shortcut, the personal one is the Launcher's entry");
+        picked = LaunchEntries.Pick(new[] { photoMenu, photoVariant, photoArguments }, roots);
+        Check(picked.SequenceEqual(new[] { photoMenu, photoVariant, photoArguments }), "A differently named shortcut, or one with other arguments, keeps its own Launcher entry");
+        picked = LaunchEntries.Pick(new[] { noTarget1, noTarget2 }, roots);
+        Check(picked.Length == 2, "Shortcuts with no known program each keep their own Launcher entry");
+        picked = LaunchEntries.Pick(new[] { effectDesktop, effectMenu }, new string[0]);
+        Check(picked.Length == 1 && picked[0] == effectDesktop, "Without a Start menu folder, the first of two shared copies is the Launcher's entry");
+        picked = LaunchEntries.Pick(new[] { photoShared, entry("PhotoCraft", "PhotoCraft", desktop + @"\PhotoCraft.lnk", photo, "") }, new string[0]);
+        Check(picked.Length == 1 && picked[0].Scope == "CurrentUser", "Without a Start menu folder, a personal copy is the Launcher's entry");
+        picked = LaunchEntries.Pick(new[] { photoVariant, effectDesktop, photoMenu, effectMenu }, roots);
+        Check(picked.SequenceEqual(new[] { photoVariant, photoMenu, effectMenu }), "Launcher entries keep the catalog's order");
+    }
     static Point TabDivider(TabControl tabs) { return tabs.PointToScreen(tabs.GetTabRect(1).Location); }
     static IntPtr MousePoint(Rectangle rect)
     {
@@ -940,6 +972,18 @@ static class TrayTests
             && !((Button)field("removePackButton")).Enabled
             && menu.Items.Cast<ToolStripItem>().First(item => item.Text == "Restore built-in packs").Enabled,
             "The virtual default cannot be customized, edited, exported or removed");
+        ToolTip tipTool = (ToolTip)field("appearanceTips");
+        string[] untipped = new[] { "themes", "fileThemes", "refreshPacksButton", "removePackButton", "removeFilePackButton", "showAppNames",
+            "iconSizeSlider", "iconSizeValue", "resetIconSize", "apply", "restore", "applyFiles", "restoreFiles", "appIconButton", "appearanceModeButton", "launcherShortcut", "appVersion" }
+            .Where(name => String.IsNullOrEmpty(tipTool.GetToolTip((Control)field(name)))).ToArray();
+        TabPage[] tabs = { (TabPage)field("launcherPage"), (TabPage)field("settingsPage") };
+        Check(untipped.Length == 0 && tabs.All(tab => !String.IsNullOrEmpty(tab.ToolTipText)) && ((TabControl)field("pages")).ShowToolTips,
+            "Every control in the window has a tooltip that says what it does" + (untipped.Length == 0 ? "" : ": none on " + String.Join(", ", untipped)));
+        call("BuildTrayMenu", null);
+        string[] bare = ((ContextMenuStrip)field("trayMenu")).Items.OfType<ToolStripMenuItem>().Concat(menu.Items.OfType<ToolStripMenuItem>())
+            .Where(item => String.IsNullOrEmpty(item.ToolTipText)).Select(item => item.Text).ToArray();
+        Check(bare.Length == 0 && ((ContextMenuStrip)field("trayMenu")).ShowItemToolTips,
+            "Every tray menu and pack menu item has a tooltip that says what it does" + (bare.Length == 0 ? "" : ": none on " + String.Join(", ", bare)));
         Check(apply.Enabled && apply.Text == "Restore ArtCraft defaults...", "Choosing the default presents the restore-all action");
         Check(appArtwork.Count == 4 && !appArtwork.Any(image => image.GetPixel(64, 64).ToArgb() == Color.Red.ToArgb()),
             "Choosing ArtCraft default leaves the Launcher on the applied pack");
@@ -1170,6 +1214,7 @@ static class TrayTests
             work = new Rectangle(0, 40, 640, 440);
             Check(work.Contains(PopupPlacement.CenteredOnCursor(new Size(2000, 1500), new Point(638, 478), work)), "Cursor popup shrinks to fit a small working area");
             CheckTabWindowSizes(root, args[1]);
+            CheckLaunchEntries();
             JavaScriptSerializer json = new JavaScriptSerializer();
             Preferences migrated = json.Deserialize<Preferences>("{\"Theme\":\"Satin\",\"Scope\":\"AllUsers\"}");
             Check(migrated.Hotkey.Enabled && migrated.Hotkey.ToString() == "Ctrl+Alt+Shift+A" && migrated.Theme == "Satin" && migrated.Scope == "AllUsers", "Old theme and scope preferences acquire the chosen default hotkey");

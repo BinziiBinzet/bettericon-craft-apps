@@ -16,13 +16,13 @@
     <div id="resizeGrip" aria-hidden="true"></div>
     <main id="popup">
       <nav role="tablist" aria-label="BetterIcon">
-        <button id="launcherTab" role="tab" aria-controls="launcher">Launcher</button
-        ><button id="manageTab" role="tab" aria-controls="manage">Manage Icons</button>
+        <button id="launcherTab" role="tab" aria-controls="launcher" title="Your installed ArtCraft apps. Click one to open it, or type part of its name and press Enter or Return.">Launcher</button
+        ><button id="manageTab" role="tab" aria-controls="manage" title="Choose icon packs for your apps and files, apply them, or put the original icons back.">Manage Icons</button>
       </nav>
       <!-- Mac only: while macOS waits for the user to allow BetterIcon to open at login. The Linux app never sends it. -->
       <section id="loginNotice" class="notice" role="status" hidden>
-        <span id="loginNoticeText" class="full"></span><button type="button" id="loginSettings" class="link full">Open Login Items</button
-        ><button type="button" id="loginSettingsSlim" class="link slim">Allow BetterIcon to open at login…</button>
+        <span id="loginNoticeText" class="full"></span><button type="button" id="loginSettings" class="link full" title="Open Login Items in System Settings, where you allow BetterIcon to open at login.">Open Login Items</button
+        ><button type="button" id="loginSettingsSlim" class="link slim" title="Open Login Items in System Settings, where you allow BetterIcon to open at login.">Allow BetterIcon to open at login…</button>
       </section>
       <!-- A new installation on the Mac or Linux offers once to download every pack, then shows how the downloads go.
            A small Launcher shows the offer in one line, and the whole choice in Manage Icons. -->
@@ -32,23 +32,23 @@
             <p id="offerTitle"><strong>Download icon packs now?</strong> A pack you skip downloads when you choose it.</p>
             <div class="offer-row">
               <div class="offer-choices">
-                <label class="check" id="offerAppsRow"><input id="offerApps" type="checkbox" checked /><span id="offerAppsText"></span></label>
-                <label class="check" id="offerFilesRow"><input id="offerFiles" type="checkbox" checked /><span id="offerFilesText"></span></label>
+                <label class="check" id="offerAppsRow" title="Download every app icon pack now, so each one is ready offline."><input id="offerApps" type="checkbox" checked /><span id="offerAppsText"></span></label>
+                <label class="check" id="offerFilesRow" title="Download every file type icon pack now, so each one is ready offline."><input id="offerFiles" type="checkbox" checked /><span id="offerFilesText"></span></label>
               </div>
               <div class="offer-buttons">
-                <button type="button" id="offerDownload" class="primary">Download</button
-                ><button type="button" id="offerLater">Not now</button>
+                <button type="button" id="offerDownload" class="primary" title="Download the checked packs in the background. You can keep using BetterIcon.">Download</button
+                ><button type="button" id="offerLater" title="Skip this. Each pack still downloads when you choose it.">Not now</button>
               </div>
             </div>
           </div>
           <div class="offer-slim">
-            <button type="button" id="offerChoose" class="link">Download icon packs…</button
-            ><button type="button" id="offerSlimLater" class="link">Not now</button>
+            <button type="button" id="offerChoose" class="link" title="Open Manage Icons to choose which packs to download now.">Download icon packs…</button
+            ><button type="button" id="offerSlimLater" class="link" title="Skip this. Each pack still downloads when you choose it.">Not now</button>
           </div>
         </div>
         <div id="offerProgress" hidden>
           <span id="offerProgressText"></span><progress id="offerBar"></progress
-          ><button type="button" id="offerClose" class="link">Close</button>
+          ><button type="button" id="offerClose" class="link" title="Close this note about the downloads.">Close</button>
         </div>
       </section>
       <section id="launcher" role="tabpanel" aria-labelledby="launcherTab">
@@ -72,7 +72,7 @@
                   <label for="filePacks"><strong>File type icon pack</strong></label>
                   <div class="pack-choice-row">
                     <button type="button" id="filePacks" class="pack-choice" aria-haspopup="listbox" aria-expanded="false" aria-controls="packOptions"></button>
-                    <button type="button" id="refreshPacks" title="Refresh available icon packs" aria-label="Refresh available icon packs">
+                    <button type="button" id="refreshPacks" title="Check for new icon packs and for updates to the packs you have." aria-label="Refresh available icon packs">
                       <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"
                         stroke-linecap="round" stroke-linejoin="round">
                         <path d="M4.3 10.1V8.8L5 7.1l1.8-.7H19.7M15.8 3.3l3.9 3.1-3.9 3.1
@@ -85,9 +85,9 @@
                 </div>
               </div>
               <div class="actions">
-                <button id="import">Import…</button><button id="new">New pack…</button
-                ><button id="remove" aria-label="Remove app icon pack">Remove app pack</button
-                ><button id="removeFiles" aria-label="Remove file type icon pack">Remove file pack</button>
+                <button id="import" title="Add an icon pack from a ZIP file or a folder of artwork.">Import…</button><button id="new" title="Make your own icon pack from your own artwork.">New pack…</button
+                ><button id="remove" aria-label="Remove app icon pack" title="Remove the chosen app pack. For a downloaded pack you choose: clear only its local copy, or also take it off the list. A pack you made is deleted. Icons you applied stay.">Remove app pack</button
+                ><button id="removeFiles" aria-label="Remove file type icon pack" title="Remove the chosen file type pack. For a downloaded pack you choose: clear only its local copy, or also take it off the list. A pack you made is deleted. Icons you applied stay.">Remove file pack</button>
               </div>
             </div>
             <div class="previews">
@@ -95,25 +95,25 @@
               <div id="filePreview" class="grid" role="list" aria-label="File type icon pack preview" hidden></div>
             </div>
             <div class="display">
-              <label class="check"><input id="names" type="checkbox" />Show app names</label>
-              <label class="check" id="loginRow" hidden><input id="openAtLogin" type="checkbox" />Open at login</label>
+              <label class="check" title="Show each app's name under its icon in the Launcher."><input id="names" type="checkbox" />Show app names</label>
+              <label class="check" id="loginRow" title="Start BetterIcon in the menu bar when you log in." hidden><input id="openAtLogin" type="checkbox" />Open at login</label>
               <div class="sizing">
-                <label for="slider">Launcher icon size</label
-                ><input id="slider" type="range" min="24" max="4096" step="1" />
-                <input id="exact" aria-label="Launcher icon size in pixels" type="text" inputmode="numeric" /><span
+                <label for="slider" title="How large the app icons are in the Launcher.">Launcher icon size</label
+                ><input id="slider" type="range" min="24" max="4096" step="1" title="Drag to change how large the app icons are in the Launcher." />
+                <input id="exact" aria-label="Launcher icon size in pixels" type="text" inputmode="numeric" title="Type an exact icon size in pixels." /><span
                   >px</span
-                ><button id="reset" aria-label="Reset launcher icon size">Reset</button>
+                ><button id="reset" aria-label="Reset launcher icon size" title="Set the Launcher icons back to 48 pixels.">Reset</button>
               </div>
             </div>
             <div>
               <div class="halves">
                 <div class="actions">
                   <button id="apply" class="primary">Apply icons…</button
-                  ><button id="restore">Restore app defaults…</button>
+                  ><button id="restore" title="Put your apps' original icons back. You see the list before anything changes.">Restore app defaults…</button>
                 </div>
                 <div class="actions">
-                  <button id="applyFiles" class="primary">Apply file icons…</button
-                  ><button id="restoreFiles">Restore file icons…</button>
+                  <button id="applyFiles" class="primary" title="Give your files the chosen file type pack's icons. You see the list before anything changes.">Apply file icons…</button
+                  ><button id="restoreFiles" title="Put your files' original icons back. You see the list before anything changes.">Restore file icons…</button>
                 </div>
               </div>
               <p id="status" role="status">Changes are reviewed before they are applied.</p>
@@ -133,8 +133,8 @@
     <dialog id="editor">
       <form method="dialog">
         <h1 id="editorTitle">Create icon pack</h1>
-        <label class="field">Pack name<input id="packName" required maxlength="64" /></label>
-        <label class="field">Author<input id="author" maxlength="64" /></label>
+        <label class="field" title="The name your pack has in the lists.">Pack name<input id="packName" required maxlength="64" /></label>
+        <label class="field" title="Who made the pack. It shows after the pack name.">Author<input id="author" maxlength="64" /></label>
         <p>
           Choose artwork for the apps and file types you want to customize. Apply icons and Apply file icons
           change them after review.
@@ -142,22 +142,22 @@
         <div id="assignments"></div>
         <p class="error" id="editorError" role="alert"></p>
         <div class="end">
-          <button value="cancel" formnovalidate>Cancel</button
-          ><button id="savePack" type="button" class="primary">Save pack</button>
+          <button value="cancel" formnovalidate title="Close without saving.">Cancel</button
+          ><button id="savePack" type="button" class="primary" title="Save the pack. It doesn't change any icons until you apply it.">Save pack</button>
         </div>
       </form>
     </dialog>
     <dialog id="hotkey">
       <form method="dialog">
         <h1>Change hotkey</h1>
-        <label class="check"><input type="checkbox" id="keyEnabled" />Enable system-wide hotkey</label>
+        <label class="check" title="Let the keyboard shortcut open the Launcher from any app."><input type="checkbox" id="keyEnabled" />Enable system-wide hotkey</label>
         <div id="modifiers"></div>
-        <label class="field">Key<select id="key"></select></label>
+        <label class="field" title="The key you press with the checked modifier keys.">Key<select id="key"></select></label>
         <p id="keyStatus" role="status"></p>
         <p class="error" id="keyError" role="alert"></p>
         <div class="end">
-          <button value="cancel">Cancel</button
-          ><button id="saveKey" type="button" class="primary">Save</button>
+          <button value="cancel" title="Close without changing the shortcut.">Cancel</button
+          ><button id="saveKey" type="button" class="primary" title="Use this keyboard shortcut.">Save</button>
         </div>
       </form>
     </dialog>

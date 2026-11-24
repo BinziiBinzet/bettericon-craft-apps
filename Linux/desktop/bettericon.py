@@ -24,7 +24,7 @@ gi.require_version("WebKit2", "4.1")
 from gi.repository import Gdk, GdkX11, Gio, GLib, Gtk
 
 from catalog import (CRAFT, DEFAULT_ID, DEFAULT_KEY, LEAD, OPENING_PACK, PROJECT, VERSION, Catalog, DesktopIcons,
-                     load_json, log, reason)
+                     launch_entries, load_json, log, reason)
 from project_icons import ProjectIcons, ReviewChanged
 from packs import FORMATS, Packs, app_name, format_label, left_out_text, scaled
 from shortcuts import KEYS, backend, label
@@ -684,9 +684,13 @@ class BetterIcon(Gtk.Application):
         applied = self.packs.all.get(p.get("appliedPack"))
         applied_icons = applied.icons if applied and applied.status != "Download" else {}
         recorded = p.get("appliedArt") or {}
+        own = {}
         for entry in self.catalog.entries.values():
-            original = self.system_icon(entry, records)
-            originals.setdefault(entry.craft, original)
+            own[entry.id] = self.system_icon(entry, records)
+            originals.setdefault(entry.craft, own[entry.id])
+        # Copies of one entry, such as a menu entry and the same entry on the Desktop, share one tile.
+        for entry in launch_entries(list(self.catalog.entries.values())):
+            original = own[entry.id]
             art = None
             if p.get("appliedPack") != DEFAULT_ID and entry.id not in (p.get("restored") or []):
                 saved = recorded.get(entry.craft)
@@ -888,11 +892,24 @@ class BetterIcon(Gtk.Application):
         choices = [("Open Launcher", lambda: self.popup.open()), ("Manage Icons…", lambda: self.popup.open("manage")),
                    ("Refresh available icon packs", self.refresh_packs), ("Refresh installed apps", self.refresh), ("Add an applications folder…", self.folder),
                    ("Change launcher shortcut…", self.show_key), ("Exit BetterIcon", self.safe_quit)]
+        # What each item does, shown when the pointer rests on it.
+        tips = {
+            "Open Launcher": "Open the Launcher with your installed ArtCraft apps.",
+            "Manage Icons…": "Choose icon packs for your apps and files, apply them, or put the original icons back.",
+            "Refresh available icon packs": "Check for new icon packs and for updates to the packs you have.",
+            "Refresh installed apps": "Look again for installed ArtCraft apps and their menu entries.",
+            "Add an applications folder…": "Also look for ArtCraft apps' desktop entries in a folder you choose.",
+            "Change launcher shortcut…": "Change the keyboard shortcut that opens the Launcher.",
+            "Exit BetterIcon": "Close BetterIcon. Applied icons stay, but they are not put back after app updates until "
+                               "BetterIcon runs again.",
+        }
         for title, callback in choices:
             item = Gtk.MenuItem.new_with_label(title)
+            item.set_tooltip_text(tips.get(title))
             item.connect("activate", lambda _, action=callback: action())
             menu.append(item)
         themes = Gtk.MenuItem.new_with_label("Change icon theme")
+        themes.set_tooltip_text("Choose an app icon pack in Manage Icons. Hover a name to see sample icons.")
         submenu = Gtk.Menu()
         themes.set_submenu(submenu)
         packs = [p for p in self.packs.all.values() if p.can_apps and p.id not in self.catalog.prefs["hidden"]]
@@ -1375,6 +1392,95 @@ class BetterIcon(Gtk.Application):
             self.popup.native = False
             self.popup.win.present()
 
+    def remove_pack(self, target):
+        """Remove app pack and Remove file pack. A published pack downloaded to this computer asks whether to clear only
+        its local copy, so it stays listed and downloads again when chosen, or also to take it off the list. The copy of
+        the applied app or file type pack stays: BetterIcon gives new apps the pack, and new default apps' file types the
+        pack's file icons, from its files. A personal pack, and a published one with nothing downloaded, has one choice."""
+        p = self.catalog.prefs
+        title = target.model()["title"]
+        note = "\nIt leaves both the app and the file type list." if target.can_apps and target.can_files else ""
+        # Applied file icons come from BetterIcon's own copies, so they outlive any pack with file artwork, also
+        # one of both kinds removed from the app list.
+        if target.can_files and self.projects.applied():
+            note += "\nFile icons you applied stay until you restore the original file icons."
+        local = not target.personal and target.status in ("Downloaded", "Update available")
+        if not local:
+            if self.confirm("Remove this icon pack?", title + note, "Remove"):
+                self.hide_pack(target)
+            return
+        if target.id in (p.get("appliedPack"), p.get("fileApplied")):
+            details = (title + " is applied. BetterIcon keeps its files to give new apps and file types its icons, so its "
+                       "local copy can't be cleared. Apply another pack or restore the original icons first. You can still "
+                       "take it off the list; its files stay." + note)
+            if self.choose("Remove this icon pack?", details, ["Remove from list"],
+                           ["Take the pack off the list and keep its files. Restore built-in packs brings it back."]) == 0:
+                self.status = "Pack removed from the list. Its files stay while it is applied."
+                self.hide_pack(target)
+            return
+        details = (title + "\n\nClear local copy deletes its downloaded files. The pack stays in the list and downloads again "
+                   "when you choose it. Remove from list deletes them too and takes the pack off the list until you choose "
+                   "Restore built-in packs. Icons you applied stay as they are." + note)
+        choice = self.choose("Remove this icon pack?", details, ["Clear local copy", "Remove from list"], [
+            "Delete the pack's downloaded files from this computer. It stays in the list and downloads again when you "
+            "choose it.",
+            "Delete the pack's downloaded files and take it off the list. Restore built-in packs brings it back."])
+        if choice < 0:
+            return
+        # A list that shows the pack moves to the original icons first: its preview reads the files that go.
+        changes = {}
+        if p.get("selected") == target.id:
+            changes["selected"] = DEFAULT_ID
+        if p.get("fileSelected") == target.id:
+            changes["fileSelected"] = DEFAULT_ID
+        if changes:
+            self.catalog.update(**changes)
+        try:
+            self.packs.use_rows(self.packs.forget(target.id), [target.id])
+        except (OSError, ValueError) as exc:
+            self.render()
+            self.error(f"Could not clear the local copy of {title}: {exc}")
+            return
+        if choice == 1:
+            self.status = "Pack removed from the list, and its local copy deleted."
+            self.hide_pack(target)
+        else:
+            self.status = f"Cleared the local copy of {title}. It downloads again when you choose it."
+            self.render()
+
+    def hide_pack(self, target):
+        p = self.catalog.prefs
+        changes = {}
+        if target.personal:
+            self.packs.remove(target)
+        else:
+            changes["hidden"] = p["hidden"] + [target.id]
+        if p.get("selected") == target.id:
+            changes["selected"] = DEFAULT_ID
+        if p.get("fileSelected") == target.id:
+            changes["fileSelected"] = DEFAULT_ID
+        self.catalog.update(**changes)
+        self.render()
+
+    def choose(self, title, details, answers, tips):
+        """A question with several answers, each a button with its tooltip, and Cancel. Returns the index of the chosen
+        answer, or -1 for Cancel. Cancel is the default."""
+        dlg = Gtk.MessageDialog(transient_for=self.popup.win, modal=True, message_type=Gtk.MessageType.QUESTION, text=title)
+        dlg.format_secondary_text(details)
+        cancel = dlg.add_button("Cancel", Gtk.ResponseType.CANCEL)
+        cancel.set_tooltip_text("Keep the pack as it is.")
+        for index, (answer, tip) in enumerate(zip(answers, tips)):
+            dlg.add_button(answer, index).set_tooltip_text(tip)
+        dlg.set_default_response(Gtk.ResponseType.CANCEL)
+        self.popup.native = True
+        try:
+            response = dlg.run()
+            return response if isinstance(response, int) and 0 <= response < len(answers) else -1
+        finally:
+            dlg.destroy()
+            self.popup.native = False
+            self.popup.win.present()
+
     def confirm(self, title, details, verb):
         dlg = Gtk.MessageDialog(transient_for=self.popup.win, modal=True, message_type=Gtk.MessageType.QUESTION, text=title)
         dlg.format_secondary_text(details)
@@ -1636,23 +1742,7 @@ class BetterIcon(Gtk.Application):
             if path:
                 self.packs.export(target, path)
         elif name == "remove" and target.id != DEFAULT_ID:
-            note = "\nIt leaves both the app and the file type list." if target.can_apps and target.can_files else ""
-            # Applied file icons come from BetterIcon's own copies, so they outlive any pack with file artwork, also
-            # one of both kinds removed from the app list.
-            if target.can_files and self.projects.applied():
-                note += "\nFile icons you applied stay until you restore the original file icons."
-            if self.confirm("Remove this icon pack?", target.model()["title"] + note, "Remove"):
-                changes = {}
-                if target.personal:
-                    self.packs.remove(target)
-                else:
-                    changes["hidden"] = p["hidden"] + [target.id]
-                if p.get("selected") == target.id:
-                    changes["selected"] = DEFAULT_ID
-                if p.get("fileSelected") == target.id:
-                    changes["fileSelected"] = DEFAULT_ID
-                self.catalog.update(**changes)
-                self.render()
+            self.remove_pack(target)
         elif name == "unhide":
             self.catalog.update(hidden=[])
             self.render()
