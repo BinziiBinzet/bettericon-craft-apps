@@ -11,8 +11,7 @@ using Microsoft.Win32;
 
 namespace BetterIcon.Tray
 {
-    // One entry is one design. Windows shows a single icon for each file class, so
-    // every extension an app registers under one class shares that entry's artwork.
+    // One entry is one format. Fallback is the design used by older packs for this extension.
     public sealed class ProjectFormat
     {
         static readonly StringComparer IgnoreCase = StringComparer.OrdinalIgnoreCase;
@@ -20,6 +19,7 @@ namespace BetterIcon.Tray
         public string Application { get; set; }
         public string[] ProgIds { get; set; }
         public string[] Aliases { get; set; }
+        public string Fallback { get; set; }
         // An ArtCraft format can show its icon before any app is registered to open it.
         public bool Native { get; set; }
         // File classes of other ArtCraft apps that open the same extensions.
@@ -89,7 +89,8 @@ namespace BetterIcon.Tray
         public string For(ProjectFormat format)
         {
             string path;
-            return Formats.TryGetValue(format.Key, out path) || Applications.TryGetValue(format.Application, out path) ? path : null;
+            return Formats.TryGetValue(format.Key, out path)
+                || (format.Fallback == null && Applications.TryGetValue(format.Application, out path)) ? path : null;
         }
         // Every format drawn with its own entry, as a personal pack stores it.
         public Dictionary<string, string> Expanded()
@@ -111,7 +112,8 @@ namespace BetterIcon.Tray
                 bool opted = Unlisted.TryGetValue(app, out other);
                 string also = opted ? Environment.NewLine + String.Format(UnlistedTip, AppNames.Display(app)) : "";
                 if (Applications.TryGetValue(app, out shared)) {
-                    var covered = own.Where(f => !Formats.ContainsKey(f.Key)).Select(f => f.Label).ToArray();
+                    var covered = own.Where(f => !Formats.ContainsKey(f.Key)
+                        && (f.Fallback == null || !Formats.ContainsKey(f.Fallback))).Select(f => f.Label).ToArray();
                     result.Add(new Tile { Name = app, Path = shared, Tooltip = app + " files" + Environment.NewLine + (covered.Length == 0 ? "No other file types on Windows" : String.Join(Environment.NewLine, covered))
                         + (opted && other == shared ? also : "") });
                     if (opted && other != shared) result.Add(new Tile { Name = app, Path = other, Tooltip = app + " files" + also });
@@ -560,10 +562,14 @@ namespace BetterIcon.Tray
                     if (picked == null && !ProjectFormat.Classes.ContainsKey(id)) continue;
                     // An Open with entry has no formats of its own: any format it opens counts.
                     formats = ProjectFormat.All.Where(f => (picked != null || f.Opens(id)) && linked.Any(f.Has)).ToArray();
-                    // Windows shows one icon for the class: use its first format drawn by this pack.
+                    // Windows shows one icon for the class. Prefer art for an extension it currently opens.
                     chosen = formats.FirstOrDefault(f => icons.ContainsKey(f.Key));
                     if (chosen != null) icon = icons[chosen.Key];
-                    else applications.TryGetValue(picked ?? ProjectFormat.Classes[id], out icon);
+                    else {
+                        chosen = formats.FirstOrDefault(f => f.Fallback != null && icons.ContainsKey(f.Fallback));
+                        if (chosen != null) icon = icons[chosen.Fallback];
+                        else applications.TryGetValue(picked ?? ProjectFormat.Classes[id], out icon);
+                    }
                 }
                 // An Open with entry counts here only while it runs the app's installed program.
                 else if (ClassApplication(id, true) != null) unlisted.TryGetValue(application, out icon);
@@ -577,11 +583,13 @@ namespace BetterIcon.Tray
             // Only a listed format ever writes an extension's own key.
             foreach (ProjectFormat f in ProjectFormat.All) {
                 string icon;
-                if (!icons.TryGetValue(f.Key, out icon) && !applications.TryGetValue(f.Application, out icon)) continue;
+                if (!icons.TryGetValue(f.Key, out icon)
+                    && (f.Fallback != null || !applications.TryGetValue(f.Application, out icon))) continue;
                 if (themed.Contains(f.Key)) continue;
-                bool free = f.Native && Unassigned(handlers[f.Key], f.Key);
+                bool free = f.Native && (f.Fallback == null || f.Key.Length > 3) && Unassigned(handlers[f.Key], f.Key);
                 // Part of this format already follows its class; the rest opens elsewhere.
-                if (!free && f.Extensions.Any(themed.Contains)) continue;
+                if (!free && (f.Extensions.Any(themed.Contains) || ProjectFormat.All.Any(other => other.Fallback == f.Key
+                    && themed.Contains(other.Key)))) continue;
                 var change = new ProjectIconChange { Target = f.Key, Icon = icon, Extensions = f.Key, Application = f.Application };
                 if (!free) change.Reason = f.Extensions.All(ext => Unassigned(handlers[ext], ext)) ? "No default application" : "Uses another default application";
                 result.Add(Check(change, Backup(f.Key), false));

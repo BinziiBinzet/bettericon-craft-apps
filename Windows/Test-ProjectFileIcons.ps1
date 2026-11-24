@@ -78,7 +78,7 @@ Check ($null -ne $itemReply -and $itemReply.CachedProjectIcons.ContainsKey('.fig
 $formats = [BetterIcon.Tray.ProjectFormat]::All
 $extensions = @($formats | ForEach-Object { $_.Extensions })
 Check (@($extensions | Group-Object | Where-Object Count -gt 1).Count -eq 0 -and @($extensions | Where-Object { $_ -cnotmatch '^\.[a-z0-9]+$' }).Count -eq 0) 'Every supported extension belongs to exactly one design'
-Check (@($formats | Where-Object Native).Count -eq 13 -and [BetterIcon.Tray.ProjectFormat]::Classes['Figcraft.Image'] -eq 'FigCraft' -and [BetterIcon.Tray.ProjectFormat]::Classes['Photocraft.Image'] -eq 'PhotoCraft') 'The table keeps the thirteen ArtCraft formats and names the app behind each file class'
+Check (@($formats | Where-Object { $_.Native -and !$_.Fallback }).Count -eq 13 -and [BetterIcon.Tray.ProjectFormat]::Classes['Figcraft.Image'] -eq 'FigCraft' -and [BetterIcon.Tray.ProjectFormat]::Classes['Photocraft.Image'] -eq 'PhotoCraft') 'The table keeps the thirteen original ArtCraft formats and names the app behind each file class'
 
 # ---- File types outside the index: only art named <App>-files opts in ------------------------------------------------
 Add-Type -AssemblyName System.IO.Compression,System.Web.Extensions
@@ -216,6 +216,16 @@ try {
     $image=New-Icons; $image.Add('.png','"C:\fixture\image.ico",0')
     $row=@($common.Review($image,$false))
     Check ($row.Count -eq 1 -and $row[0].Target -eq 'Photocraft.Image' -and $row[0].Extensions -eq '.jpg, .png' -and $row[0].CanChange) 'Extensions that share one Windows file class share one icon'
+    Set-Text $classes '.glb' 'TextureCraft.Mesh'
+    $mesh=New-Icons; $mesh.Add('.obj','"C:\fixture\obj.ico",0')
+    $row=@($common.Review($mesh,$false) | Where-Object Target -eq 'TextureCraft.Mesh')
+    Check ($row.Count -eq 1 -and $row[0].CanChange -and $row[0].Icon -ceq $mesh['.obj']) 'A legacy OBJ design still covers GLB'
+    $mesh.Add('.glb','"C:\fixture\glb.ico",0')
+    $row=@($common.Review($mesh,$false) | Where-Object Target -eq 'TextureCraft.Mesh')
+    Check ($row.Count -eq 1 -and $row[0].CanChange -and $row[0].Icon -ceq $mesh['.glb']) 'The exact GLB design wins when GLB is the only extension the class opens'
+    Set-Text $classes '.obj' 'TextureCraft.Mesh'
+    $row=@($common.Review($mesh,$false) | Where-Object Target -eq 'TextureCraft.Mesh')
+    Check ($row.Count -eq 1 -and $row[0].Extensions -eq '.glb, .obj' -and $row[0].Icon -ceq $mesh['.obj']) 'A shared mesh class keeps its representative icon even when both extensions have designs'
     Set-Text $classes '.deckcraft' 'DeckCraft.Presentation'; Set-Text $classes '.pptx' 'DeckCraft.Presentation'
     $deck=New-Icons; $deck.Add('.pptx','"C:\fixture\ppt.ico",0')
     $row=@($common.Review($deck,$false))

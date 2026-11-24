@@ -187,7 +187,8 @@ class ProjectIcons:
         table = self._globs() if table is None else table
         ready, skipped = {}, []
         for key, fmt in self.formats.items():
-            own = documents.get(key) or apps.get(fmt["Application"])
+            fallback = fmt.get("Fallback")
+            own = documents.get(key) or documents.get(fallback) or apps.get(fmt["Application"])
             suffixes = [key] + fmt.get("Aliases", [])
             row = dict(key=key, label=format_label(fmt), globs=[], suffixes=[], app=fmt["Application"])
             changed = False
@@ -195,24 +196,25 @@ class ProjectIcons:
                 if not own:
                     continue
                 # BetterIcon's own earlier globs must not decide the type, or the app loses its files.
-                kind = self.registered(key, table)
-                if kind is None or kind in GENERIC or not own_type(kind, key):
-                    kind = "application/x-artcraft-" + key[1:]
+                primary = fallback or key
+                kind = self.registered(primary, table)
+                if kind is None or kind in GENERIC or not own_type(kind, primary):
+                    kind = "application/x-artcraft-" + primary[1:]
                 for suffix in suffixes:
                     other = self.registered(suffix, table)
-                    if other == kind:
-                        row["suffixes"].append(suffix)
-                    elif other is None or other in GENERIC:
+                    needs_glob = other is None or other in GENERIC
+                    if needs_glob:
                         # Provide a glob only for the format's own suffixes nobody else claims.
-                        if suffix == key or len(suffix) > 3:
-                            row["globs"].append("*" + suffix)
-                            row["suffixes"].append(suffix)
-                    elif own_type(other, suffix):
-                        # The app registered its own type for this suffix, such as VectorCraft's template type.
-                        entry = ready.setdefault(other, dict(row, globs=[], suffixes=[], source=own))
-                        if suffix not in entry["suffixes"]:
-                            entry["suffixes"].append(suffix)
-                ready.setdefault(kind, dict(row, source=own))
+                        if suffix != primary and len(suffix) <= 3:
+                            continue
+                    elif other != kind and not own_type(other, suffix):
+                        continue
+                    # The app may register a separate type for this suffix, such as VectorCraft's template type.
+                    entry = ready.setdefault(kind if needs_glob else other, dict(row, globs=[], suffixes=[], source=own))
+                    if needs_glob and "*" + suffix not in entry["globs"]:
+                        entry["globs"].append("*" + suffix)
+                    if suffix not in entry["suffixes"]:
+                        entry["suffixes"].append(suffix)
                 continue
             for suffix in suffixes:
                 kind, _ = Gio.content_type_guess("example" + suffix, None)
@@ -226,7 +228,7 @@ class ProjectIcons:
                     if suffix not in entry["suffixes"]:
                         entry["suffixes"].append(suffix)
                     changed = True
-            if own and not changed:
+            if own and not changed and (fallback is None or key in documents):
                 skipped.append(row["label"])
         if unlisted:
             # Listed formats keep their rules: a type one of them uses is never a candidate.
@@ -321,7 +323,7 @@ class ProjectIcons:
         kinds, globs = set(), set()
         for key, fmt in self.formats.items():
             if fmt.get("Native"):
-                kinds.add("application/x-artcraft-" + key[1:])
+                kinds.add("application/x-artcraft-" + (fmt.get("Fallback") or key)[1:])
             for suffix in [key] + fmt.get("Aliases", []):
                 globs.add("*" + suffix.lower())
                 kind = self.registered(suffix, table)

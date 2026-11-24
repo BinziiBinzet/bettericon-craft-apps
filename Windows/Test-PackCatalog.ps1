@@ -209,10 +209,10 @@ try {
     $pngFile = Item 'Craft-Icons-Webp/Set/FileTypes/pcraft.png' 'png file twin'
     $webpRows = @(& $module { param($items) ConvertTo-PackCatalogRows $items } @($webpApp, $webpFile,
         (ItemBytes 'Craft-Icons-Webp/Set/FileTypes/PhotoCraft-PSD.webp' $webpRed), (ItemBytes 'Craft-Icons-Mains/Chrome Glass Preview.webp' $webpRed),
-        (ItemBytes 'Craft-Icons-Webp/Set/svg/PhotoCraft.webp' $webpRed), (Item 'Craft-Icons-Webp/Set/FileTypes/webp.png' 'alias')))
+        (ItemBytes 'Craft-Icons-Webp/Set/svg/PhotoCraft.webp' $webpRed), (Item 'Craft-Icons-Webp/Set/FileTypes/webp.png' 'WebP file type artwork')))
     $webpNames = @($webpRows | ForEach-Object { $_.Split([char]9)[1] })
-    Check ($webpNames.Count -eq 3 -and 'Craft-Icons-Webp/Set/PhotoCraft.webp' -cin $webpNames -and 'Craft-Icons-Webp/Set/FileTypes/pcraft.webp' -cin $webpNames -and
-        'Craft-Icons-Webp/Set/FileTypes/PhotoCraft-files.webp' -cin $webpNames) 'Catalog rows keep app and FileTypes WebP artwork and ignore preview sheets'
+    Check ($webpNames.Count -eq 4 -and 'Craft-Icons-Webp/Set/PhotoCraft.webp' -cin $webpNames -and 'Craft-Icons-Webp/Set/FileTypes/pcraft.webp' -cin $webpNames -and
+        'Craft-Icons-Webp/Set/FileTypes/PhotoCraft-files.webp' -cin $webpNames -and 'Craft-Icons-Webp/Set/FileTypes/webp.png' -cin $webpNames) 'Catalog rows keep WebP artwork and the WebP file type while ignoring preview sheets'
     $twinLines = [string[]](@($seed) + @(& $module { param($items) ConvertTo-PackCatalogRows $items } @($webpApp, $pngApp, $webpFile, $pngFile)))
     $twinPack = @((& $module { param($lines, $state) Read-PackSnapshot $lines $state } $twinLines $env:BETTERICON_DOWNLOAD_STATE).Values)[0]
     Check ($twinPack.IconCount -eq 1 -and $twinPack.FileIconCount -eq 1) 'A pack with WebP and PNG twins counts each icon once'

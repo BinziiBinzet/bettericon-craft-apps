@@ -363,8 +363,21 @@ import WebKit
         let standardArt = published.fileArt(standard), standardTiles = published.fileTiles(standard)
         try check(!cardboard.canFiles && published.fileArt(cardboard).isEmpty && standard.appFiles.count == 14
             && standardArt.count == 27 && standardArt[".psd"] == standard.appFiles["PhotoCraft"] && standardArt[".anicraft"] == nil
-            && standardTiles.count == 14 && standardTiles.contains { $0.name == "PhotoCraft" && $0.hint.contains(".png, .jpg +16") },
+            && standardTiles.count == 14 && standardTiles.contains {
+                $0.name == "PhotoCraft" && $0.hint.contains("\n.png\n") && $0.hint.contains("\n.jpg\n")
+            },
             "an app's file artwork covers every file type that app opens, and an app icon pack has none")
+        let engine = FolderIcons(formats: published.formats)
+        let glb = root.appendingPathComponent("sample.GLB")
+        let obj = root.appendingPathComponent("sample.obj")
+        var meshes = Pack(id: "meshes", name: "Meshes", author: "", icons: [:], documents: [".obj": photoArt])
+        try check(published.fileArt(meshes)[".glb"] == nil
+            && engine.artwork(for: glb, in: published.fileArt(meshes, includeFallbacks: true)) == photoArt,
+            "a legacy OBJ design still covers a GLB in Apply without adding a stored assignment")
+        meshes.documents[".glb"] = filmArt
+        let exact = published.fileArt(meshes, includeFallbacks: true)
+        try check(engine.artwork(for: glb, in: exact) == filmArt && engine.artwork(for: obj, in: exact) == photoArt,
+            "GLB and OBJ use their own artwork when both designs are present")
         let mixedPack = packs.first { $0.id == "Craft-Icons-Mike22/CraftApps AIO November - Dark" }!
         try check(
             mixedPack.status == "Downloaded" && mixedPack.icons.count == 15 && mixedPack.appFiles.count == 14
@@ -882,7 +895,7 @@ import WebKit
         let fileTypePack = try await js("""
             (() => {
               const tiles = [...el('filePreview').children], a = el('preview').getBoundingClientRect(), b = el('filePreview').getBoundingClientRect();
-              return tiles.length === 14 && tiles.some(t => t.textContent === 'PhotoCraft' && t.title.includes('.psd, .psb')) &&
+              return tiles.length === 14 && tiles.some(t => t.textContent === 'PhotoCraft' && t.title.includes('.psd') && t.title.includes('.psb')) &&
                 model.fileCount === 27 && el('fileDetail').textContent === '27 file types / Built-in pack' &&
                 b.left >= a.right && Math.abs(a.top - b.top) < 1 && Math.abs(a.width - b.width) <= 1 &&
                 el('applyFiles').classList.contains('primary') && !el('restoreFiles').hidden && !el('removeFiles').disabled;
@@ -1134,12 +1147,12 @@ import WebKit
                 && ["#7f726d #42312c", "not colored"].contains(chrome?["scroll"] ?? ""),
             "the loading bars take Clay Dark's colors too, the button gray with an accent chunk that moves, or fades with Reduce Motion on, and the scroll bars take them where this WebKit can color them")
         _ = try await js("el('new').click();true")
-        try await until("el('editor').open&&el('assignments').children.length===57")
+        try await until("el('editor').open&&el('assignments').children.length===116")
         let fileRows = try await js("""
-            [...el('assignments').children].some(r => r.firstChild.textContent === '.psd, .psb (PhotoCraft)') &&
-                [...el('assignments').children].filter(r => r.firstChild.textContent.includes('(')).length === 37
+            [...el('assignments').children].some(r => r.firstChild.textContent === '.psb (PhotoCraft)') &&
+                [...el('assignments').children].filter(r => r.firstChild.textContent.includes('(')).length === 96
             """)
-        try check(fileRows as? Bool == true, "the pack editor lists 20 apps and 37 file type designs with their apps")
+        try check(fileRows as? Bool == true, "the pack editor lists 20 apps and 96 file formats with their apps")
         _ = try await js("el('editor').close();true")
         try await until("!el('editor').open")
         try check(true, "personal editor lists all canonical ArtCraft apps")
@@ -4722,7 +4735,7 @@ import WebKit
         _ = await settled(host)
         _ = await js(host, "send('editor', {mode: 'edit', group: 'files'}); true")
         let row = await jsUntil(host, """
-            el('editor').open && el('assignments').children.length === 58 &&
+            el('editor').open &&
                 [...el('assignments').children].some(r => r.firstChild.textContent === 'Other PhotoCraft files' &&
                     r.children[1].textContent === 'PhotoCraft-files.png')
             """)

@@ -1,6 +1,6 @@
 # BetterIcon-Craft Apps Windows support.
 Set-StrictMode -Version Latest
-$script:Version = '1.29.2'
+$script:Version = '1.30.0'
 $script:SvgArtworkType = $null
 # The worker's own copy of BetterIcon.WebP.cs, compiled on first use (Get-WebpArtworkType).
 $script:WebpArtworkType = $null

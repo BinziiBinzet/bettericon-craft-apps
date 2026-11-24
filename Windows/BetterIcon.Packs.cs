@@ -241,7 +241,7 @@ namespace BetterIcon.Tray
         static void ExpandSharedFileArt(Dictionary<string, byte[]> images, Dictionary<string, string> extensions)
         {
             foreach (string shared in images.Keys.Where(key => key.StartsWith(SharedFileArt)).ToArray()) {
-                foreach (ProjectFormat format in ProjectFormat.All.Where(f => f.Application == shared.Substring(SharedFileArt.Length)))
+                foreach (ProjectFormat format in ProjectFormat.All.Where(f => f.Fallback == null && f.Application == shared.Substring(SharedFileArt.Length)))
                     if (!images.ContainsKey(format.Key)) { images[format.Key] = images[shared]; extensions[format.Key] = extensions[shared]; }
                 images.Remove(shared); extensions.Remove(shared);
             }

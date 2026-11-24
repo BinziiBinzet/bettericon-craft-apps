@@ -239,7 +239,8 @@ final class PackLibrary {
         // FileTypes/<App>-files also stays as the app's art for the file types outside the list.
         for (shared, art) in items where shared.hasPrefix(sharedFileArt) {
             if explicit[shared] != true { items[shared] = nil }
-            for format in formats where format.Application == String(shared.dropFirst()) && items[format.Key] == nil {
+            for format in formats where format.Fallback == nil
+                && format.Application == String(shared.dropFirst()) && items[format.Key] == nil {
                 items[format.Key] = art
             }
         }

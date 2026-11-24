@@ -3324,8 +3324,9 @@ def webp_imports(packs):
         made.append(key)
         docs = packs.all[key].documents
         art = {k: png_pixbuf(path.read_bytes()) for k, path in docs.items()}
-        photo = [k for k, f in packs.formats.items() if f["Application"] == "PhotoCraft"]
-        ok = (set(docs) == set(photo) and reddish(rgba(art[".pcraft"], 16, 16)) and
+        photo = {k for k, f in packs.formats.items() if f["Application"] == "PhotoCraft" and not f.get("Fallback")}
+        ok = (set(docs) == photo | {".webp"} and docs[".webp"].read_bytes() == WEBP["A16"]
+              and reddish(rgba(art[".pcraft"], 16, 16)) and
               rgba(art[".psd"], 16, 16) == (0, 255, 0, 128) and bluish(rgba(art[".png"], 16, 16)))
         check(ok, "FileTypes WebP names map to formats and fan out" + ("" if ok else f"; {sorted(docs)}"))
         try:
@@ -3801,6 +3802,17 @@ def unlisted_rules(project, types, art, other_art, folder, packs, made, keys):
           "bettericon-project-texturecraftfiles-" not in gio_info(types.samples["example.bitestl"]))
     check(ok, "a file type that also covers a listed suffix stays with the listed rule, and generic and inode types "
           "never take the art" + ("" if ok else f"; {sorted(ready)} / {sorted(both)}"))
+    # A MIME type with its own extension can use exact artwork even when it shared the OBJ design in older packs.
+    kinds = {"example.obj": "model/test-obj", "example.glb": "model/test-glb"}
+    original_guess = Gio.content_type_guess
+    with patch.object(Gio, "content_type_guess", side_effect=lambda name, data:
+                      (kinds[name], False) if name in kinds else original_guess(name, data)), \
+            patch("project_icons.opener", side_effect=lambda kind: "TextureCraft" if kind in kinds.values() else None):
+        legacy, _ = project.targets({".obj": art})
+        exact_art = art.with_name("glb.png")
+        exact, _ = project.targets({".obj": art, ".glb": exact_art})
+    check(legacy["model/test-glb"]["source"] == art and exact["model/test-glb"]["source"] == exact_art
+          and exact["model/test-obj"]["source"] == art, "GLB takes exact art for its own MIME type and falls back to OBJ for an older pack")
     # The real catalog helper over fixture packs: explicit art with a damaged WebP twin, format-labelled art, a mix,
     # another app's explicit art, and explicit art not downloaded yet.
     base = "Craft-Icons-Bitest"
@@ -3978,7 +3990,7 @@ def unlisted_later(project, types, art, other_art, folder, packs, pack, made, ke
                                                              "FileTypes/TextureCraft_files.webp": WEBP["A13"]}))
     made.append(key)
     imported = packs.all[key]
-    texture_formats = {k for k, f in packs.formats.items() if f["Application"] == "TextureCraft"}
+    texture_formats = {k for k, f in packs.formats.items() if f["Application"] == "TextureCraft" and not f.get("Fallback")}
     stored = imported.unlisted.get("TextureCraft")
     edited = packs.save("Explicit edited", "Fixture", {**imported.documents, "PhotoCraft": pack.icons["PhotoCraft"]},
                         editing=key)
@@ -4445,7 +4457,7 @@ def unlisted_summary(app, settle, js):
         shutil.rmtree(folder)
         settle()
         app.render()
-    count = len([key for key, fmt in app.packs.formats.items() if fmt["Application"] == "TextureCraft"])
+    count = sum(fmt["Application"] == "TextureCraft" and not fmt.get("Fallback") for fmt in app.packs.formats.values())
     line = f"{count} file {'type' if count == 1 else 'types'}, plus other TextureCraft files"
     ok = (seen == ["Other LightCraft files", False, "Other LightCraft files / Personal pack"] and
           f"{raw} (*.bitestraw)" in text and "LightCraft opens these other file types by default." in text and
@@ -4792,7 +4804,7 @@ def core():
     dunkel_art, dunkel_tiles = packs.file_art(dunkel), packs.file_tiles(dunkel)
     check(not pack.can_files and not packs.file_art(pack) and len(dunkel.app_files) == 14 and len(dunkel_art) == 27 and
           dunkel_art[".psd"] == dunkel.app_files["PhotoCraft"] and ".anicraft" not in dunkel_art and len(dunkel_tiles) == 14 and
-          any(t["name"] == "PhotoCraft" and ".png, .jpg +16" in t["hint"] for t in dunkel_tiles),
+          any(t["name"] == "PhotoCraft" and ".png" in t["hint"].splitlines() and ".jpg" in t["hint"].splitlines() for t in dunkel_tiles),
           "an app's file artwork covers every file type that app opens, and an app icon pack has none")
     mixed = packs.all[both]
     check(mixed.status == "Downloaded" and len(mixed.icons) == 15 and len(mixed.app_files) == 14 and len(packs.file_art(mixed)) == 28,
@@ -4896,15 +4908,15 @@ def core():
     picture.write_bytes(pack.icons["PhotoCraft"].read_bytes())
     common = {".png": pack.icons["FilmCraft"], ".pcraft": pack.icons["FilmCraft"]}
     ready, skipped = project.targets(common)
-    check("image/png" not in ready and skipped == [".png, .jpg +16"] and project.review(common) == [".pcraft"],
+    check("image/png" not in ready and skipped == [".png"] and project.review(common) == [".pcraft"],
           "a common file type another app opens is left alone")
     Gio.DesktopAppInfo.new_from_filename(str(photo)).set_as_default_for_type("image/png")
     ready, skipped = project.targets(common)
     check("image/png" in ready and "image/jpeg" not in ready and not skipped and
-          project.review(common) == [".pcraft", ".png, .jpg +16"],
+          project.review(common) == [".pcraft", ".png"],
           "a common file type is included once an ArtCraft app is its default application")
     project.apply(common)
-    check("bettericon-project-png-" in file_info(picture) and project.applied() == [".pcraft", ".png, .jpg +16"],
+    check("bettericon-project-png-" in file_info(picture) and project.applied() == [".pcraft", ".png"],
           "GIO resolves the icon of a common file type an ArtCraft app opens")
     common_drawn(project, picture, ready)
     many = [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tif", ".tiff", ".ico", ".tga", ".svg"]
@@ -5560,7 +5572,7 @@ def gui():
     check(len(set(base.glob("*")) - prior) == 1, "only the clicked pack was downloaded")
     check(wait(lambda: js("[...el('filePreview').querySelectorAll('img')].every(i=>i.complete&&i.naturalWidth>0)")) and js("""(() => {
         const tiles = [...el('filePreview').children], a = el('preview').getBoundingClientRect(), b = el('filePreview').getBoundingClientRect();
-        return tiles.length === 14 && tiles.some(t => t.textContent === 'PhotoCraft' && t.title.includes('.psd, .psb')) &&
+        return tiles.length === 14 && tiles.some(t => t.textContent === 'PhotoCraft' && t.title.includes('.psd') && t.title.includes('.psb')) &&
             model.fileCount === 27 && el('fileDetail').textContent === '27 file types / Built-in pack' &&
             b.left >= a.right && Math.abs(a.top - b.top) <= 1 && Math.abs(a.width - b.width) <= 1 &&
             el('applyFiles').classList.contains('primary') && !el('restoreFiles').hidden && !el('removeFiles').disabled;
@@ -5638,10 +5650,10 @@ def gui():
     check(wait(lambda: js("model.prefs.color==='sage' && model.prefs.variant==='auto' && model.prefs.theme==='System'")) and
           Catalog().prefs["theme"] == "System", "Match app theme and the theme button return to the system appearance")
     js("el('new').click();true")
-    check(wait(lambda: js("el('editor').open && el('assignments').children.length===57")) and js("""
-        [...el('assignments').children].some(r => r.firstChild.textContent === '.psd, .psb (PhotoCraft)') &&
-            [...el('assignments').children].filter(r => r.firstChild.textContent.includes('(')).length === 37"""),
-          "the pack editor lists 20 apps and 37 file type designs with their apps")
+    check(wait(lambda: js("el('editor').open && el('assignments').children.length===116")) and js("""
+        [...el('assignments').children].some(r => r.firstChild.textContent === '.psb (PhotoCraft)') &&
+            [...el('assignments').children].filter(r => r.firstChild.textContent.includes('(')).length === 96"""),
+          "the pack editor lists 20 apps and 96 file formats with their apps")
     js("el('editor').close();true")
     check(wait(lambda: not pop.modal and js("!el('editor').open")), "closing the editor returns to Manage Icons")
     js("el('packs').click();el('packOptions').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));true")
