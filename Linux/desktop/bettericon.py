@@ -43,6 +43,9 @@ BACKSTOP = 60
 RECONCILE_DELAY = 1500
 # Package managers write many files in a burst, so the check after a change in an applications folder waits longer.
 ENTRY_DELAY = 3000
+# How many seconds after its start BetterIcon removes the downloads that earlier updates left behind, and how long it
+# waits before it asks again while something else is under way.
+SWEEP_DELAY = 30
 # The changes in an applications folder that can concern BetterIcon's desktop entries or the default apps.
 ENTRY_EVENTS = {Gio.FileMonitorEvent.CHANGED, Gio.FileMonitorEvent.CHANGES_DONE_HINT, Gio.FileMonitorEvent.CREATED,
                 Gio.FileMonitorEvent.DELETED, Gio.FileMonitorEvent.MOVED_IN, Gio.FileMonitorEvent.MOVED_OUT,
@@ -197,6 +200,9 @@ class BetterIcon(Gtk.Application):
         self.downloading = False
         self.download_progress = None
         self.download_summary = None
+        # The timer for the removal of downloads that earlier updates left behind, and whether this start has done it.
+        self.sweep_timer = None
+        self.swept = False
 
     def do_startup(self):
         Gtk.Application.do_startup(self)
@@ -254,6 +260,8 @@ class BetterIcon(Gtk.Application):
         # Also brings file icons applied by 1.28.0 forward, puts back icon files that went missing, and brings
         # BetterIcon's desktop entries up to date with app updates made while it was not running.
         self.reconcile_files("startup")
+        # Later, in the background: downloads that an update under an earlier version left behind are removed.
+        self.sweep_timer = GLib.timeout_add_seconds(SWEEP_DELAY, self.sweep_packs)
 
     def do_command_line(self, command):
         args = list(command.get_arguments())[1:]
@@ -278,6 +286,9 @@ class BetterIcon(Gtk.Application):
         if self.reconcile_timer:
             GLib.source_remove(self.reconcile_timer)
             self.reconcile_timer = 0
+        if self.sweep_timer is not None:
+            GLib.source_remove(self.sweep_timer)
+            self.sweep_timer = None
         for monitor in self.entry_monitors:
             monitor.cancel()
         self.entry_monitors = []
@@ -445,7 +456,10 @@ class BetterIcon(Gtk.Application):
         if p.get("appliedPack") not in (None, DEFAULT_ID):
             applied = self.packs.all.get(p.get("appliedPack"))
             icons = dict(applied.icons) if applied and applied.status != "Download" else {}
-            icons.update({craft: Path(saved) for craft, saved in (p.get("appliedArt") or {}).items() if saved})
+            # The artwork recorded at Apply, while its file is there. An update of the pack removes the download it was
+            # in, and the pack's own artwork then stands in, as in the Launcher.
+            icons.update({craft: Path(saved) for craft, saved in (p.get("appliedArt") or {}).items()
+                          if saved and Path(saved).is_file()})
             icons = {craft: Path(path) for craft, path in icons.items() if Path(path).is_file()}
         # Before the first file Apply of this version the pack that was applied is not recorded; the chosen one stands
         # in, and the check uses it only while every applied file icon is one of its images.
@@ -843,6 +857,7 @@ class BetterIcon(Gtk.Application):
                     tally["done"] += 1
                     # Only this pack's row: other packs may have been chosen and downloaded meanwhile.
                     self.packs.use_rows(rows, [key])
+                    self.prune_packs([key])
                     finished(key)
             finally:
                 tally["at"] += 1
@@ -1026,6 +1041,7 @@ class BetterIcon(Gtk.Application):
                 if rows is not None:
                     # Only these packs' rows: the offer's downloads may have brought others meanwhile.
                     self.packs.use_rows(rows, wanted)
+                    self.prune_packs(wanted)
                 if failed:
                     self.status = ("Couldn’t download your chosen icon pack. "
                                    "BetterIcon will try again the next time it starts.")
@@ -1038,6 +1054,64 @@ class BetterIcon(Gtk.Application):
             return False
         self.worker.submit(work).add_done_callback(lambda future: GLib.idle_add(complete, future))
         return False
+
+    def prune_packs(self, keys):
+        """After the list a download returned is in use (use_rows): have the earlier downloads of those packs removed.
+        It is queued on the worker once no review or other dialog is open, in turn with Apply and the other work that
+        reads pack files, so work that started with the earlier list has finished by then. A failure changes nothing
+        for the user; it is logged."""
+        if self.reviewing or self.popup.native:
+            # A review or another dialog is open, and what the user confirms there names the files of the earlier
+            # download. Asked again once it has closed: its Apply is then done (app icons) or already on the worker
+            # ahead of this (file icons).
+            GLib.timeout_add(RECONCILE_DELAY, self.prune_packs, list(keys))
+            return False
+
+        def work():
+            for key, cause in self.packs.prune(keys).items():
+                log(f"BetterIcon: an earlier download of {key} could not be removed:", cause)
+        try:
+            self.worker.submit(work)
+        except RuntimeError:
+            # BetterIcon is quitting. The earlier download goes at the pack's next update or the next start.
+            pass
+        return False
+
+    def sweep_packs(self):
+        """Once per start, some time after it: have the helper remove the downloads that updates left behind before
+        BetterIcon removed them itself (Packs.sweep). It runs on the worker, in turn with Apply and the other work that
+        reads pack files, and never while a pack downloads, a review is open or other pack work is under way: the timer
+        then asks again. A failure is logged and changes nothing for the user. The Launcher may show artwork recorded
+        at an Apply that was in such a download; it is then drawn again with the applied pack's own artwork."""
+        if self.swept:
+            self.sweep_timer = None
+            return GLib.SOURCE_REMOVE
+        if self.catalog_busy or self.downloading or self.reviewing or self.popup.native:
+            return GLib.SOURCE_CONTINUE
+        self.sweep_timer = None
+        recorded = [Path(saved) for saved in (self.catalog.prefs.get("appliedArt") or {}).values() if saved]
+        recorded = [path for path in recorded if path.is_file()]
+
+        def complete(future):
+            try:
+                done = future.result()
+            except Exception as exc:  # noqa: BLE001 - the removal is a courtesy: nothing depends on it
+                log("BetterIcon: downloads left by earlier updates could not be removed:", reason(exc))
+                done = True
+            if done:
+                self.swept = True
+                if self.popup.ready and any(not path.is_file() for path in recorded):
+                    self.render()
+            elif self.sweep_timer is None:
+                # A pack was being downloaded after all. Ask again later.
+                self.sweep_timer = GLib.timeout_add_seconds(SWEEP_DELAY, self.sweep_packs)
+            return False
+        try:
+            self.worker.submit(self.packs.sweep).add_done_callback(lambda future: GLib.idle_add(complete, future))
+        except RuntimeError:
+            # BetterIcon is quitting. The next start asks again.
+            pass
+        return GLib.SOURCE_REMOVE
 
     def verify_chosen_packs(self):
         """Decode the WebP files of the chosen and applied packs that are on this computer in full, on the worker, as a
@@ -1124,6 +1198,7 @@ class BetterIcon(Gtk.Application):
             if rows is not None:
                 # Only this pack's row: the offer's downloads may have brought others meanwhile.
                 self.packs.use_rows(rows, [key])
+                self.prune_packs([key])
             else:
                 self.packs.use_catalog(self.packs.rows)
             chosen = self.packs.all.get(key, pack)

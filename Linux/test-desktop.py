@@ -32,6 +32,9 @@ from catalog import DEFAULT_ID, DEFAULT_KEY, Catalog, DesktopIcons, frame_at, la
 from packs import Packs, read_image
 from shortcuts import CUSTOM, OWN, GnomeShortcut, label
 
+# BetterIcon removes the downloads that earlier updates left behind half a minute after a start. Here that timer waits
+# until the check of it fires it (superseded_in_app), so no other check has the pack cache change under it.
+desktop.SWEEP_DELAY = 3600
 count = 0
 # BETTERICON_TEST_PROBE=1 runs every check without stopping at a failure and prints FAIL for it, so the checks of a
 # round can be run against the code before it to see which of them fail there.
@@ -2898,6 +2901,150 @@ C4 = "WebP artwork must be at most 4096 pixels per side."
 C5 = "This computer can't read WebP artwork. Install libwebp or a GdkPixbuf WebP loader."
 
 
+SUPERSEDED_APP_TITLES = (
+    "after a pack's update is downloaded and its list is in use, the app has the earlier download removed, on the worker",
+    "when the artwork recorded at Apply is gone with an earlier download, a newly installed app gets the applied pack's "
+    "own artwork",
+    "the app's start sets a timer for the removal of downloads that earlier updates left behind and asks for nothing "
+    "until it fires; then the app asks once, on the worker, and the timer is gone",
+    "while packs download the app asks for no such removal, and when it does, the helper removes a leftover download on "
+    "the worker and the pack stays as it is",
+    "while a dialog is open or a review is under way the app does not ask for the removal of a pack's earlier download, "
+    "and asks once it is over, on the worker")
+
+
+@group(*SUPERSEDED_APP_TITLES)
+def superseded_in_app(app, settle):
+    """What the app does about the download an update supersedes: it has the helper remove it only once the update's
+    list is in use, and where the artwork recorded at Apply was in it, the pack's own artwork stands in."""
+    import threading
+    rows = list(app.packs.rows)
+    chosen = next((row for row in rows if row["Status"] == "Downloaded" and row["CanApps"] and row["Icons"] and
+                   all(Path(path).is_file() for path in row["Icons"].values())), None)
+    seen = []
+    if chosen is not None:
+        key = chosen["ID"]
+        previous = app.catalog.prefs.get("selected")
+
+        def prune(keys):
+            seen.append((list(keys), threading.current_thread() is threading.main_thread(), app.packs.all[key].status))
+            return {}
+        # The pack has an update. The download gives the list as it is now, with the pack downloaded.
+        app.packs.use_catalog([dict(row, Status="Update available") if row["ID"] == key else row for row in rows])
+        try:
+            # create: the code before this round has no prune, and the check then fails instead of stopping the run.
+            with patch.object(app.packs, "acquire", lambda wanted: rows), patch.object(app.packs, "prune", prune, create=True):
+                wait(lambda: not app.catalog_busy, 30)
+                app.select_pack(key, "apps")
+                wait(lambda: bool(seen) and not app.catalog_busy, 20)
+                settle()
+        finally:
+            app.packs.use_catalog(rows)
+            app.catalog.update(selected=previous)
+            app.status = desktop.IDLE
+            app.render()
+    ok = chosen is not None and seen == [([chosen["ID"]], False, "Downloaded")]
+    check(ok, SUPERSEDED_APP_TITLES[0] + ("" if ok else f"; {chosen and chosen['ID']}: {seen}"))
+    # As after an update of the applied pack: the artwork recorded at Apply was in the download that is gone.
+    key = app.packs.save("Updated pack", "Fixture", {"DeckCraft": png_square(64, 0x40a0c0ff)})
+    image = app.packs.all[key].icons["DeckCraft"]
+    previous = {name: app.catalog.prefs.get(name) for name in ("appliedPack", "appliedArt")}
+    gone = app.packs.cache / "downloads" / ("0" * 64) / "Craft-Icons-Fixture/Updated pack/DeckCraft.png"
+    app.catalog.update(appliedPack=key, appliedArt={"DeckCraft": str(gone)})
+    try:
+        icons = app.fresh()["icons"]
+    finally:
+        app.catalog.update(**previous)
+        app.packs.remove(app.packs.all[key])
+    ok = not gone.exists() and icons.get("DeckCraft") == image
+    check(ok, SUPERSEDED_APP_TITLES[1] + ("" if ok else f"; {icons}"))
+    # The timer the start set has waited through this whole run (SWEEP_DELAY above). Fired now, it asks once.
+    real = app.packs.sweep
+    asked = []
+
+    def sweep():
+        asked.append(threading.current_thread() is threading.main_thread())
+        return real()
+    wait(lambda: not app.catalog_busy and not app.downloading, 30)
+    settle()
+    timer = GLib.MainContext.default().find_source_by_id(app.sweep_timer) if app.sweep_timer else None
+    waiting = timer is not None and not app.swept
+    with patch.object(app.packs, "sweep", sweep):
+        if timer is not None:
+            timer.set_ready_time(0)
+        started = wait(lambda: app.swept, 30)
+        settle()
+    ok = waiting and started and app.sweep_timer is None and asked == [False]
+    check(ok, SUPERSEDED_APP_TITLES[2] + ("" if ok else f"; waiting {waiting}, swept {app.swept}, asked {asked}"))
+    # A leftover as an update under an earlier version left it: the pack's folder under another signature, older than
+    # the pack's receipt. It is made and removed here, so no other check sees the cache change.
+    leftover = app.packs.cache / "downloads" / ("f" * 64)
+    asked = []
+    if chosen is not None:
+        current = next(iter(chosen["Icons"].values()))
+        signature = Path(current).relative_to(app.packs.cache / "downloads").parts[0]
+        folder = Path(current).parent.relative_to(app.packs.cache / "downloads" / signature)
+        shutil.copytree(Path(current).parent, leftover / folder)
+        os.utime(leftover, (time.time() - 3600,) * 2)
+        with patch.object(app.packs, "sweep", sweep):
+            # As while the offer's packs download: the timer is told to come back.
+            app.swept, app.downloading = False, True
+            waits = app.sweep_packs() == GLib.SOURCE_CONTINUE
+            app.downloading = False
+            wait(lambda: False, 1)
+            held = leftover.is_dir() and not asked and not app.swept
+            removed = app.sweep_packs() == GLib.SOURCE_REMOVE and wait(lambda: app.swept, 30)
+            settle()
+            once = app.sweep_packs() == GLib.SOURCE_REMOVE
+            wait(lambda: False, 1)
+        row = next((row for row in app.packs.run("list") if row["ID"] == chosen["ID"]), {})
+        ok = (waits and held and removed and once and asked == [False] and not leftover.exists() and
+              row.get("Status") == "Downloaded" and all(Path(path).is_file() for path in chosen["Icons"].values()))
+    else:
+        ok = False
+    check(ok, SUPERSEDED_APP_TITLES[3] + ("" if ok else f"; {asked}, leftover there {leftover.exists()}"))
+    shutil.rmtree(leftover, ignore_errors=True)
+    # An update of a pack ends while an Apply review is open. What the user confirms there names the files of the
+    # earlier download, so its removal waits: here under a real confirm dialog, then with a review under way.
+    waited, during = [], []
+
+    def prune_later(keys):
+        waited.append((list(keys), threading.current_thread() is threading.main_thread()))
+        return {}
+
+    def ask():
+        app.prune_packs(["Craft-Icons-Fixture/Under a dialog"])
+        return False
+
+    def close():
+        # By now the app has tried again once and found the dialog still open.
+        during.append(list(waited))
+        for dialog in Gtk.Window.list_toplevels():
+            if isinstance(dialog, Gtk.MessageDialog) and dialog.get_visible():
+                dialog.response(Gtk.ResponseType.CANCEL)
+                return False
+        return len(during) < 5
+    again = desktop.RECONCILE_DELAY / 1000
+    with patch.object(app.packs, "prune", prune_later, create=True):
+        GLib.timeout_add(100, ask)
+        GLib.timeout_add(int(100 + desktop.RECONCILE_DELAY + 700), close)
+        answered = app.confirm("Apply icons?", "A check of the removal of earlier downloads.", "Apply")
+        after_dialog = wait(lambda: len(waited) == 1, 10)
+        app.reviewing = True
+        try:
+            app.prune_packs(["Craft-Icons-Fixture/Under a review"])
+            wait(lambda: False, again + .7)
+            held = len(waited) == 1
+        finally:
+            app.reviewing = False
+        after_review = wait(lambda: len(waited) == 2, 10)
+        # No further try is pending when the patch ends.
+        wait(lambda: False, again + .5)
+    ok = (answered is False and during == [[]] and after_dialog and held and after_review and
+          waited == [(["Craft-Icons-Fixture/Under a dialog"], False), (["Craft-Icons-Fixture/Under a review"], False)])
+    check(ok, SUPERSEDED_APP_TITLES[4] + ("" if ok else f"; under the dialog {during}, asked {waited}"))
+
+
 def rgba(image, x, y):
     """A pixel of a GdkPixbuf as (r, g, b, a), or (0, 0, 0, 0) outside it."""
     if image is None or not (0 <= x < image.get_width() and 0 <= y < image.get_height()):
@@ -2920,6 +3067,39 @@ def reddish(pixel):
 
 def bluish(pixel):
     return pixel[3] == 255 and pixel[2] > 180 and pixel[0] < 90 and pixel[1] < 120
+
+
+def contrast(first, second):
+    """The WCAG contrast ratio of two '#rrggbb' colors."""
+    def light(color):
+        parts = [int(color[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+        return sum(weight * (v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4)
+                   for weight, v in zip((0.2126, 0.7152, 0.0722), parts))
+    low, high = sorted((light(first), light(second)))
+    return (high + 0.05) / (low + 0.05)
+
+
+# A scroll bar's thumb in a color scheme: at rest, under the pointer and while it is dragged.
+THUMB_STATES = ("scrollThumb", "scrollThumbHot", "scrollThumbPressed")
+
+
+def faint_thumbs(themes, shades=lambda colors: [colors[state] for state in THUMB_STATES]):
+    """Where a scroll bar's thumb would be hard to see: [scheme, state, what it lies on, contrast] for each thumb color
+    that comes within 1.5:1 of the track or of a background a bar lies on."""
+    return [[f"{style} {mode}", state, back, round(contrast(shade, colors[back]), 2)]
+            for style, modes in themes.items() for mode, colors in modes.items()
+            for state, shade in zip(THUMB_STATES, shades(colors))
+            for back in ("scrollTrack", "surface", "background") if contrast(shade, colors[back]) < 1.5]
+
+
+def webkit_shades(colors):
+    """The thumb as WebKitGTK 2.52.3 and later shade one that is colored through scrollbar-color: under the pointer its
+    largest channel is a third of full scale lighter, and while dragged a third darker (Color::lightened, darkened)."""
+    thumb = [int(colors["scrollThumb"][i:i + 2], 16) / 255 for i in (1, 3, 5)]
+    top = max(thumb)
+    def scaled(peak):
+        return "#" + "".join(f"{round(255 * value * peak / top):02x}" for value in thumb)
+    return [colors["scrollThumb"], scaled(min(1, top + 0.33)) if top else "#545454", scaled(max(0, top - 0.33)) if top else "#000000"]
 
 
 def refusal(job):
@@ -3266,6 +3446,125 @@ def helper_fixture(root, published, downloaded):
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(body)
     return resources, data
+
+
+SUPERSEDED_TITLES = (
+    "an interrupted update leaves the earlier download in use",
+    "an update takes the files that did not change from the earlier download and fetches only the others",
+    "the earlier download stays while the pack is being downloaded, and once the new list is in use its removal leaves "
+    "one download of the pack",
+    "a WebP of an update that fails its full decode gives way to the PNG the earlier download has, without a fetch",
+    "asked for every pack at once, the removal waits while any pack is being downloaded, and then takes what an earlier "
+    "update left behind")
+
+
+@group(*SUPERSEDED_TITLES)
+def superseded_downloads():
+    """Updates through the real catalog helper and a local pack source, which holds only the files an update changes:
+    what an update fetches, and when the download it supersedes is removed."""
+    import threading
+    import webp
+    folder = home / "superseded"
+    base = "Craft-Icons-Bisup"
+    keep, broken = f"{base}/Keep", f"{base}/Broken"
+    photo, changed, film, word = (png_square(64, color) for color in (0x3060c0ff, 0xc06030ff, 0x30c060ff, 0xc0c030ff))
+
+    def rows(*files):
+        return [(f"{base}/{file}", f"{base}/{file}", body) for file, body in files]
+    first = rows(("Keep/PhotoCraft.png", photo), ("Keep/FilmCraft.png", film), ("Broken/PhotoCraft.png", photo))
+    resources, data = helper_fixture(folder / "helper", first, [keep, broken])
+    cache, source = data / "pack-cache", folder / "pack source"
+    # The pack list after a refresh: Keep has one changed and one new icon, Broken a WebP twin that is damaged.
+    update = rows(("Keep/PhotoCraft.png", changed), ("Keep/FilmCraft.png", film), ("Keep/WordCraft.png", word),
+                  ("Broken/PhotoCraft.png", photo), ("Broken/PhotoCraft.webp", WEBP["A12"]))
+    (cache / ("catalog-" + "1" * 40)).write_text("\n".join(["2" * 40] + [
+        f"{git_blob(body)}\t{file}\t{published}\t{hashlib.sha256(body).hexdigest()}" for file, published, body in update]) + "\n")
+
+    def offer(file, body):
+        (source / base / file).parent.mkdir(parents=True, exist_ok=True)
+        (source / base / file).write_bytes(body)
+
+    def copies(name):
+        """The signature folders that hold a download of the pack."""
+        return sorted({p.relative_to(cache / "downloads").parts[0] for p in (cache / "downloads").rglob("*")
+                       if p.is_file() and f"/{base}/{name}/" in p.as_posix()})
+    os.environ["BETTERICON_PACK_SOURCE"] = str(source)
+    try:
+        packs = Packs(resources, data)
+        before = packs.all[keep].status
+        # The source has the changed icon and lacks the new one, as when the connection drops midway.
+        offer("Keep/PhotoCraft.png", changed)
+        try:
+            packs.acquire(keep)
+            failed = False
+        except ValueError:
+            failed = True
+        again = Packs(resources, data).all[keep]
+        ok = (failed and before == "Update available" and again.status == "Update available" and
+              again.icons["PhotoCraft"].read_bytes() == photo and again.icons["FilmCraft"].read_bytes() == film and
+              len(copies("Keep")) == 1 and not list((cache / "downloads").glob(".loading-*")))
+        check(ok, SUPERSEDED_TITLES[0] + ("" if ok else f"; failed {failed}, {before}, {again.status}, {copies('Keep')}"))
+        # Now the new icon is there too. The icon that did not change is in no source.
+        offer("Keep/WordCraft.png", word)
+        listed = packs.acquire(keep)
+        packs.verify(listed)
+        after = copies("Keep")
+        packs.use_rows(listed, [keep])
+        now = packs.all[keep]
+        ok = (now.status == "Downloaded" and now.icons["PhotoCraft"].read_bytes() == changed and
+              now.icons["FilmCraft"].read_bytes() == film and now.icons["WordCraft"].read_bytes() == word)
+        check(ok, SUPERSEDED_TITLES[1] + ("" if ok else f"; {now.status}, {sorted(now.icons)}"))
+        # While a download of the pack runs, the earlier download stays: that download may be taking files from it.
+        running = packs._acquiring[keep] = threading.Event()
+        packs.prune([keep])
+        held = copies("Keep")
+        del packs._acquiring[keep]
+        running.set()
+        refused = packs.prune([keep])
+        one = copies("Keep")
+        ok = (len(after) == 2 and held == after and not refused and len(one) == 1 and
+              one[0] in now.icons["PhotoCraft"].as_posix() and now.icons["PhotoCraft"].read_bytes() == changed and
+              Packs(resources, data).all[keep].status == "Downloaded" and len(copies("Broken")) == 1)
+        check(ok, SUPERSEDED_TITLES[2] + ("" if ok else f"; {after}, {held}, {refused}, {one}, {copies('Broken')}"))
+        # Where this computer reads WebP the update fetches the WebP twin, whose full decode fails, and the PNG twin
+        # then comes from the earlier download. Where it can't, the PNG is all the update needs. No PNG is in the source.
+        reads = webp.available()
+        offer("Broken/PhotoCraft.webp", WEBP["A12"])
+        listed = packs.acquire(broken)
+        packs.verify(listed)
+        packs.use_rows(listed, [broken])
+        refused = packs.prune([broken])
+        icon = packs.all[broken].icons.get("PhotoCraft")
+        files = sorted(p.name for p in (cache / "downloads").rglob("*") if p.is_file() and f"/{base}/Broken/" in p.as_posix())
+        ok = (icon is not None and icon.suffix == ".png" and icon.read_bytes() == photo and not refused and
+              len(copies("Broken")) == 1 and files == (["PhotoCraft.png", "PhotoCraft.webp"] if reads else ["PhotoCraft.png"]))
+        check(ok, SUPERSEDED_TITLES[3] + ("" if ok else f"; reads WebP {reads}: {icon}, {files}, {copies('Broken')}, {refused}"))
+        # Keep is updated once more, as a version that removed nothing left it: the earlier download beside the new one.
+        third = png_square(64, 0x8040c0ff)
+        again = rows(("Keep/PhotoCraft.png", third), ("Keep/FilmCraft.png", film), ("Keep/WordCraft.png", word),
+                     ("Broken/PhotoCraft.png", photo), ("Broken/PhotoCraft.webp", WEBP["A12"]))
+        (cache / ("catalog-" + "1" * 40)).write_text("\n".join(["3" * 40] + [
+            f"{git_blob(body)}\t{file}\t{published}\t{hashlib.sha256(body).hexdigest()}" for file, published, body in again]) + "\n")
+        offer("Keep/PhotoCraft.png", third)
+        listed = packs.acquire(keep)
+        packs.verify(listed)
+        packs.use_rows(listed, [keep])
+        left = copies("Keep")
+        # While any pack is being downloaded, the removal for every pack does nothing and says so.
+        running = packs._acquiring[broken] = threading.Event()
+        waited = packs.sweep()
+        held = copies("Keep")
+        del packs._acquiring[broken]
+        running.set()
+        done = packs.sweep()
+        now = packs.all[keep]
+        ok = (len(left) == 2 and waited is False and held == left and done is True and len(copies("Keep")) == 1 and
+              len(copies("Broken")) == 1 and not packs._acquiring and now.status == "Downloaded" and
+              now.icons["PhotoCraft"].read_bytes() == third and Packs(resources, data).all[keep].status == "Downloaded")
+        check(ok, SUPERSEDED_TITLES[4] + ("" if ok else f"; {left}, {waited}, {held}, {done}, {copies('Keep')}, {copies('Broken')}"))
+    finally:
+        del os.environ["BETTERICON_PACK_SOURCE"]
+        shutil.rmtree(folder, ignore_errors=True)
 
 
 UNLISTED = "application/x-bitest-unlisted"
@@ -4557,6 +4856,7 @@ def core():
     arrived_types(cat, photo, pack.icons["FilmCraft"])
     unlisted_types(cat, photo, packs, pack, target)
     unlisted_more(cat, photo, packs)
+    superseded_downloads()
     output = home / "round trip.zip"
     packs.export(packs.all[key], output)
     new = packs.import_from(output)
@@ -4736,6 +5036,188 @@ def unlisted_review(app, settle, js, answer_review, reviewed, texts):
     check(ok, "the Apply review lists each file type outside the list with all its globs, and says its icon changes for "
           "every file of that type in the account" + ("" if ok else f"; {text!r}"))
     check(kept, "editing a personal pack in the editor keeps its art for the file types outside the list")
+
+
+SCROLL_TITLES = (
+    "in all 20 color schemes a scroll bar's thumb stays at least 1.5:1 from its track and from the backgrounds a bar "
+    "lies on, at rest, under the pointer and while dragged, and stands out more with each, where WebKitGTK's own "
+    "shading of the thumb would not",
+    "on Linux the page draws its own scroll bars and leaves scrollbar-color alone: a pack list's bar takes 12 px "
+    "beside the rows, with the thumb in Clay Light's color on the list's own background",
+    "under the pointer the thumb takes the scheme's second color and the bar shows its track",
+    "while it is held the thumb takes the scheme's third color, and dragging it scrolls the list",
+    "let go and left, the thumb is back in its resting color and the pack list is still open",
+    "with the page's own scroll bars every control of Manage Icons is where WebKitGTK's overlay bars had it: only "
+    "the previews and the settings make room for a bar, and no pack name or menu row wraps",
+    "after a change of scheme a drawn scroll bar takes the new scheme's colors, at rest and under the pointer",
+    "under the pointer the track's color stays inside the pack list's rounded corners")
+LAUNCHER_SCROLL_TITLE = ("the smallest Launcher scrolls more apps than it shows with every tile where WebKitGTK's "
+                         "overlay bar had it, and draws its own scroll bar beside them")
+# The page with its own scroll bars, as the Linux app marks it, or with WebKitGTK's overlay bars, as without the mark.
+OWN_BARS = ("delete document.documentElement.dataset.gtk;true", "document.documentElement.dataset.gtk = 'true';true")
+
+
+def beyond_corners(right, top, bottom, radius, border):
+    """The pixels inside a rounded box's border at its two right corners that lie wholly outside the curve its
+    contents follow: what a square corner of a scroll bar would cover."""
+    inner, x = radius - border, right - radius
+    found = []
+    for y, rows in ((top + radius, range(top + border, top + radius)),
+                    (bottom - radius, range(bottom - radius, bottom - border))):
+        for px in range(x, right - border):
+            for py in rows:
+                dy = y - py - 1 if py < y else py - y
+                if ((px - x) ** 2 + dy ** 2) ** 0.5 > inner + 0.25:
+                    found.append((px, py))
+    return found
+
+
+def drawn_thumb(pop, x, top, bottom, shade):
+    """A scroll bar's thumb in the window's column x, while it is drawn in that color: (the color beside it, its first
+    row, its rows), or None."""
+    shot = Gdk.pixbuf_get_from_window(pop.win.get_window(), 0, 0, *pop.win.get_size())
+    column = ["#%02x%02x%02x" % rgba(shot, x, row)[:3] for row in range(top, bottom)]
+    rows = [row for row, color in enumerate(column) if color == shade]
+    if len(rows) < 20 or rows[-1] - rows[0] != len(rows) - 1:
+        return None
+    return max(set(column) - {shade}, key=column.count, default=None), top + rows[0], len(rows)
+
+
+@group(*SCROLL_TITLES)
+def scroll_bars(pop, js, choose_icon):
+    """The Linux window's own scroll bars, on Manage Icons in Clay Light. WebKitGTK shades a thumb that is colored
+    through scrollbar-color by itself, which in these schemes hides it under the pointer or while it is dragged. So
+    the page draws the bars, with the three thumb colors of the Windows app."""
+    themes = json.loads((payload / "Catalog/themes.json").read_text(encoding="utf8"))
+    colored = {f"{style} {mode}": colors for style, modes in themes.items() for mode, colors in modes.items()
+               if style != "contrast"}
+    faint = faint_thumbs(themes)
+    # The same test turns WebKitGTK's own shading down in each colored scheme: its color for the pointer, or the one
+    # for dragging, lands on the track.
+    ok = (len(themes) == 10 and len(colored) == 18 and len(themes["contrast"]) == 2 and not faint and
+          all(a < b < c for a, b, c in ([contrast(colors[state], colors["scrollTrack"]) for state in THUMB_STATES]
+                                         for colors in colored.values())) and
+          {entry[0] for entry in faint_thumbs(themes, webkit_shades) if entry[2] == "scrollTrack"} == set(colored))
+    check(ok, SCROLL_TITLES[0] + ("" if ok else f"; too faint: {faint[:6]}"))
+    clay = themes["clay"]["light"]
+    js("el('packs').click();true")
+    bar = js("""(() => {
+        const list = el('packOptions'), box = list.getBoundingClientRect(), root = getComputedStyle(document.documentElement);
+        const hex = color => '#' + color.match(/\\d+/g).slice(0, 3).map(v => Number(v).toString(16).padStart(2, '0')).join('');
+        return {x: Math.round(box.right) - 7, top: Math.round(box.top) + 2, bottom: Math.round(box.bottom) - 2,
+            gtk: document.documentElement.dataset.gtk, color: root.scrollbarColor || 'auto',
+            beside: list.offsetWidth - list.clientWidth - 2, wide: getComputedStyle(list, '::-webkit-scrollbar').width,
+            thumb: hex(getComputedStyle(list, '::-webkit-scrollbar-thumb').backgroundColor),
+            shades: ['scroll-thumb', 'scroll-thumb-hot', 'scroll-thumb-pressed', 'scroll-track']
+                .map(name => root.getPropertyValue('--' + name).trim()),
+            edge: [box.right, box.top, box.bottom, parseFloat(getComputedStyle(list).borderTopRightRadius),
+                parseFloat(getComputedStyle(list).borderRightWidth)].map(Math.round)};
+    })()""")
+    def thumb(shade):
+        return drawn_thumb(pop, bar["x"], bar["top"], bar["bottom"], shade)
+    def corners():
+        shot = Gdk.pixbuf_get_from_window(pop.win.get_window(), 0, 0, *pop.win.get_size())
+        return [rgba(shot, *pixel)[:3] for pixel in beyond_corners(*bar["edge"])]
+    _, x, y = pop.web.get_window().get_origin()
+    # A place in the window where the pointer changes nothing: the footer's empty left end.
+    aside = (x + 60, y + pop.win.get_size()[1] - 40)
+    xdo("mousemove", *aside)
+    rest = wait(lambda: thumb(clay["scrollThumb"])) and thumb(clay["scrollThumb"])
+    ok = ((bar["gtk"], bar["color"], bar["wide"], bar["beside"]) == ("true", "auto", "12px", 12) and
+          bar["shades"] == [clay[state] for state in THUMB_STATES] + [clay["scrollTrack"]] and
+          bar["thumb"] == clay["scrollThumb"] and rest and rest[0] == clay["surface"])
+    check(ok, SCROLL_TITLES[1] + ("" if ok else f"; {bar}, {rest}"))
+    start = js("el('packOptions').scrollTop")
+    xdo("mousemove", x + bar["x"], y + rest[1] + rest[2] // 2)
+    hot = wait(lambda: thumb(clay["scrollThumbHot"])) and thumb(clay["scrollThumbHot"])
+    check(hot and hot[0] == clay["scrollTrack"], SCROLL_TITLES[2])
+    lit = corners()
+    xdo("mousedown", 1)
+    try:
+        held = wait(lambda: thumb(clay["scrollThumbPressed"])) and thumb(clay["scrollThumbPressed"])
+        xdo("mousemove", x + bar["x"], y + rest[1] + rest[2] // 2 + 25)
+        check(held and wait(lambda: (thumb(clay["scrollThumbPressed"]) or held)[1] > held[1] and
+                            js("el('packOptions').scrollTop") > start), SCROLL_TITLES[3])
+    finally:
+        xdo("mouseup", 1)
+    xdo("mousemove", *aside)
+    check(wait(lambda: thumb(clay["scrollThumb"])) and js("!el('packOptions').hidden && el('hoverPreview').hidden"),
+          SCROLL_TITLES[4])
+    # WebKit paints a bar over its scroller's rounded corners. The track's color, which the bar shows under the
+    # pointer, must leave the pixels there as they are without it.
+    dim = corners()
+    ok = bool(lit) and all(abs(a - b) <= 2 for one, other in zip(lit, dim) for a, b in zip(one, other))
+    check(ok, SCROLL_TITLES[7] + ("" if ok else f"; {lit}, without the pointer {dim}"))
+    js("closePackPicker();true")
+
+    # Such a bar takes 12 px beside what it scrolls, where WebKitGTK's own lay over it. The page keeps that strip free
+    # at all times and takes it from the space on the right, so nothing moves when a bar appears.
+    def looks(own):
+        js(OWN_BARS[own])
+        page = js("""[...document.querySelectorAll('#popup *')].filter(e => !e.closest('[hidden]')).map(e => {
+            const box = e.getBoundingClientRect();
+            return [e.id || (typeof e.className === 'string' && e.className) || e.tagName, box.left, box.top, box.width, box.height];
+        })""")
+        rows = []
+        for button in ("packs", "filePacks"):
+            js(f"closePackPicker();el('{button}').click();true")
+            rows.append(js("[...el('packOptions').children].map(row => row.offsetHeight)"))
+        js("closePackPicker();el('brand').click();true")
+        rows.append(js("[...el('menu').children].map(row => [row.offsetWidth, row.offsetHeight])"))
+        js("closeMenu();true")
+        return page, rows
+    try:
+        own, overlay = looks(True), looks(False)
+    finally:
+        again = looks(True)
+    room = {"preview": 12, "filePreview": 12, "settings": -12}
+    moved = [(mine, theirs) for mine, theirs in zip(own[0], overlay[0]) if mine != theirs]
+    ok = (own == again and len(own[0]) == len(overlay[0]) > 60 and own[1] == overlay[1] and len(own[1][2]) == 21 and
+          sorted(mine[0] for mine, _ in moved) == sorted(room) and
+          all(mine[:3] + mine[4:] == theirs[:3] + theirs[4:] and mine[3] == theirs[3] + room[mine[0]]
+              for mine, theirs in moved))
+    check(ok, SCROLL_TITLES[5] + ("" if ok else f"; {moved[:6]}, rows alike {own[1] == overlay[1]}"))
+
+    night = themes["clay"]["dark"]
+    choose_icon("Clay Dark")
+    wait(lambda: js("model.prefs.color==='clay' && model.prefs.variant==='dark' && model.dark===true"))
+    js("el('packs').click();true")
+    rest = hot = wait(lambda: thumb(night["scrollThumb"])) and thumb(night["scrollThumb"])
+    if rest:
+        xdo("mousemove", x + bar["x"], y + rest[1] + rest[2] // 2)
+        hot = wait(lambda: thumb(night["scrollThumbHot"])) and thumb(night["scrollThumbHot"])
+        xdo("mousemove", *aside)
+    js("closePackPicker();true")
+    check(rest and rest[0] == night["surface"] and hot and hot[0] == night["scrollTrack"], SCROLL_TITLES[6])
+
+
+@group(LAUNCHER_SCROLL_TITLE)
+def launcher_scroll_bar(pop, js):
+    """The Launcher's grid, with twelve apps in place of the fixture's so that it scrolls."""
+    js("""(() => {
+        window.shownModel = model;
+        betterIcon.update({...model, apps: Array.from({length: 12}, (_, i) =>
+            ({...model.apps[i % model.apps.length], id: 'more' + i, name: 'App ' + (i + 1)}))});
+        return true;
+    })()""")
+    try:
+        def tiles(own):
+            js(OWN_BARS[own])
+            return js("""(() => {
+                const grid = el('apps'), frame = grid.getBoundingClientRect();
+                return [grid.scrollHeight > grid.clientHeight, grid.clientWidth, Math.round(frame.right) - 6, Math.round(frame.top),
+                    Math.round(frame.bottom), getComputedStyle(document.documentElement).getPropertyValue('--scroll-thumb').trim(),
+                    ...[...grid.children].map(tile => { const box = tile.getBoundingClientRect(); return [box.left, box.top, box.width, box.height]; })];
+            })()""")
+        own = tiles(True)
+        drawn = wait(lambda: drawn_thumb(pop, own[2], own[3], own[4], own[5]))
+        overlay = tiles(False)
+    finally:
+        js(OWN_BARS[True])
+        js("betterIcon.update(shownModel);delete window.shownModel;true")
+    # With its own bar the grid is 12 px wider, into the space on its right, and holds what it held.
+    check(own[0] and drawn and len(own) == 18 and own[2] == overlay[2] + 12 and own[:2] + own[3:] == overlay[:2] + overlay[3:],
+          LAUNCHER_SCROLL_TITLE)
 
 
 def gui():
@@ -5050,8 +5532,7 @@ def gui():
     # gray with an accent chunk a quarter of the bar wide that moves across. Where the system asks for less motion the
     # whole bar takes the accent and fades instead. The chunk is the bar's own background picture, which shows only
     # while the page keeps WebKit's own inner bar transparent; a page loaded from a file can't read its style sheet
-    # back, so that rule is looked for in the file. The scroll bars stay WebKitGTK's own: it shades a colored thumb
-    # by itself, which hides the thumb under the pointer or while it is dragged in these schemes.
+    # back, so that rule is looked for in the file.
     chrome = js("""(() => {
         const css = getComputedStyle(document.documentElement), value = name => css.getPropertyValue('--' + name).trim();
         const hex = color => '#' + color.match(/\\d+/g).slice(0, 3).map(v => Number(v).toString(16).padStart(2, '0')).join('');
@@ -5061,16 +5542,17 @@ def gui():
         return [value('control-face'), value('scroll-thumb'), value('scroll-track'),
             bars.map(look => hex(look.backgroundColor) + ' ' + look.animationName).join('|'),
             bars.map(look => stops(look.backgroundImage) + ' ' + look.backgroundSize + ' ' + look.backgroundRepeat).join('|'),
-            value('accent'), still, document.documentElement.dataset.gtk, css.scrollbarColor || 'auto'];
+            value('accent'), still];
     })()""")
     move, chunk = ("loading-still", "100% 100%") if chrome[6] else ("loading", "25% 100%")
     drawn = f"{chrome[5]} {chrome[5]} {chunk} no-repeat"
     sheet = (payload / "Web/popup.css").read_text(encoding="utf8")
     ok = (chrome[:5] == ["#dbd1c9", "#a49e97", "#f6f2ed", f"#dbd1c9 {move}|#dbd1c9 {move}", f"{drawn}|{drawn}"] and
-          re.fullmatch(r"#[0-9a-f]{6}", chrome[5]) and chrome[5] != "#dbd1c9" and chrome[7:] == ["true", "auto"] and
+          re.fullmatch(r"#[0-9a-f]{6}", chrome[5]) and chrome[5] != "#dbd1c9" and
           re.search(r"progress::-webkit-progress-bar \{\s*background: transparent;\s*\}", sheet))
     check(ok, "the loading bars take Clay Light's colors too, the button gray with an accent chunk that moves, or fades "
-          "where the system asks for less motion, and the scroll bars stay WebKitGTK's own" + ("" if ok else f"; {chrome}"))
+          "where the system asks for less motion" + ("" if ok else f"; {chrome}"))
+    scroll_bars(pop, js, choose_icon)
     choose_icon("Sage Light")
     wait(lambda: js("model.prefs.color==='sage' && model.prefs.variant==='light'"))
     choose_icon("Match app theme")
@@ -5327,6 +5809,7 @@ def gui():
     xdo("key","ctrl+alt+a")
     ready("launcher",(301,241))
     check(js("el('launcherShortcut').textContent.includes('Ctrl+Alt+A')"), "compact Launcher shows the active shortcut")
+    launcher_scroll_bar(pop, js)
     js("el('launcherShortcut').click();true")
     check(wait(lambda: js("el('hotkey').open")), "shortcut footer opens the editor")
     check(js("el('modifiers').innerText.includes('Alt') && el('modifiers').innerText.includes('Super')"), "editor uses Linux modifier names")
@@ -5397,6 +5880,7 @@ def gui():
     late_folder(app, settle)
     launcher_route(app, settle)
     arrival_status(app, settle)
+    superseded_in_app(app, settle)
     app.render()
     app.catalog.update(sizes={"launcher":[326,258],"manage":[836,606]})
     print("Registered binding",label(app.catalog.prefs["hotkey"]),flush=True)

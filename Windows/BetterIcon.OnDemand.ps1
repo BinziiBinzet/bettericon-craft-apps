@@ -110,6 +110,151 @@ function Get-LegacyPackPath($Pack,[string]$State) {
     $legacy
 }
 
+function Get-PackCopies($Pack, [string]$State) {
+    # The other downloads of a pack on this computer: every folder for it under the pack state's downloads except $Pack.Path.
+    # A download lives in downloads/<signature>/<artist folder>/<pack name>, so an update, which changes the signature, makes
+    # a new folder. The pack's folder under another signature is an earlier copy of it (also the 1.24 layout's, named by a
+    # revision); so is the folder of a pack this one replaced (Get-BetterIconPackAliases), whose files have the same names,
+    # and a folder an earlier download moved aside (.replaced-) or a removal could not finish (.removing-).
+    $downloads = Get-FullPath (Join-Path $State 'downloads')
+    if (![IO.Directory]::Exists($downloads)) { return }
+    $own = Get-FullPath $Pack.Path
+    $names = @($Pack.Name) + @(foreach ($alias in (Get-BetterIconPackAliases).GetEnumerator()) {
+        if ($alias.Value -ceq $Pack.Id -and $alias.Key.StartsWith($Pack.Pack + '/', [StringComparison]::Ordinal)) { $alias.Key.Substring($Pack.Pack.Length + 1) }
+    })
+    foreach ($signature in [IO.Directory]::GetDirectories($downloads)) {
+        if ([IO.Path]::GetFileName($signature) -cnotmatch '^([a-f0-9]{64}|[a-f0-9]{40})$') { continue }
+        $folder = Join-Path $signature $Pack.Folder
+        if (![IO.Directory]::Exists($folder)) { continue }
+        foreach ($copy in [IO.Directory]::GetDirectories($folder)) {
+            $name = [IO.Path]::GetFileName($copy) -replace '(\.(replaced|removing)-[a-f0-9]{32})+$', ''
+            if ($name -in $names -and $copy -ine $own) { $copy }
+        }
+    }
+}
+
+function Remove-PackCopy([string]$Copy, [string]$Receipt, [string]$State) {
+    # Removes one folder Get-PackCopies named and answers $true, or leaves it whole. It is left when a download or check of
+    # that copy holds its lock, and when another program has one of its files open: Windows then refuses to rename the
+    # folder, which is tried first. A folder that cannot be removed completely keeps its .removing- name and goes at the
+    # pack's next download. Links are never followed: a linked path is refused, and a link inside the folder is removed as
+    # a link.
+    # The copy that the pack's receipt ($Receipt, read in the pack state $State) names is the copy in use and is never
+    # removed. That is read with the copy's own lock held: a download writes its receipt while it holds the lock of the
+    # copy it made, so whoever gets that lock afterwards finds the receipt naming the copy. Without this, a removal that
+    # read the receipt before an update of the pack finished would take the update's new copy for an earlier one.
+    Assert-RegularPath $Copy
+    $leftover = [IO.Path]::GetFileName($Copy) -match '\.(replaced|removing)-[a-f0-9]{32}$'
+    $lock = $null
+    if (!$leftover) {
+        try { $lock = [IO.File]::Open($Copy + '.lock', 'OpenOrCreate', 'ReadWrite', 'None') }
+        catch [IO.IOException] { return }
+        catch [UnauthorizedAccessException] { return }
+    }
+    try {
+        if ($lock -and $Receipt -and [IO.File]::Exists($Receipt)) {
+            foreach ($named in @((Read-PackSnapshot ([IO.File]::ReadAllLines($Receipt)) $State).Values)) {
+                if ((Get-FullPath $named.Path) -ieq (Get-FullPath $Copy)) { return }
+            }
+        }
+        $doomed = $Copy
+        if ($Copy -notmatch '\.removing-[a-f0-9]{32}$') {
+            $doomed = $Copy + '.removing-' + [guid]::NewGuid().ToString('N')
+            try { [IO.Directory]::Move($Copy, $doomed) }
+            catch [IO.IOException] { return }
+            catch [UnauthorizedAccessException] { return }
+        }
+        $pending = [Collections.Generic.Stack[string]]::new(); $folders = [Collections.Generic.List[string]]::new()
+        $pending.Push($doomed)
+        while ($pending.Count) {
+            $folder = $pending.Pop(); $folders.Add($folder)
+            foreach ($item in [IO.DirectoryInfo]::new($folder).GetFileSystemInfos()) {
+                $linked = [bool]($item.Attributes -band [IO.FileAttributes]::ReparsePoint)
+                if ($item.Attributes -band [IO.FileAttributes]::ReadOnly) { $item.Attributes = $item.Attributes -band -bnot [IO.FileAttributes]::ReadOnly }
+                if ($item -is [IO.DirectoryInfo] -and !$linked) { $pending.Push($item.FullName) } else { $item.Delete() }
+            }
+        }
+        for ($i = $folders.Count - 1; $i -ge 0; $i--) { [IO.Directory]::Delete($folders[$i]) }
+    } finally {
+        if ($lock) { $lock.Dispose(); try { [IO.File]::Delete($Copy + '.lock') } catch { Write-Verbose $_.Exception.Message } }
+    }
+    # The artist folder and the signature folder go with their last pack. A folder that still holds something stays.
+    $parent = [IO.Path]::GetDirectoryName($Copy)
+    foreach ($folder in $parent, [IO.Path]::GetDirectoryName($parent)) {
+        try { [IO.Directory]::Delete($folder) } catch { break }
+    }
+    $true
+}
+
+function Remove-SupersededPackCopies($Pack, [string]$State, $Webp) {
+    # With the pack's lock held, and the copy at $Pack.Path complete and the one the pack's receipt names, so the catalog
+    # uses no other copy of this pack: after a download, whose files all passed their checksums, and once per start for
+    # every downloaded pack (Remove-SupersededPacks). The pack's other downloads (Get-PackCopies) are removed, and with them
+    # the receipts of the packs it replaced. Nothing else is touched: other packs that share a signature folder, personal
+    # packs and the pack list stay. A failed or interrupted download never gets here, so the copy it would have replaced
+    # stays usable. A removal that fails changes nothing about the download. Answers how many folders were removed.
+    # The caller's view of the receipt can be out of date by the time a copy is reached, when another BetterIcon process
+    # finished an update of the pack meanwhile. So each copy is checked against the receipt again under its own lock
+    # (Remove-PackCopy), and the copy the receipt names then stays.
+    $count = 0
+    try {
+        if (!(Test-DownloadedPack $Pack -Webp $Webp)) { return 0 }
+        $receipts = Join-Path $State 'pack-catalog/installed'
+        $own = Join-Path $receipts ((Get-PathId (Join-Path $State $Pack.Id)) + '.tsv')
+        foreach ($copy in @(Get-PackCopies $Pack $State)) {
+            try { if (Remove-PackCopy $copy $own $State) { $count++ } } catch { Write-Verbose "Cannot remove the earlier download ${copy}: $($_.Exception.Message)" }
+        }
+        foreach ($alias in (Get-BetterIconPackAliases).GetEnumerator()) {
+            if ($alias.Value -cne $Pack.Id) { continue }
+            $receipt = Join-Path $receipts ((Get-PathId (Join-Path $State $alias.Key)) + '.tsv')
+            if (![IO.File]::Exists($receipt)) { continue }
+            try {
+                # A receipt whose download is gone names nothing any more. One whose download stayed, as when it was in use, stays.
+                $kept = $false
+                foreach ($previous in @((Read-PackSnapshot ([IO.File]::ReadAllLines($receipt)) $State).Values)) { if ([IO.Directory]::Exists($previous.Path)) { $kept = $true } }
+                if (!$kept) { [IO.File]::Delete($receipt) }
+            } catch { Write-Verbose "Cannot read the receipt of $($alias.Key): $($_.Exception.Message)" }
+        }
+    } catch { Write-Verbose "Cannot remove the earlier downloads of $($Pack.Id): $($_.Exception.Message)" }
+    $count
+}
+
+function Remove-SupersededPacks {
+    # Once per start, in the background, for the tray's RemoveSupersededPacks request and never in the elevated pass: every
+    # pack downloaded here loses the copies that its copy in use supersedes. A version that removed nothing after an update
+    # left them on disk. The rules are those after a download (Remove-SupersededPackCopies, Remove-PackCopy). A pack is
+    # passed over when the pack list uses another copy than the one its receipt names, such as the 1.24 layout's or that of
+    # a pack it replaced, and when its lock is held. An update of the pack holds the lock of its new copy, not this one,
+    # so the receipt is read again once this lock is held, and a pack whose receipt has come to name another copy is passed
+    # over; a copy the receipt comes to name later still is kept by Remove-PackCopy. Stopped midway, it leaves whole
+    # copies and at most a .removing- folder for the next time. Answers how many folders were removed.
+    $count = 0
+    $state = Get-PackState
+    $receipts = Join-Path $state 'pack-catalog/installed'
+    if (![IO.Directory]::Exists($receipts)) { return 0 }
+    $null = Get-DownloadCatalog
+    foreach ($file in [IO.Directory]::GetFiles($receipts, '*.tsv')) {
+        try {
+            foreach ($pack in @((Read-PackSnapshot ([IO.File]::ReadAllLines($file)) $state).Values)) {
+                if ([IO.Path]::GetFileName($file) -ine ((Get-PathId (Join-Path $state $pack.Id)) + '.tsv')) { continue }
+                $used = $script:AvailableCatalog[$pack.Id]
+                if (!$used -or (Get-FullPath $used.Path) -ine (Get-FullPath $pack.Path)) { continue }
+                $lock = $null
+                try { $lock = [IO.File]::Open($pack.Path + '.lock', 'OpenOrCreate', 'ReadWrite', 'None') }
+                catch [IO.IOException] { continue }
+                catch [UnauthorizedAccessException] { continue }
+                try {
+                    $named = @((Read-PackSnapshot ([IO.File]::ReadAllLines($file)) $state).Values | Where-Object { $_.Id -ceq $pack.Id })
+                    if ($named.Count -ne 1 -or (Get-FullPath $named[0].Path) -ine (Get-FullPath $pack.Path)) { continue }
+                    $count += [int](Remove-SupersededPackCopies $pack $state ((Get-PackTwins $pack).Count -and (Test-PackWebpReadable)))
+                }
+                finally { $lock.Dispose() }
+            }
+        } catch { Write-Verbose "Cannot check the downloads recorded in ${file}: $($_.Exception.Message)" }
+    }
+    $count
+}
+
 function Get-DownloadCatalog {
     if ($null -ne $script:DownloadCatalog) { return $script:DownloadCatalog }
     $state = Get-PackState
@@ -274,17 +419,33 @@ function Install-BetterIconDownloadedPack {
         $webp = (Get-PackTwins $pack).Count -and (Test-PackWebpReadable)
         if (Test-DownloadedPack $pack -Verify -Webp $webp) {
             Write-PackSnapshot $receipt $record
+            $null = Remove-SupersededPackCopies $pack $state $webp
             $script:DownloadCatalog=$null; return
         }
         [void][IO.Directory]::CreateDirectory($stage)
         # Tests use a local folder laid out like the published artwork tree, never GitHub. Elevated passes download nothing.
         $localSource = $env:BETTERICON_PACK_SOURCE
+        # The copies of this pack already on this computer: what is in its folder now, then its other downloads. A file one
+        # of them holds is taken from there when it passes the check a fetched file must pass, so an update fetches only the
+        # files that changed, and none where the files it needs are the ones it has.
+        $copies = @(if ([IO.Directory]::Exists($pack.Path)) { $pack.Path }) + @(Get-PackCopies $pack $state)
         $fetch = {
             param($asset)
             $relative = ($asset.Source.Split('/') | ForEach-Object { [Uri]::EscapeDataString($_) }) -join '/'
             $url = 'https://raw.githubusercontent.com/BinziiBinzet/bettericon-craft-apps/'+$pack.Revision+'/'+$relative
             $file = Join-Path $stage $asset.File
             [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($file))
+            foreach ($copy in $copies) {
+                $held = Join-Path $copy $asset.File
+                try {
+                    if (![IO.File]::Exists($held) -or ([IO.FileInfo]::new($held)).Length -gt 16MB) { continue }
+                    [IO.File]::Copy($held, $file, $true)
+                    # A copy keeps the attributes of its source. A read-only file could not be replaced or removed here.
+                    [IO.File]::SetAttributes($file, [IO.FileAttributes]::Normal)
+                    if (Test-PackAsset $file $asset) { return }
+                } catch { Write-Verbose "Cannot take $($asset.File) from ${copy}: $($_.Exception.Message)" }
+            }
+            if ([IO.File]::Exists($file)) { [IO.File]::SetAttributes($file, [IO.FileAttributes]::Normal); [IO.File]::Delete($file) }
             $curl = Join-Path $env:SystemRoot 'System32\curl.exe'
             if ($localSource) {
                 $local = Join-Path $localSource $asset.Source.Replace('/', '\')
@@ -327,18 +488,23 @@ function Install-BetterIconDownloadedPack {
             try { [IO.Directory]::Move($stage,$pack.Path) } catch { [IO.Directory]::Move($old,$pack.Path); throw }
         } else { [IO.Directory]::Move($stage,$pack.Path) }
         Write-PackSnapshot $receipt $record
+        # Only now, with the new copy in place and on record, do the copies it supersedes go.
+        $null = Remove-SupersededPackCopies $pack $state $webp
         $script:DownloadCatalog=$null
     } finally {
-        # The stage is a fresh private folder containing only known flat catalog filenames.
-        if ([IO.Directory]::Exists($stage)) {
-            foreach ($asset in $pack.Assets.Values) {
-                $file = Join-Path $stage $asset.File
-                if ([IO.File]::Exists($file)) { [IO.File]::Delete($file) }
+        # The stage is a fresh private folder containing only known flat catalog filenames. Whatever happens to it, the
+        # lock is released and the download's own error is the one reported.
+        try {
+            if ([IO.Directory]::Exists($stage)) {
+                foreach ($asset in $pack.Assets.Values) {
+                    $file = Join-Path $stage $asset.File
+                    if ([IO.File]::Exists($file)) { [IO.File]::SetAttributes($file, [IO.FileAttributes]::Normal); [IO.File]::Delete($file) }
+                }
+                if ([IO.Directory]::Exists((Join-Path $stage 'FileTypes'))) { [IO.Directory]::Delete((Join-Path $stage 'FileTypes')) }
+                [IO.File]::Delete((Join-Path $stage '.webp-problems')); [IO.File]::Delete((Join-Path $stage '.webp-unchecked'))
+                [IO.File]::Delete((Join-Path $stage '.complete')); [IO.Directory]::Delete($stage)
             }
-            if ([IO.Directory]::Exists((Join-Path $stage 'FileTypes'))) { [IO.Directory]::Delete((Join-Path $stage 'FileTypes')) }
-            [IO.File]::Delete((Join-Path $stage '.webp-problems')); [IO.File]::Delete((Join-Path $stage '.webp-unchecked'))
-            [IO.File]::Delete((Join-Path $stage '.complete')); [IO.Directory]::Delete($stage)
-        }
-        $lock.Dispose()
+        } catch { Write-Verbose "Cannot remove the download folder ${stage}: $($_.Exception.Message)" }
+        finally { $lock.Dispose() }
     }
 }

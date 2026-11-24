@@ -248,6 +248,51 @@ class Packs:
                 self._acquiring.pop(key, None)
             running.set()
 
+    def prune(self, keys):
+        """Have the helper remove the earlier downloads of these packs, which the download now in use supersedes, and
+        return {pack: cause} for the packs where that failed. An update is a new download beside the earlier one. The
+        earlier one stays until the list the update returned is in use, because the windows show its files until then,
+        and a WebP of the update that fails its full decode makes acquire take the PNG files from it. So this is called
+        after use_rows. A pack being downloaded now is left alone, since that download may be taking files from the
+        earlier one: its own list brings the next call. A download of a pack that starts meanwhile waits."""
+        failed = {}
+        for key in keys:
+            with self._acquiring_lock:
+                if key in self._acquiring:
+                    continue
+                running = self._acquiring[key] = threading.Event()
+            try:
+                self.run("prune", key)
+            except (OSError, ValueError) as exc:
+                failed[key] = str(exc)
+            finally:
+                with self._acquiring_lock:
+                    self._acquiring.pop(key, None)
+                running.set()
+        return failed
+
+    def sweep(self):
+        """Have the helper remove, for every pack, the earlier downloads that its download in use supersedes: what an
+        update left behind before BetterIcon removed such downloads itself. Asked once after a start. Returns False,
+        having removed nothing, while any pack is being downloaded, so the caller asks again later. While the helper
+        works, a download of any pack waits, as in prune."""
+        with self._acquiring_lock:
+            if self._acquiring:
+                return False
+            running = threading.Event()
+            held = [row["ID"] for row in self.rows]
+            for key in held:
+                self._acquiring[key] = running
+        try:
+            self.run("prune")
+        finally:
+            with self._acquiring_lock:
+                for key in held:
+                    if self._acquiring.get(key) is running:
+                        del self._acquiring[key]
+            running.set()
+        return True
+
     def use_rows(self, rows, keys):
         """Take these packs' rows from a list the helper gave after downloading them, and keep every other row as it is.
         Downloads run beside each other, and a list taken during one does not show the pack that one fetches yet, so a

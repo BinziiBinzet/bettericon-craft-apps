@@ -447,6 +447,7 @@ namespace BetterIcon.Tray
                     if (pack == null || !pack.NeedsDownload) { done++; continue; }
                     if (!busy) status.Text = String.Format(DownloadTexts.SetupPacks, done + failed + 1, total, pack.DisplayName);
                     try {
+                        await PackSweepEnded();
                         WorkerReply reply = await worker.Run(new WorkerRequest { Action = "DownloadPack", Theme = id }, false);
                         if (IsDisposed || Disposing) return;
                         ThemeEntry current = CurrentPack(id) ?? pack;

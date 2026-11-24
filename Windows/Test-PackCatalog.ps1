@@ -335,6 +335,302 @@ try {
         Check ($interrupted -and @(Get-ChildItem -LiteralPath $parent -Directory -Filter '.loading-*').Count -eq 0) 'An interrupted download with WebP problems leaves no stage folder'
     } finally { $env:BETTERICON_PACK_SOURCE = $priorSource }
 
+    # ---- Updates: files the computer already has are not fetched, and the copies an update supersedes are removed ----
+    $env:BETTERICON_DOWNLOAD_STATE = Join-Path $root 'supersede'
+    $keepState = $env:BETTERICON_DOWNLOAD_STATE
+    $keepId = 'Craft-Icons-Keep/Set'
+    $kp = $keepId + '/'
+    function Offer([string]$Folder, [string]$Path, [string]$Content) {
+        $file = Join-Path $Folder $Path.Replace('/', '\'); [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($file)); [IO.File]::WriteAllText($file, $Content)
+    }
+    function Keep-Pack { & $module { $script:DownloadCatalog = $null; $script:AvailableCatalog = $null }; @(Get-BetterIconTheme | Where-Object Id -eq $keepId)[0] }
+    function Keep-Files([string]$Path) { @(Get-ChildItem -LiteralPath $Path -File -Recurse | ForEach-Object { $_.FullName.Substring($Path.Length + 1).Replace('\', '/') } | Sort-Object) -join ',' }
+    # Every folder under downloads that is a copy of the pack, whatever its signature folder or leftover name.
+    function Keep-Copies { @(Get-ChildItem -LiteralPath (Join-Path $keepState 'downloads') -Directory -Recurse | Where-Object { $_.Name -like 'Set*' -and $_.Parent.Name -eq 'Craft-Icons-Keep' } | ForEach-Object FullName) }
+    function Keep-Update($Items, [string]$Rev) { SetTree $Rev $Items; Update-BetterIconPackCatalog }
+    $photoOne = Item ($kp + 'PhotoCraft.png') 'photo one'; $photoTwo = Item ($kp + 'PhotoCraft.png') 'photo two'
+    $film = Item ($kp + 'FilmCraft.png') 'film'; $doc = Item ($kp + 'FileTypes/pcraft.png') 'document'; $word = Item ($kp + 'WordCraft.png') 'word'
+    $keepLines = [string[]](@($seed) + @(& $module { param($items) ConvertTo-PackCatalogRows $items } @($photoOne, $film, $doc)))
+    [IO.File]::WriteAllLines((Join-Path $win 'OnDemand.tsv'), $keepLines)
+    & $module { $script:DownloadCatalog = $null; $script:AvailableCatalog = $null; $script:TestOffline = $false }
+    $priorSource = $env:BETTERICON_PACK_SOURCE; $priorDecoder = $env:BETTERICON_WEBP_DECODER
+    try {
+        $firstSource = Join-Path $root 'keep source 1'
+        Offer $firstSource ($kp + 'PhotoCraft.png') 'photo one'; Offer $firstSource ($kp + 'FilmCraft.png') 'film'; Offer $firstSource ($kp + 'FileTypes/pcraft.png') 'document'
+        $env:BETTERICON_PACK_SOURCE = $firstSource
+        Install-BetterIconDownloadedPack -Theme $keepId
+        $first = Keep-Pack
+        Keep-Update @($photoTwo, $film, $doc, $word) ('a' * 40)
+        # The update's source has the changed icon and lacks the new one, as when the connection drops midway.
+        $secondSource = Join-Path $root 'keep source 2'
+        Offer $secondSource ($kp + 'PhotoCraft.png') 'photo two'
+        $env:BETTERICON_PACK_SOURCE = $secondSource
+        $interrupted = $false
+        try { Install-BetterIconDownloadedPack -Theme $keepId } catch { $interrupted = $true }
+        $held = Keep-Pack
+        Check ($interrupted -and $held.Downloaded -and $held.UpdateAvailable -and $held.Path -eq $first.Path -and (Keep-Files $first.Path) -ceq '.complete,FileTypes/pcraft.png,FilmCraft.png,PhotoCraft.png' -and
+            [IO.File]::ReadAllText((Join-Path $first.Path 'PhotoCraft.png')) -ceq 'photo one' -and @(Get-BetterIconThemeIcon -InputObject $held).Count -eq 2 -and (Keep-Copies).Count -eq 1 -and
+            @(Get-ChildItem -LiteralPath (Join-Path $keepState 'downloads') -Directory -Recurse -Filter '.loading-*').Count -eq 0) 'An interrupted update leaves the earlier copy whole and in use'
+
+        # Now the new icon is there too. The two files that did not change are in no source: they come from the earlier copy.
+        Offer $secondSource ($kp + 'WordCraft.png') 'word'
+        Install-BetterIconDownloadedPack -Theme $keepId
+        $second = Keep-Pack
+        Check ($second.Downloaded -and !$second.UpdateAvailable -and $second.Path -ne $first.Path -and (Keep-Files $second.Path) -ceq '.complete,FileTypes/pcraft.png,FilmCraft.png,PhotoCraft.png,WordCraft.png' -and
+            [IO.File]::ReadAllText((Join-Path $second.Path 'PhotoCraft.png')) -ceq 'photo two' -and [IO.File]::ReadAllText((Join-Path $second.Path 'FilmCraft.png')) -ceq 'film' -and
+            [IO.File]::ReadAllText((Join-Path $second.Path 'FileTypes\pcraft.png')) -ceq 'document') 'An update fetches only the files that changed and takes the others from the copy it replaces'
+        $copies = @(Keep-Copies)
+        Check ($copies.Count -eq 1 -and $copies[0] -eq $second.Path -and !(Test-Path -LiteralPath $first.Path) -and !(Test-Path -LiteralPath ($first.Path + '.lock')) -and
+            @(Get-ChildItem -LiteralPath (Join-Path $keepState 'downloads') -Directory).Count -eq 1) 'After an update only the new copy of the pack is on disk'
+
+        # WebP twins are published. Where this PC can't read WebP the update needs the PNG files it has: nothing is fetched.
+        $photoWebp = ItemBytes ($kp + 'PhotoCraft.webp') $webpRed; $filmWebp = ItemBytes ($kp + 'FilmCraft.webp') $webpRed
+        Keep-Update @($photoTwo, $photoWebp, $film, $filmWebp, $doc, $word) ('b' * 40)
+        $emptySource = Join-Path $root 'keep source empty'; [void][IO.Directory]::CreateDirectory($emptySource)
+        $env:BETTERICON_PACK_SOURCE = $emptySource; $env:BETTERICON_WEBP_DECODER = 'none'
+        $beforeTwins = Keep-Pack
+        Install-BetterIconDownloadedPack -Theme $keepId
+        $third = Keep-Pack
+        $copies = @(Keep-Copies)
+        Check ($beforeTwins.UpdateAvailable -and $third.Downloaded -and !$third.UpdateAvailable -and $third.Path -ne $second.Path -and
+            (Keep-Files $third.Path) -ceq '.complete,FileTypes/pcraft.png,FilmCraft.png,PhotoCraft.png,WordCraft.png' -and $copies.Count -eq 1 -and $copies[0] -eq $third.Path) 'An update whose files did not change fetches nothing and leaves one copy'
+
+        # A file of the earlier copy that no longer matches its checksum is not taken: it is fetched.
+        $deck = Item ($kp + 'DeckCraft.png') 'deck'
+        Keep-Update @($photoTwo, $photoWebp, $film, $filmWebp, $doc, $word, $deck) ('c' * 40)
+        [IO.File]::WriteAllText((Join-Path $third.Path 'FilmCraft.png'), 'changed on disk')
+        $fourthSource = Join-Path $root 'keep source 4'
+        Offer $fourthSource ($kp + 'DeckCraft.png') 'deck'; Offer $fourthSource ($kp + 'FilmCraft.png') 'film'
+        $env:BETTERICON_PACK_SOURCE = $fourthSource
+        Install-BetterIconDownloadedPack -Theme $keepId
+        $fourth = Keep-Pack
+        Check ($fourth.Downloaded -and !$fourth.UpdateAvailable -and [IO.File]::ReadAllText((Join-Path $fourth.Path 'FilmCraft.png')) -ceq 'film' -and
+            [IO.File]::ReadAllText((Join-Path $fourth.Path 'PhotoCraft.png')) -ceq 'photo two' -and (Keep-Copies).Count -eq 1) 'A file of the earlier copy that fails its checksum is fetched instead of taken'
+
+        # A copy a program still reads, or whose lock another BetterIcon process holds, stays whole. It goes at the next download.
+        $grid = Item ($kp + 'GridCraft.png') 'grid'
+        Keep-Update @($photoTwo, $photoWebp, $film, $filmWebp, $doc, $word, $deck, $grid) ('d' * 40)
+        $fifthSource = Join-Path $root 'keep source 5'
+        Offer $fifthSource ($kp + 'GridCraft.png') 'grid'
+        $env:BETTERICON_PACK_SOURCE = $fifthSource
+        $reader = [IO.File]::OpenRead((Join-Path $fourth.Path 'PhotoCraft.png'))
+        try {
+            Install-BetterIconDownloadedPack -Theme $keepId
+            $fifth = Keep-Pack
+            $whileRead = (Keep-Files $fourth.Path) + '|' + (Keep-Copies).Count + '|' + ($fifth.Downloaded -and !$fifth.UpdateAvailable -and $fifth.Path -ne $fourth.Path)
+        } finally { $reader.Dispose() }
+        $guard = [IO.File]::Open($fourth.Path + '.lock', 'OpenOrCreate', 'ReadWrite', 'None')
+        try {
+            Install-BetterIconDownloadedPack -Theme $keepId
+            $whileLocked = (Keep-Files $fourth.Path) + '|' + (Keep-Copies).Count
+        } finally { $guard.Dispose() }
+        Install-BetterIconDownloadedPack -Theme $keepId
+        $copies = @(Keep-Copies)
+        if ($whileRead -cne '.complete,DeckCraft.png,FileTypes/pcraft.png,FilmCraft.png,PhotoCraft.png,WordCraft.png|2|True') { Write-Output ('  While read: ' + $whileRead) }
+        Check ($whileRead -ceq '.complete,DeckCraft.png,FileTypes/pcraft.png,FilmCraft.png,PhotoCraft.png,WordCraft.png|2|True' -and
+            $whileLocked -ceq '.complete,DeckCraft.png,FileTypes/pcraft.png,FilmCraft.png,PhotoCraft.png,WordCraft.png|2' -and
+            $copies.Count -eq 1 -and $copies[0] -eq $fifth.Path -and (Keep-Pack).Downloaded) 'A copy a program still reads, or another BetterIcon process holds, stays whole and is removed at the next download'
+
+        # Leftovers of the pack go with the copy an update supersedes: a folder an earlier download moved aside and the copy of
+        # the 1.24 layout. Everything else stays: another pack in the same signature folder, folders that only look alike,
+        # and a personal pack.
+        $cad = Item ($kp + 'CADCraft.png') 'cad'
+        Keep-Update @($photoTwo, $photoWebp, $film, $filmWebp, $doc, $word, $deck, $grid, $cad) ('e' * 40)
+        $sixthSource = Join-Path $root 'keep source 6'
+        Offer $sixthSource ($kp + 'CADCraft.png') 'cad'
+        $env:BETTERICON_PACK_SOURCE = $sixthSource
+        $signatureFolder = Split-Path -Parent (Split-Path -Parent $fifth.Path)
+        $aside = $fifth.Path + '.replaced-' + ('0' * 32)
+        $legacyCopy = Join-Path $keepState 'downloads\4a2527ea0c2384904a1a3e878860f974c8f726c4\Craft-Icons-Keep\Set'
+        $neighbour = Join-Path $signatureFolder 'Craft-Icons-Keep\Other'; $alike = Join-Path $signatureFolder 'Craft-Icons-Keep\Set extra'
+        $stray = Join-Path $keepState 'downloads\not a signature\Craft-Icons-Keep\Set'; $personal = Join-Path $keepState 'packs\Craft-Icons-Keep\Set'
+        foreach ($folder in $aside, $legacyCopy, $neighbour, $alike, $stray, $personal) { [void][IO.Directory]::CreateDirectory($folder); [IO.File]::WriteAllText((Join-Path $folder 'PhotoCraft.png'), 'kept') }
+        [IO.File]::WriteAllText((Join-Path $legacyCopy '.complete'), '1.25')
+        Install-BetterIconDownloadedPack -Theme $keepId
+        $sixth = Keep-Pack
+        Check ($sixth.Downloaded -and !$sixth.UpdateAvailable -and $sixth.Path -ne $fifth.Path -and !(Test-Path -LiteralPath $fifth.Path) -and !(Test-Path -LiteralPath $aside) -and
+            !(Test-Path -LiteralPath (Join-Path $keepState 'downloads\4a2527ea0c2384904a1a3e878860f974c8f726c4'))) 'An update also removes a folder an earlier download moved aside and the copy of the 1.24 layout'
+        $survivors = @(foreach ($folder in $neighbour, $alike, $stray, $personal) { [IO.File]::Exists((Join-Path $folder 'PhotoCraft.png')) }) -join ','
+        Check ($survivors -ceq 'True,True,True,True' -and (Keep-Files $sixth.Path) -ceq '.complete,CADCraft.png,DeckCraft.png,FileTypes/pcraft.png,FilmCraft.png,GridCraft.png,PhotoCraft.png,WordCraft.png') 'Removing a superseded copy leaves another pack in its signature folder, folders that only look alike and a personal pack'
+
+        # The packs Modern Flat replaced: their downloads and receipts go once the combined pack is downloaded.
+        $env:BETTERICON_DOWNLOAD_STATE = Join-Path $root 'supersede-flat'
+        $flatArt = Item "$flat/EffectCraft.png" 'combined'
+        [IO.File]::WriteAllLines((Join-Path $win 'OnDemand.tsv'), [string[]](@($seed) + @(& $module { param($items) ConvertTo-PackCatalogRows $items } @($flatArt))))
+        & $module { $script:DownloadCatalog = $null; $script:AvailableCatalog = $null }
+        Add-OldDownload 'Spark - Sliders' 'spark'; Add-OldDownload 'Wand - Knob' 'wand'
+        $flatSource = Join-Path $root 'flat source'
+        Offer $flatSource "$flat/EffectCraft.png" 'combined'
+        $env:BETTERICON_PACK_SOURCE = $flatSource
+        $flatBefore = @(Get-BetterIconTheme | Where-Object Id -eq $flat)[0]
+        $flatReceipts = Join-Path $env:BETTERICON_DOWNLOAD_STATE 'pack-catalog\installed'
+        $receiptsBefore = @(Get-ChildItem -LiteralPath $flatReceipts -File).Count
+        Install-BetterIconDownloadedPack -Theme $flat
+        & $module { $script:DownloadCatalog = $null; $script:AvailableCatalog = $null }
+        $flatAfter = @(Get-BetterIconTheme | Where-Object Id -eq $flat)[0]
+        $flatFolders = @(Get-ChildItem -LiteralPath (Join-Path $env:BETTERICON_DOWNLOAD_STATE 'downloads') -Directory -Recurse | Where-Object { $_.Name -like 'Modern Flat*' } | ForEach-Object FullName)
+        Check ($flatBefore.UpdateAvailable -and $receiptsBefore -eq 2 -and $flatAfter.Downloaded -and !$flatAfter.UpdateAvailable -and $flatFolders.Count -eq 1 -and $flatFolders[0] -eq $flatAfter.Path -and
+            [IO.File]::ReadAllText((Join-Path $flatAfter.Path 'EffectCraft.png')) -ceq 'combined' -and @(Get-ChildItem -LiteralPath $flatReceipts -File).Count -eq 1) 'Downloading the combined Modern Flat removes the downloads and receipts of the packs it replaced'
+
+        # ---- Once per start: the copies that updates left behind before BetterIcon removed them ------------------------
+        $env:BETTERICON_DOWNLOAD_STATE = Join-Path $root 'sweep'
+        $sweepState = $env:BETTERICON_DOWNLOAD_STATE
+        $sw = 'Craft-Icons-Sweep/'
+        $updated = 'Left', 'Busy', 'Partial'
+        $legacyArt = Item ($sw + 'Legacy/PhotoCraft.png') 'legacy art'
+        $firstItems = @(foreach ($name in $updated) { Item ($sw + $name + '/PhotoCraft.png') ($name + ' one') }) + @($legacyArt)
+        $secondItems = @(foreach ($name in $updated) { Item ($sw + $name + '/PhotoCraft.png') ($name + ' two') }) + @($legacyArt)
+        [IO.File]::WriteAllLines((Join-Path $win 'OnDemand.tsv'), [string[]](@($seed) + @(& $module { param($items) ConvertTo-PackCatalogRows $items } $firstItems)))
+        & $module { $script:DownloadCatalog = $null; $script:AvailableCatalog = $null }
+        function Sweep-Pack([string]$Name) { & $module { $script:DownloadCatalog = $null; $script:AvailableCatalog = $null }; @(Get-BetterIconTheme | Where-Object Id -eq ($sw + $Name))[0] }
+        $sweepSource = Join-Path $root 'sweep source'
+        foreach ($name in $updated) { Offer $sweepSource ($sw + $name + '/PhotoCraft.png') ($name + ' one') }
+        $env:BETTERICON_PACK_SOURCE = $sweepSource
+        $earlier = @{}; $aside = Join-Path $root 'sweep aside'
+        [void][IO.Directory]::CreateDirectory($aside)
+        foreach ($name in $updated) {
+            Install-BetterIconDownloadedPack -Theme ($sw + $name)
+            $earlier[$name] = (Sweep-Pack $name).Path
+            Copy-Item -LiteralPath $earlier[$name] -Destination (Join-Path $aside $name) -Recurse
+        }
+        SetTree ('f' * 40) $secondItems; Update-BetterIconPackCatalog
+        foreach ($name in $updated) { Offer $sweepSource ($sw + $name + '/PhotoCraft.png') ($name + ' two'); Install-BetterIconDownloadedPack -Theme ($sw + $name) }
+        # As a version that removed nothing left each update: the earlier copy and its lock file beside the new copy.
+        foreach ($name in $updated) {
+            [void][IO.Directory]::CreateDirectory((Split-Path -Parent $earlier[$name]))
+            Copy-Item -LiteralPath (Join-Path $aside $name) -Destination $earlier[$name] -Recurse
+            [IO.File]::WriteAllText($earlier[$name] + '.lock', '')
+        }
+        $inUse = @{}; foreach ($name in $updated) { $inUse[$name] = (Sweep-Pack $name).Path }
+        # One pack's copy in use loses its file. For another the pack list uses the copy of the 1.24 layout, which matches
+        # the list, while its receipt names a download of another edition.
+        [IO.File]::Delete((Join-Path $inUse['Partial'] 'PhotoCraft.png'))
+        $legacyFolder = Join-Path $sweepState 'downloads\4a2527ea0c2384904a1a3e878860f974c8f726c4\Craft-Icons-Sweep\Legacy'
+        [void][IO.Directory]::CreateDirectory($legacyFolder); [IO.File]::WriteAllText((Join-Path $legacyFolder 'PhotoCraft.png'), 'legacy art'); [IO.File]::WriteAllText((Join-Path $legacyFolder '.complete'), '1.25')
+        $recorded = & $module {
+            param($item, $rev)
+            $state = Get-PackState
+            $lines = [string[]](@($rev) + @(ConvertTo-PackCatalogRows @($item)))
+            $pack = @((Read-PackSnapshot $lines $state).Values)[0]
+            [void][IO.Directory]::CreateDirectory($pack.Path)
+            [IO.File]::WriteAllText((Join-Path $pack.Path 'PhotoCraft.png'), 'another edition'); [IO.File]::WriteAllText((Join-Path $pack.Path '.complete'), $rev)
+            Write-PackSnapshot (Join-Path (Join-Path $state 'pack-catalog/installed') ((Get-PathId (Join-Path $state $pack.Id)) + '.tsv')) $lines
+            $pack.Path
+        } (Item ($sw + 'Legacy/PhotoCraft.png') 'another edition') $seed
+        $legacyUsed = [IO.Path]::GetFullPath((Sweep-Pack 'Legacy').Path)
+        # Beside the leftover of Left: another pack in its signature folder, and a folder that only looks like a copy.
+        $beside = Join-Path (Split-Path -Parent $earlier['Left']) 'Other'; $lookalike = $earlier['Left'] + ' extra'
+        foreach ($folder in $beside, $lookalike) { [void][IO.Directory]::CreateDirectory($folder); [IO.File]::WriteAllText((Join-Path $folder 'PhotoCraft.png'), 'kept') }
+        function Sweep-Request {
+            $request = Join-Path $root 'sweep-request.json'; $response = Join-Path $root 'sweep-response.json'
+            if ([IO.File]::Exists($response)) { [IO.File]::Delete($response) }
+            [IO.File]::WriteAllText($request, (@{ Action = 'RemoveSupersededPacks'; Scope = 'CurrentUser'; Theme = ''; ShortcutDirectory = @(); StateDirectory = $sweepState } | ConvertTo-Json))
+            & (Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe') -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $win 'BetterIcon.TrayWorker.ps1') -RequestPath $request -ResponsePath $response | Out-Null
+            $answer = Get-Content -LiteralPath $response -Raw | ConvertFrom-Json
+            if ($answer.Success -and $answer.PSObject.Properties['RemovedPackCopies']) { [int]$answer.RemovedPackCopies } else { -1 }
+        }
+        function Sweep-Left { @(foreach ($name in $updated) { [IO.File]::Exists((Join-Path $earlier[$name] 'PhotoCraft.png')) }) -join ',' }
+        # While another BetterIcon process downloads Busy, it holds the lock of the copy in use.
+        $guard = [IO.File]::Open($inUse['Busy'] + '.lock', 'OpenOrCreate', 'ReadWrite', 'None')
+        try { $firstSweep = Sweep-Request; $afterFirst = Sweep-Left } finally { $guard.Dispose() }
+        $left = Sweep-Pack 'Left'
+        if ($firstSweep -ne 1 -or $afterFirst -cne 'False,True,True') { Write-Output ('  First sweep: ' + $firstSweep + ' / ' + $afterFirst) }
+        Check ($firstSweep -eq 1 -and $afterFirst -cne 'True,True,True' -and !(Test-Path -LiteralPath $earlier['Left']) -and !(Test-Path -LiteralPath ($earlier['Left'] + '.lock')) -and
+            $left.Downloaded -and !$left.UpdateAvailable -and $left.Path -eq $inUse['Left'] -and [IO.File]::ReadAllText((Join-Path $left.Path 'PhotoCraft.png')) -ceq 'Left two') 'Asked once per start, the worker removes the copy an earlier update left behind and reports it, and the pack stays as it is'
+        $secondSweep = Sweep-Request; $afterSecond = Sweep-Left
+        Check ($afterFirst -ceq 'False,True,True' -and $secondSweep -eq 1 -and $afterSecond -ceq 'False,False,True' -and (Sweep-Pack 'Busy').Downloaded) 'A pack whose lock another BetterIcon process holds is passed over, and its leftover goes the next time'
+        $thirdSweep = Sweep-Request
+        $partial = Sweep-Pack 'Partial'; $legacyPack = Sweep-Pack 'Legacy'
+        Check ($thirdSweep -eq 0 -and (Sweep-Left) -ceq 'False,False,True' -and $partial.Status -eq 'Download' -and $legacyUsed -eq $legacyFolder -and [IO.Path]::GetFullPath($legacyPack.Path) -eq $legacyFolder -and
+            [IO.File]::ReadAllText((Join-Path $legacyFolder 'PhotoCraft.png')) -ceq 'legacy art' -and [IO.File]::ReadAllText((Join-Path $recorded 'PhotoCraft.png')) -ceq 'another edition') 'A pack whose copy in use is incomplete, or for which the pack list uses another copy than its receipt names, loses nothing'
+        Check ([IO.File]::Exists((Join-Path $beside 'PhotoCraft.png')) -and [IO.File]::Exists((Join-Path $lookalike 'PhotoCraft.png')) -and
+            @(Get-ChildItem -LiteralPath (Join-Path $sweepState 'downloads') -Directory -Recurse -Filter '.removing-*').Count -eq 0) 'The removal after start leaves another pack in a leftover''s signature folder and a folder that only looks like a copy'
+
+        # ---- A removal that read a pack's receipt before another BetterIcon process finished an update of the pack -------
+        $env:BETTERICON_DOWNLOAD_STATE = Join-Path $root 'race'
+        $raceState = $env:BETTERICON_DOWNLOAD_STATE; $raceId = 'Craft-Icons-Race/Set'
+        $raceOne = Item ($raceId + '/PhotoCraft.png') 'race one'; $raceTwo = Item ($raceId + '/PhotoCraft.png') 'race two'
+        [IO.File]::WriteAllLines((Join-Path $win 'OnDemand.tsv'), [string[]](@($seed) + @(& $module { param($items) ConvertTo-PackCatalogRows $items } @($raceOne))))
+        & $module { $script:DownloadCatalog = $null; $script:AvailableCatalog = $null }
+        function Race-Pack { & $module { $script:DownloadCatalog = $null; $script:AvailableCatalog = $null }; @(Get-BetterIconTheme | Where-Object Id -eq $raceId)[0] }
+        $raceSource = Join-Path $root 'race source'
+        Offer $raceSource ($raceId + '/PhotoCraft.png') 'race one'
+        $env:BETTERICON_PACK_SOURCE = $raceSource
+        Install-BetterIconDownloadedPack -Theme $raceId
+        $raceFirst = Race-Pack
+        # The removal reads the receipt, which names the first copy, and takes that copy's lock.
+        $stale = & $module {
+            param($id)
+            $state = Get-PackState
+            @((Read-PackSnapshot ([IO.File]::ReadAllLines((Join-Path (Join-Path $state 'pack-catalog/installed') ((Get-PathId (Join-Path $state $id)) + '.tsv')))) $state).Values)[0]
+        } $raceId
+        $guard = [IO.File]::Open($raceFirst.Path + '.lock', 'OpenOrCreate', 'ReadWrite', 'None')
+        try {
+            # Now the update: a new copy and a receipt that names it. It cannot remove the first copy, whose lock is held.
+            SetTree ('8' * 40) @($raceTwo); Update-BetterIconPackCatalog
+            Offer $raceSource ($raceId + '/PhotoCraft.png') 'race two'
+            Install-BetterIconDownloadedPack -Theme $raceId
+            $raceSecond = Race-Pack
+            # The removal goes on with what it read before the update.
+            $raceRemoved = & $module { param($pack, $state) Remove-SupersededPackCopies $pack $state $false } $stale $raceState
+        } finally { $guard.Dispose() }
+        $raceAfter = Race-Pack
+        $raceLeft = Test-Path -LiteralPath $raceFirst.Path
+        # The next removal, as after the next start, takes the first copy.
+        $raceNext = & $module { $script:DownloadCatalog = $null; $script:AvailableCatalog = $null; Remove-SupersededPacks }
+        if ($raceRemoved -ne 0 -or $raceNext -ne 1) { Write-Output ('  Removal with an earlier receipt: ' + $raceRemoved + ', the next: ' + $raceNext) }
+        Check ($raceSecond.Downloaded -and !$raceSecond.UpdateAvailable -and $raceSecond.Path -ne $raceFirst.Path -and $raceRemoved -eq 0 -and $raceAfter.Downloaded -and !$raceAfter.UpdateAvailable -and
+            $raceAfter.Path -eq $raceSecond.Path -and [IO.File]::Exists((Join-Path $raceSecond.Path 'PhotoCraft.png')) -and [IO.File]::ReadAllText((Join-Path $raceSecond.Path 'PhotoCraft.png')) -ceq 'race two' -and
+            $raceLeft -and $raceNext -eq 1 -and !(Test-Path -LiteralPath $raceFirst.Path) -and (Race-Pack).Downloaded) 'A removal that read a pack''s receipt before an update of the pack finished keeps the update''s copy, and the earlier copy goes the next time'
+
+        # ---- Read-only files in the copy an update takes its unchanged files from ----------------------------------------
+        $env:BETTERICON_DOWNLOAD_STATE = Join-Path $root 'readonly'
+        $lockedState = $env:BETTERICON_DOWNLOAD_STATE; $lockedId = 'Craft-Icons-Locked/Set'; $lk = $lockedId + '/'
+        $lockedOne = Item ($lk + 'PhotoCraft.png') 'locked one'; $lockedTwo = Item ($lk + 'PhotoCraft.png') 'locked two'
+        $lockedFilm = Item ($lk + 'FilmCraft.png') 'locked film'; $lockedWord = Item ($lk + 'WordCraft.png') 'locked word'
+        [IO.File]::WriteAllLines((Join-Path $win 'OnDemand.tsv'), [string[]](@($seed) + @(& $module { param($items) ConvertTo-PackCatalogRows $items } @($lockedOne, $lockedFilm))))
+        & $module { $script:DownloadCatalog = $null; $script:AvailableCatalog = $null }
+        function Locked-Pack { & $module { $script:DownloadCatalog = $null; $script:AvailableCatalog = $null }; @(Get-BetterIconTheme | Where-Object Id -eq $lockedId)[0] }
+        function Locked-Stages { @(Get-ChildItem -LiteralPath (Join-Path $lockedState 'downloads') -Directory -Recurse -Filter '.loading-*').Count }
+        function Lock-Files([string]$Path, [bool]$ReadOnly) { foreach ($file in @(Get-ChildItem -LiteralPath $Path -File -Recurse -Force)) { $file.IsReadOnly = $ReadOnly } }
+        $lockedSource = Join-Path $root 'locked source'
+        Offer $lockedSource ($lk + 'PhotoCraft.png') 'locked one'; Offer $lockedSource ($lk + 'FilmCraft.png') 'locked film'
+        $env:BETTERICON_PACK_SOURCE = $lockedSource
+        Install-BetterIconDownloadedPack -Theme $lockedId
+        $lockedFirst = Locked-Pack
+        Lock-Files $lockedFirst.Path $true
+        # The update changes one icon, which its source has. The icon that did not change is in the read-only copy alone.
+        SetTree ('7' * 40) @($lockedTwo, $lockedFilm); Update-BetterIconPackCatalog
+        $lockedSecondSource = Join-Path $root 'locked source 2'
+        Offer $lockedSecondSource ($lk + 'PhotoCraft.png') 'locked two'
+        $env:BETTERICON_PACK_SOURCE = $lockedSecondSource
+        $lockedError = ''
+        try { Install-BetterIconDownloadedPack -Theme $lockedId } catch { $lockedError = $_.Exception.Message }
+        $lockedSecond = Locked-Pack
+        $lockedCopies = @(Get-ChildItem -LiteralPath (Join-Path $lockedState 'downloads') -Directory -Recurse | Where-Object { $_.Name -eq 'Set' -and $_.Parent.Name -eq 'Craft-Icons-Locked' })
+        if ($lockedError) { Write-Output ('  Update from a read-only copy: ' + $lockedError) }
+        Check (!$lockedError -and $lockedSecond.Downloaded -and !$lockedSecond.UpdateAvailable -and $lockedSecond.Path -ne $lockedFirst.Path -and
+            [IO.File]::ReadAllText((Join-Path $lockedSecond.Path 'PhotoCraft.png')) -ceq 'locked two' -and [IO.File]::ReadAllText((Join-Path $lockedSecond.Path 'FilmCraft.png')) -ceq 'locked film' -and
+            !([IO.File]::GetAttributes((Join-Path $lockedSecond.Path 'FilmCraft.png')) -band [IO.FileAttributes]::ReadOnly) -and $lockedCopies.Count -eq 1 -and
+            (Locked-Stages) -eq 0) 'An update takes its unchanged files from a copy whose files are read-only, fetches the changed one and leaves one copy'
+        # An update that then fails for a reason of its own says so, leaves no download folder behind and releases its lock.
+        Lock-Files $lockedSecond.Path $true
+        SetTree ('6' * 40) @($lockedTwo, $lockedFilm, $lockedWord); Update-BetterIconPackCatalog
+        $lockedEmptySource = Join-Path $root 'locked source empty'; [void][IO.Directory]::CreateDirectory($lockedEmptySource)
+        $env:BETTERICON_PACK_SOURCE = $lockedEmptySource
+        $lockedFailure = ''
+        try { Install-BetterIconDownloadedPack -Theme $lockedId } catch { $lockedFailure = $_.Exception.Message }
+        $lockedTarget = & $module { param($id) $script:DownloadCatalog = $null; $script:AvailableCatalog = $null; (Get-DownloadCatalog)[$id].Path } $lockedId
+        $lockedFree = $false
+        try { $probe = [IO.File]::Open($lockedTarget + '.lock', 'OpenOrCreate', 'ReadWrite', 'None'); $probe.Dispose(); $lockedFree = $true } catch [IO.IOException] { Write-Output '  The failed update still holds its lock.' }
+        $lockedHeld = Locked-Pack
+        $lockedStages = Locked-Stages
+        Lock-Files $lockedState $false
+        if ($lockedFailure -cnotlike 'Could not download Set.*') { Write-Output ('  Failed update from a read-only copy: ' + $lockedFailure) }
+        Check ($lockedFailure -clike 'Could not download Set.*' -and $lockedFree -and $lockedStages -eq 0 -and $lockedHeld.Downloaded -and $lockedHeld.UpdateAvailable -and
+            $lockedHeld.Path -eq $lockedSecond.Path) 'An update that fails after taking read-only files reports its own error, leaves no download folder and releases its lock'
+    } finally { $env:BETTERICON_PACK_SOURCE = $priorSource; $env:BETTERICON_WEBP_DECODER = $priorDecoder }
+
     # Setup's optional downloads: only packs that are not on this computer, with the sizes the package measured.
     $env:BETTERICON_DOWNLOAD_STATE = Join-Path $root 'setup'
     $setupRows = @((Item 'Craft-Icons-Setup/AppOne/PhotoCraft.png' 'one'), (Item 'Craft-Icons-Setup/AppTwo/PhotoCraft.png' 'two'), (Item 'Craft-Icons-Setup/Files/FileTypes/pcraft.png' 'files'))

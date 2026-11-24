@@ -210,6 +210,12 @@ try {
             $reply.DownloadedUnlistedFileIconApps = [string[]]@($theme.UnlistedFileIconApps)
             $reply.DownloadedLeftOut = @($theme.LeftOut)
         }
+        'RemoveSupersededPacks' {
+            # Once per start the tray asks, in the background: the copies of downloaded packs that an update left on disk
+            # are removed. Never part of the elevated pass (ReapplyShared), which downloads and removes nothing.
+            if ($scope -ne 'CurrentUser') { throw 'Downloads are stored in the current user account.' }
+            $reply.RemovedPackCopies = [int](& $module { Remove-SupersededPacks })
+        }
         'SetupStatus' {
             # What Setup's optional downloads page offers: the packs of each list that are not on this computer yet, and
             # their download sizes. A pack with both kinds of artwork is in both lists and downloads once.

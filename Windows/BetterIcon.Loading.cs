@@ -290,8 +290,12 @@ namespace BetterIcon.Tray
             int count = ProjectFormat.Artwork(theme).Expanded().Count;
             return count + (count == 1 ? " file type / " : " file types / ") + (theme.Managed ? "Personal pack" : "Built-in pack");
         }
-        async Task DownloadTheme(ThemeEntry theme)
+        // loadingFiles says which grid the caller draws next from the download: the file type grid (true) or the app pack
+        // grid (false). Left out, the caller draws everything again.
+        async Task DownloadTheme(ThemeEntry theme, bool? loadingFiles = null)
         {
+            await PackSweepEnded();
+            bool update = theme.UpdateAvailable;
             var reply = await worker.Run(new WorkerRequest { Action = "DownloadPack", Theme = theme.Id }, false);
             if (reply.DownloadedIcons == null || reply.DownloadedFileIcons == null) throw new IOException("Incomplete downloaded icon pack.");
             theme.Icons = reply.DownloadedIcons;
@@ -302,6 +306,14 @@ namespace BetterIcon.Tray
             theme.LeftOut = reply.DownloadedLeftOut ?? new LeftOutItem[0];
             theme.NeedsDownload = false; theme.UpdateAvailable = false; theme.Downloaded = true;
             themes.RefreshLabels(); fileThemes.RefreshLabels(); BuildTrayMenu();
+            // An update removes the copy the pack was drawn from. What else shows this pack is drawn again from the new
+            // copy, before a larger icon size reads a file that is gone: the Launcher when this is the applied pack, and
+            // the other list's grid when the pack is chosen there too.
+            if (!update || loadingFiles == null || IsDisposed || Disposing) return;
+            ThemeEntry applied = AppliedTheme();
+            if (applied != null && applied.Id == theme.Id) RenderApps();
+            if (loadingFiles.Value) { if (SelectedTheme == theme && renderedThemeId == theme.Id) RenderPack(); }
+            else if (SelectedFileTheme == theme && renderedFileThemeId == theme.Id) RenderFilePack();
         }
         // Choosing a pack previews it in Manage Icons. The Launcher changes when it is applied.
         async Task LoadSelectedPack()
@@ -318,7 +330,7 @@ namespace BetterIcon.Tray
                 // window thread so painting and the progress animation can continue.
                 await Task.Yield();
                 if (selected.HasDownload) {
-                    await DownloadTheme(selected);
+                    await DownloadTheme(selected, false);
                     if (IsDisposed || Disposing) return;
                     status.Text = PackActivity(selected);
                     ShowLoading(true, status.Text);
@@ -385,6 +397,51 @@ namespace BetterIcon.Tray
                 if (!IsDisposed && !Disposing) SetBusy(false, null);
             }
         }
+        // Once per start, some time after the packs are read: the worker removes the copies of downloaded packs that an
+        // update left on disk before BetterIcon removed them itself. That runs in the worker's own process. It is not asked
+        // for while a pack loads or downloads, an Apply runs or the packs are read: the timer then asks again.
+        System.Windows.Forms.Timer packSweepTimer;
+        int packSweeps;
+        void StartPackSweep()
+        {
+            if (packSweepTimer != null || packSweeps > 0 || IsDisposed || Disposing) return;
+            // Fixture suites see no background work unless they ask for it.
+            if (fixtureSettings != null && !fixtureSettings.PackSweepDelay.HasValue) return;
+            packSweepTimer = new System.Windows.Forms.Timer { Interval = Math.Max(1, fixtureSettings == null ? 30000 : fixtureSettings.PackSweepDelay.Value) };
+            packSweepTimer.Tick += async delegate { await SweepPacks(); };
+            packSweepTimer.Start();
+        }
+        async Task SweepPacks()
+        {
+            if (packSweepTimer == null || busy || setupDownloading || IsDisposed || Disposing) return;
+            // Once: the timer ends before the worker is asked, whatever its answer.
+            packSweepTimer.Stop(); packSweepTimer.Dispose(); packSweepTimer = null;
+            packSweeps++;
+            try {
+                Task<WorkerReply> asked = worker.Run(new WorkerRequest { Action = "RemoveSupersededPacks" }, false);
+                packSweep = asked;
+                WorkerReply reply;
+                try { reply = await asked; } finally { packSweep = null; }
+                if (IsDisposed || Disposing || reply.RemovedPackCopies == 0 || stateDirectory == null) return;
+                // The Launcher may show artwork recorded at an Apply that was in a copy now removed. It is drawn again from
+                // the pack as it is now, before a larger icon size reads a file that is gone.
+                string downloads = Path.Combine(stateDirectory, "downloads") + Path.DirectorySeparatorChar;
+                if (appSources.Any(source => !String.IsNullOrEmpty(source.Path) && source.Path.StartsWith(downloads, StringComparison.OrdinalIgnoreCase) && !File.Exists(source.Path))) RenderApps();
+            }
+            // A failure changes nothing for the user: every pack stays as it was, and the next start asks again.
+            catch (Exception error) { System.Diagnostics.Trace.WriteLine("BetterIcon pack sweep: " + error.Message); }
+        }
+        // The removal's request to the worker, while that worker runs.
+        Task packSweep;
+        // A download asks its worker only once the removal's worker has ended. That worker goes by the copies it finds
+        // when it starts: a download beside it would make its new copy look like one more earlier copy. The worker also
+        // never removes the copy a pack's receipt names, which covers another BetterIcon process.
+        async Task PackSweepEnded()
+        {
+            Task running = packSweep;
+            if (running == null) return;
+            try { await running; } catch (Exception error) { System.Diagnostics.Trace.WriteLine("BetterIcon pack sweep: " + error.Message); }
+        }
         object FilePackRow(string id)
         {
             object row = id == null ? null : fileThemes.Items.OfType<ThemeEntry>().FirstOrDefault(theme => theme.Id == id);
@@ -412,7 +469,7 @@ namespace BetterIcon.Tray
             try {
                 await Task.Yield();
                 if (selected != null && selected.HasDownload) {
-                    await DownloadTheme(selected);
+                    await DownloadTheme(selected, true);
                     if (IsDisposed || Disposing) return;
                     status.Text = PackActivity(selected);
                     ShowLoading(true, status.Text);

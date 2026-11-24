@@ -7,9 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -212,6 +214,50 @@ func fetchArtwork(revision, source string) ([]byte, error) {
 	}
 	return b, nil
 }
+
+// signatureFolders lists the folders in downloads that are named by a signature: one per download of a pack.
+func (l *library) signatureFolders() []string {
+	var names []string
+	entries, _ := os.ReadDir(filepath.Join(l.state, "downloads"))
+	for _, entry := range entries {
+		if entry.IsDir() && hex64.MatchString(entry.Name()) {
+			names = append(names, entry.Name())
+		}
+	}
+	return names
+}
+
+// held looks for a file of a pack in the downloads already on this computer, apart from the folder the download goes
+// to: an update changes the pack's signature and so its folder, and most of its files are the ones an earlier download
+// has. The file is looked for under its own path in every signature folder, and for a pack that replaced others
+// (previousIDs) under their folders too, where it has the same name. It counts only when it passes the check a fetched
+// file must pass.
+func (l *library) held(p pack, a asset, folders []string, final string) ([]byte, bool) {
+	paths := []string{a.File}
+	own := path.Dir(a.File)
+	if a.Document {
+		own = path.Dir(own)
+	}
+	for _, old := range l.previousIDs(p.ID) {
+		paths = append(paths, old+strings.TrimPrefix(a.File, own))
+	}
+	for _, folder := range folders {
+		root := filepath.Join(l.state, "downloads", folder)
+		if root == final {
+			continue
+		}
+		for _, name := range paths {
+			file := filepath.Join(root, filepath.FromSlash(name))
+			if info, err := os.Lstat(file); err != nil || !info.Mode().IsRegular() || info.Size() < 1 || info.Size() > 16<<20 {
+				continue
+			}
+			if b, err := os.ReadFile(file); err == nil && sameBlob(b, a) {
+				return b, true
+			}
+		}
+	}
+	return nil, false
+}
 func (l *library) acquire(id string) error {
 	p, ok := l.latest.Packs[id]
 	if !ok {
@@ -232,20 +278,26 @@ func (l *library) acquire(id string) error {
 	for _, a := range p.Assets {
 		rows = append(rows, strings.Join([]string{a.Blob, a.File, a.Source, a.Hash}, "\t"))
 	}
-	// One twin per icon, as the app reads WebP or not. A file the pack's folder already holds is not fetched again.
+	// One twin per icon, as the app reads WebP or not. A file the pack's folder already holds is not fetched again, and a
+	// file another download of the pack holds is taken from there. A failed download leaves those downloads as they are;
+	// prune removes them once the app has taken the new one into use.
 	wanted := p.downloadAssets(webpReadable())
+	folders := l.signatureFolders()
 	for _, a := range wanted {
 		if b, e := os.ReadFile(filepath.Join(final, a.File)); e == nil && sameBlob(b, a) {
 			continue
 		}
-		b, e := fetchArtwork(p.Revision, a.Source)
-		if e != nil {
-			return e
+		b, found := l.held(p, a, folders, final)
+		if !found {
+			var e error
+			if b, e = fetchArtwork(p.Revision, a.Source); e != nil {
+				return e
+			}
+			if !sameBlob(b, a) {
+				return fmt.Errorf("Artwork checksum differs: %s", a.File)
+			}
 		}
-		if !sameBlob(b, a) {
-			return fmt.Errorf("Artwork checksum differs: %s", a.File)
-		}
-		if e = atomic(filepath.Join(stage, a.File), b); e != nil {
+		if e := atomic(filepath.Join(stage, a.File), b); e != nil {
 			return e
 		}
 	}
@@ -269,6 +321,104 @@ func (l *library) acquire(id string) error {
 		}
 	}
 	return atomic(filepath.Join(l.state, "acquired", checksum([]byte(id))), []byte(strings.Join(rows, "\n")+"\n"))
+}
+
+var errNotArtwork = errors.New("not pack artwork")
+
+// packOf names the pack whose download a signature folder holds. It answers "" for anything else: a file that is no pack
+// artwork, files of more than one pack, a link or another special file, or no file at all.
+func (l *library) packOf(root string) string {
+	id := ""
+	err := filepath.WalkDir(root, func(file string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		rel, e := filepath.Rel(root, file)
+		if e != nil || !entry.Type().IsRegular() {
+			return errNotArtwork
+		}
+		p, _, ok := l.identify(filepath.ToSlash(rel))
+		if !ok || (id != "" && p.ID != id) {
+			return errNotArtwork
+		}
+		id = p.ID
+		return nil
+	})
+	if err != nil {
+		return ""
+	}
+	return id
+}
+
+// prune removes the downloads of a pack that its download in use supersedes, or with no pack named those of every
+// pack. The app asks for one pack after a download, once it has checked the new artwork and taken the new list into
+// use: until then its windows may still show files of the earlier download, and a WebP that fails there makes the app
+// fetch the PNG files, which acquire takes from that earlier download. It asks for every pack once after it has
+// started, for the downloads that updates left behind before BetterIcon removed them. An update writes a new signature
+// folder and a new receipt, so the earlier folder is no longer named by any receipt and list never reads it again.
+//
+// A folder goes only when all of this holds: the pack's receipt names another folder, and that download is complete
+// (acquired); the folder is named by a signature and no receipt names it; every file in it is artwork of this pack
+// (packOf); and it is not newer than the pack's receipt. So a failed or interrupted update, which writes no receipt,
+// leaves the earlier download in use and in place; a download that another BetterIcon process is finishing, whose
+// folder is there before its receipt, is not taken for a leftover; and nothing else in the cache is touched. The
+// downloads and receipts of the packs a pack replaced (previousIDs) go with them, once its download in use is the
+// current artwork and none of them can be the copy list would pick.
+func (l *library) prune(only string) error {
+	saved := l.acquired()
+	// When the receipt of each pack whose earlier downloads may go was written, by the pack those downloads belong to.
+	written := map[string]time.Time{}
+	replaced := map[string]time.Time{}
+	for id, current := range saved {
+		if only != "" && id != only {
+			continue
+		}
+		info, err := os.Stat(filepath.Join(l.state, "acquired", checksum([]byte(id))))
+		if err != nil {
+			continue
+		}
+		written[id] = info.ModTime()
+		if target, listed := l.latest.Packs[id]; listed && target.sameArtwork(current) {
+			for _, old := range l.previousIDs(id) {
+				replaced[old] = info.ModTime()
+			}
+		}
+	}
+	if len(written) == 0 {
+		return nil
+	}
+	for old, at := range replaced {
+		written[old] = at
+		delete(saved, old)
+	}
+	// What a receipt names stays, whichever pack it belongs to.
+	keep := map[string]bool{}
+	for _, p := range saved {
+		keep[p.signature()] = true
+	}
+	var failed error
+	for _, folder := range l.signatureFolders() {
+		root := filepath.Join(l.state, "downloads", folder)
+		if keep[folder] {
+			continue
+		}
+		at, mine := written[l.packOf(root)]
+		if info, err := os.Lstat(root); !mine || err != nil || info.ModTime().After(at) {
+			continue
+		}
+		if err := os.RemoveAll(root); err != nil && failed == nil {
+			failed = err
+		}
+	}
+	for old := range replaced {
+		if err := os.Remove(filepath.Join(l.state, "acquired", checksum([]byte(old)))); err != nil && !errors.Is(err, fs.ErrNotExist) && failed == nil {
+			failed = err
+		}
+	}
+	return failed
 }
 func (l *library) thumbnail(id string) (string, error) {
 	p, ok := l.previews[id]
@@ -327,6 +477,19 @@ func run(args []string) (any, error) {
 			return nil, errors.New("Missing pack")
 		}
 		err = l.acquire(l.currentID(args[3]))
+	case "prune":
+		// With no pack named, the earlier downloads of every pack.
+		switch len(args) {
+		case 3:
+			err = l.prune("")
+		case 4:
+			if args[3] == "" {
+				return nil, errors.New("Missing pack")
+			}
+			err = l.prune(l.currentID(args[3]))
+		default:
+			return nil, errors.New("Expected one pack or none")
+		}
 	case "preview":
 		// "files" asks for the strip of the pack's file type artwork.
 		if len(args) != 4 && (len(args) != 5 || args[4] != "files") {
