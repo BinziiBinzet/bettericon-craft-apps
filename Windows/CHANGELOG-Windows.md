@@ -1,5 +1,12 @@
 # Windows installer changelog
 
+## 1.29.1 - 2026-11-24
+
+- Updating a pack fetches only the files that changed. Every file the earlier download already holds, and that still matches its published checksum, is taken from this PC; a damaged file is fetched again. Where this PC can't read WebP, an update of a pack whose PNG files are unchanged fetches nothing.
+- Once the updated pack is in place, BetterIcon removes the pack's earlier download. Shortly after each start it also removes the copies that updates with earlier versions left behind. A copy that is in use stays until the pack's next download or the next start.
+- Updating the pack you applied now shows its updated artwork in the Launcher at once. Shortcuts keep the earlier artwork until you choose **Apply icons**.
+- macOS and Linux get the same update and clean-up. On Linux the scroll bars now take the colors of the chosen BetterIcon app icon and stay visible while a list or page is longer than its area.
+
 ## 1.29.0 - 2026-11-23
 
 - Packs download about ten times smaller where this PC reads WebP. Most published icons now also come as a lighter WebP copy, at most 1024 pixels a side, and BetterIcon downloads one file per icon: the WebP where this PC reads WebP, otherwise the PNG. All 41 packs together are then about 42 MB in place of 413 MB, as Setup counts them.

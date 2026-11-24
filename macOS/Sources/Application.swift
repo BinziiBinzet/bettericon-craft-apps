@@ -122,6 +122,17 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
     private(set) var launchedAtLogin = false
     /// Downloads one pack and returns the pack list. The checks replace it, so no test needs the network.
     private let acquirePack: (String) throws -> [Pack]
+    /// Removes the earlier downloads of a pack, once the list its update returned is in use, or with nil those of every
+    /// pack, once after the start. The checks replace it.
+    private let prunePack: (String?) throws -> Void
+    /// How long after its start BetterIcon removes the downloads that earlier updates left behind, and how long it waits
+    /// before it asks again while something else is under way. The checks shorten it.
+    static var leftoverDelay: TimeInterval = 30
+    /// Whether this start has asked for that removal.
+    private var leftoversAsked = false
+    /// The packs being downloaded now, each with the number of its downloads under way.
+    private var downloadingIDs = [String: Int]()
+    private let pruneQueue = DispatchQueue(label: "com.omegadarling.bettericon.prune-packs", qos: .utility)
     /// No saved preferences: a new installation, which offers once to download every pack.
     private let newInstallation: Bool
     private var downloadingPacks = false
@@ -181,7 +192,7 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
         checkPackUpdates: ((PackUpdateCheck?) throws -> PackUpdateCheck)? = nil,
         loginItem: LoginItem?? = nil, acquirePack: ((String) throws -> [Pack])? = nil,
         currentEvent: @escaping () -> NSAppleEventDescriptor? = { NSAppleEventManager.shared().currentAppleEvent },
-        startedBefore: Bool? = nil
+        startedBefore: Bool? = nil, prunePack: ((String?) throws -> Void)? = nil
     ) throws {
         self.install = install
         self.presentWindow = presentWindow
@@ -219,6 +230,7 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
         builtins = try published.list()
         self.checkPackUpdates = checkPackUpdates ?? (install.fixture ? nil : published.checkUpdates)
         self.acquirePack = acquirePack ?? { [published] id in try published.list("acquire", id: id) }
+        self.prunePack = prunePack ?? { [published] id in try published.prune(id) }
         library.formats = published.formats
         // Earlier versions showed the chosen pack in the Launcher. Keep that look after an upgrade.
         // A new installation has applied nothing, so its Launcher starts from the original icons.
@@ -327,6 +339,8 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
             RunLoop.main.add(timer, forMode: .common)
             checkForPackUpdates()
         }
+        // Later, in the background: downloads that an update under an earlier version left behind are removed.
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.leftoverDelay) { [weak self] in self?.removeLeftoverDownloads() }
     }
     @objc private func otherInstance(_ note: Notification) {
         if note.object as? String == "show" {
@@ -790,10 +804,77 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
         let stored = try? saved(
             Preferences.self, at: install.state.appendingPathComponent("preferences.json"), fallback: prefs)
         let appliedPack = stored?.appliedPack ?? prefs.appliedPack
-        let appliedArt = stored?.appliedArt ?? prefs.appliedArt
+        let applied = (packs + builtins).first { $0.id == appliedPack && $0.status != "Download" }
+        let appliedArt = Self.appliedArtwork(stored?.appliedArt ?? prefs.appliedArt, own: applied?.icons ?? [:])
         return IconKeeper.Context(
             apps: apps, appliedPack: appliedPack, defaultPaths: stored?.defaultPaths ?? prefs.defaultPaths,
             appliedArt: appliedArt, adoption: adoption(appliedPack, appliedArt, stored ?? prefs))
+    }
+    /// The applied pack's artwork by app, as paths: what Apply recorded, while that file is on this Mac. An update of a
+    /// published pack removes the download the recorded files were in. The pack's own artwork (`own`) then stands in, as in
+    /// the Launcher, so new apps still get the applied pack. Nil when no Apply recorded any artwork.
+    static func appliedArtwork(_ recorded: [String: String]?, own: [String: URL]) -> [String: String]? {
+        guard var art = recorded else { return nil }
+        for (craft, path) in art where !fm.isReadableFile(atPath: path) {
+            if let file = own[craft] { art[craft] = file.path }
+        }
+        return art
+    }
+    private func downloadsBegan(_ ids: [String]) {
+        for id in ids { downloadingIDs[id, default: 0] += 1 }
+    }
+    /// A download of each of these packs ended. With `inUse`, the list it returned is the one the window shows now, so
+    /// nothing shows a file of an earlier download of those packs any more, and the earlier downloads can go.
+    private func downloadsEnded(_ ids: [String], inUse: Bool) {
+        for id in ids {
+            let left = (downloadingIDs[id] ?? 1) - 1
+            downloadingIDs[id] = left > 0 ? left : nil
+        }
+        if inUse { removeSuperseded(ids) }
+    }
+    /// Have the helper remove the earlier downloads of these packs, off the main thread. A pack that is still being
+    /// downloaded is left alone, because that download may be taking files from the earlier one: its end brings the next
+    /// call. While an Apply or other work is under way, which may have started with the earlier list, the removal waits.
+    /// An Apply is under way from its review on: its alert and the panel that chooses files are open with no work
+    /// running, and what the user then confirms still names the files of the earlier download.
+    private func removeSuperseded(_ ids: [String]) {
+        let free = ids.filter { downloadingIDs[$0] == nil }
+        guard !free.isEmpty else { return }
+        guard !working, !reviewing, !nativePanel else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.removeSuperseded(free) }
+            return
+        }
+        let prune = prunePack
+        pruneQueue.async {
+            for id in free {
+                do { try prune(id) } catch {
+                    NSLog("BetterIcon could not remove an earlier download of %@: %@", id, error.localizedDescription)
+                }
+            }
+        }
+    }
+    /// Once per start, some time after it: have the helper remove the downloads that updates left behind before BetterIcon
+    /// removed them itself, off the main thread. Nothing is asked while a pack downloads, a review is open or other work is
+    /// under way: it is tried again later. A failure is logged and changes nothing for the user. The Launcher may show
+    /// artwork recorded at an Apply that was in such a download; it is then drawn again with the applied pack's own.
+    func removeLeftoverDownloads() {
+        guard !leftoversAsked else { return }
+        guard !working, !downloadingPacks, downloadingIDs.isEmpty, !reviewing, !nativePanel else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.leftoverDelay) { [weak self] in self?.removeLeftoverDownloads() }
+            return
+        }
+        leftoversAsked = true
+        let recorded = (prefs.appliedArt ?? [:]).values.filter { fm.isReadableFile(atPath: $0) }
+        let prune = prunePack
+        pruneQueue.async { [weak self] in
+            do { try prune(nil) } catch {
+                NSLog("BetterIcon could not remove the downloads earlier updates left behind: %@", error.localizedDescription)
+            }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, !self.working, recorded.contains(where: { !fm.isReadableFile(atPath: $0) }) else { return }
+                self.render()
+            }
+        }
     }
     /// New ArtCraft apps get the applied pack's artwork, in the locations the last Apply covered: the standard apps
     /// folders of those locations, and the folders included at that Apply. The apps in a folder included since are not
@@ -988,7 +1069,7 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
         }
         guard let first = wanted.first else { return }
         let ids = wanted.map(\.id)
-        background(
+        let started = background(
             "Downloading " + first.title + "…",
             work: { () -> ([Pack]?, Bool) in
                 var rows: [Pack]?
@@ -1003,10 +1084,12 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
                     self.builtins = rows
                     self.rangeForSelection()
                 }
+                self.downloadsEnded(ids, inUse: result.0 != nil)
                 if result.1 {
                     self.status = "Couldn’t download your chosen icon pack. BetterIcon will try again the next time it starts."
                 }
             })
+        if started { downloadsBegan(ids) }
     }
     /// Download the packs the user chose in the offer of a new installation, one after another, without blocking the
     /// window. The chosen packs are saved until each has downloaded, so a quit midway leaves the rest for the next start.
@@ -1056,6 +1139,7 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
         if status == Self.idleStatus { status = "" }
         downloadProgress = "Downloading \(total) icon \(total == 1 ? "pack" : "packs")…"
         showDownloads()
+        downloadsBegan(ids)
         func finished(_ id: String) {
             prefs.pendingPacks?.removeAll { $0 == id }
             if prefs.pendingPacks?.isEmpty == true { prefs.pendingPacks = nil }
@@ -1065,6 +1149,8 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
             var done = 0
             var failed = [(title: String, cause: String)]()
             var unreachable = false
+            // How many of the packs had their turn. The others are not downloaded when GitHub cannot be reached.
+            var reached = 0
             for (index, id) in ids.enumerated() {
                 let title = titles[id] ?? id
                 DispatchQueue.main.async {
@@ -1076,6 +1162,7 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
                     done += 1
                     DispatchQueue.main.async {
                         self.builtins = rows
+                        self.downloadsEnded([id], inUse: true)
                         finished(id)
                         if !self.working { self.render() }
                     }
@@ -1086,10 +1173,16 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
                         break
                     }
                     failed.append((title, failure.cause))
-                    DispatchQueue.main.async { finished(id) }
+                    DispatchQueue.main.async {
+                        self.downloadsEnded([id], inUse: false)
+                        finished(id)
+                    }
                 }
+                reached += 1
             }
+            let skipped = Array(ids.dropFirst(reached))
             DispatchQueue.main.async {
+                self.downloadsEnded(skipped, inUse: false)
                 self.downloadingPacks = false
                 self.downloadProgress = nil
                 // Also after GitHub could not be reached: each pack still downloads when it is chosen.
@@ -1226,10 +1319,18 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
               group == "files" ? (pack.canFiles || pack.isDefault) : pack.canApps else { return }
         let needsDownload = ["Download", "Update available"].contains(pack.status)
         if needsDownload {
-            background("Downloading " + pack.title + "…", work: { try self.published.list("acquire", id: id) }) { rows in
-                self.builtins = rows
-                self.changeSelection(id, message: message, group: group)
-            }
+            let started = background(
+                "Downloading " + pack.title + "…", work: { try self.published.list("acquire", id: id) },
+                done: { rows in
+                    self.builtins = rows
+                    self.downloadsEnded([id], inUse: true)
+                    self.changeSelection(id, message: message, group: group)
+                },
+                onError: { error in
+                    self.downloadsEnded([id], inUse: false)
+                    self.report(error.localizedDescription)
+                })
+            if started { downloadsBegan([id]) }
             return
         }
         let artwork = group == "files" ? published.fileArt(pack) : pack.icons

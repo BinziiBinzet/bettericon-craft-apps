@@ -207,6 +207,15 @@ struct PublishedPacks {
                  previousIDs: item.PreviousIDs ?? [], unlisted: appFiles.filter { opted.contains($0.key) }, leftOut: leftOut)
         }
     }
+    /// Has the helper remove the earlier downloads of a pack, which the download now in use supersedes. An update is a new
+    /// download beside the earlier one, and takes the files that did not change from it. The earlier one stays until the
+    /// app has taken the update's list into use: its window shows the earlier files until then, and when a WebP of the
+    /// update can't be read, list fetches the PNG files, which the helper takes from the earlier download.
+    /// Without a pack, the helper removes such downloads of every pack: what updates left behind before BetterIcon removed
+    /// them itself. The app asks for that once after it has started.
+    func prune(_ id: String? = nil) throws {
+        _ = try run(["prune"] + (id.map { [$0] } ?? []))
+    }
     func checkUpdates(_ previous: PackUpdateCheck?) throws -> PackUpdateCheck {
         var args = ["check-updates"]
         if let previous { args += [previous.revision, previous.baseline, String(previous.count)] }

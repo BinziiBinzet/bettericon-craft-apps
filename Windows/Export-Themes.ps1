@@ -16,8 +16,10 @@ $styles = $assembly.GetType('BetterIcon.Tray.AppBranding', $true).GetField('Styl
 $names = [ordered]@{ surface = 'Surface'; background = 'Background'; input = 'Input'; inactive = 'InactiveTab'; selection = 'Selection'
     pressed = 'Pressed'; border = 'Border'; ink = 'Text'; muted = 'Muted'; accent = 'Accent'; accentHover = 'AccentHover'
     accentPressed = 'AccentPressed'; accentInk = 'AccentText'; warn = 'Error'
-    # A loading bar's track, and the scroll bars, as the Windows app draws them.
-    controlFace = 'ControlFace'; scrollTrack = 'ScrollTrack'; scrollThumb = 'ScrollThumb' }
+    # A loading bar's track, and the scroll bars, as the Windows app draws them: the track, and the thumb at rest,
+    # under the pointer and while it is dragged.
+    controlFace = 'ControlFace'; scrollTrack = 'ScrollTrack'; scrollThumb = 'ScrollThumb'
+    scrollThumbHot = 'ScrollThumbHot'; scrollThumbPressed = 'ScrollThumbPressed' }
 $lines = [Collections.Generic.List[string]]::new()
 foreach ($style in $styles) {
     $modes = foreach ($mode in 'Dark', 'Light') {

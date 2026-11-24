@@ -213,6 +213,8 @@ namespace BetterIcon.Tray
         public string StateHash { get; set; }
         public PackUpdateCheck PackCheck { get; set; }
         public AppEntry[] Apps { get; set; }
+        // After RemoveSupersededPacks: how many copies of downloaded packs, left by earlier updates, were removed.
+        public int RemovedPackCopies { get; set; }
     }
     // Optional developer fixture configuration. Both fields are required so a
     // disposable test cannot accidentally fall back to the user's real folders.
@@ -224,6 +226,9 @@ namespace BetterIcon.Tray
         public bool AutomaticPackChecks { get; set; }
         // Background checks after app updates run in fixture mode only when this is set.
         public bool AutomaticReconcile { get; set; }
+        // In fixture mode, copies of downloaded packs that an earlier update left on disk are removed after start only when
+        // this is set: the milliseconds after start, and between tries while BetterIcon is busy.
+        public int? PackSweepDelay { get; set; }
         public string InstallerBusyFile { get; set; }
         public string InstallerLogFile { get; set; }
         // Fixture mode never starts an elevated helper: "Cancel" (the default) or "Allow" stands in for Windows' answer.
@@ -687,6 +692,8 @@ namespace BetterIcon.Tray
                 setupDownloadsTask = StartSetupDownloads();
                 // Checks for app updates run whether or not pack checks do.
                 StartUpdateWatch();
+                // Later, in the background: copies of downloaded packs that an earlier update left on disk are removed.
+                StartPackSweep();
                 if (!automaticPackChecks || IsDisposed || Disposing) return;
                 packCheckTimer.Tick += async delegate {
                     if (DateTime.UtcNow >= nextPackCheck) await CheckForPackUpdates();
@@ -700,7 +707,7 @@ namespace BetterIcon.Tray
         {
             if (disposing && trayHover != null) trayHover.Dispose();
             if (disposing && runningTaskbarIcons != null) runningTaskbarIcons.Dispose();
-            if (disposing) { packCheckTimer.Dispose(); StopUpdateWatch(); DisposeRoundedWindow(); if (hotkey != null) hotkey.Dispose(); DisposeAppearance(); ClearAppArtwork(); ClearPackArtwork(); ClearFileArtwork(); }
+            if (disposing) { packCheckTimer.Dispose(); if (packSweepTimer != null) packSweepTimer.Dispose(); StopUpdateWatch(); DisposeRoundedWindow(); if (hotkey != null) hotkey.Dispose(); DisposeAppearance(); ClearAppArtwork(); ClearPackArtwork(); ClearFileArtwork(); }
             base.Dispose(disposing);
         }
 
@@ -1134,8 +1141,9 @@ namespace BetterIcon.Tray
             string id = catalog.CurrentPackId(preferences.AppliedTheme);
             return catalog.Themes.Concat(bundledThemes).FirstOrDefault(theme => theme.Id == id && !theme.NeedsDownload);
         }
-        // The artwork recorded when the pack was applied stays in use after the pack is
-        // edited, updated or removed. Without it, show the shortcut's own icon.
+        // The artwork recorded when the pack was applied stays in use while its file is there, as after a personal pack is
+        // edited. An update of a published pack removes the copy it replaces: the pack's artwork as it is now then stands in.
+        // Without either, show the shortcut's own icon.
         string AppliedArtwork(ThemeEntry applied, AppEntry entry)
         {
             string path;

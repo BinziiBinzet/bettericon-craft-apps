@@ -49,7 +49,7 @@ class Popup:
         manager = WebKit2.UserContentManager()
         manager.register_script_message_handler("betterIcon")
         manager.connect("script-message-received::betterIcon", self.message)
-        # The page leaves the scroll bars to WebKitGTK (see scrollbar-color in popup.css).
+        # The page draws its own scroll bars in WebKitGTK (see data-gtk in popup.css).
         manager.add_script(WebKit2.UserScript.new(
             "document.documentElement.dataset.gtk = 'true';", WebKit2.UserContentInjectedFrames.TOP_FRAME,
             WebKit2.UserScriptInjectionTime.START, None, None))

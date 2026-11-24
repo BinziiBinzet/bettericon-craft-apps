@@ -24,16 +24,89 @@
   --control-face: #d8dad2;
   --scroll-track: #f5f6f2;
   --scroll-thumb: #a2a49e;
+  --scroll-thumb-hot: #8b8c88;
+  --scroll-thumb-pressed: #747571;
   --size: 48px;
   --cell: 112px;
   --row: 98px;
 }
 /* On the Mac, scroll bars take the theme's colors where the system's web view can color them. They keep the system's
-   own shape and behavior, so they still show only while scrolling. WebKitGTK shades a colored thumb by itself, lighter
-   under the pointer and darker while it is dragged, which lands on the track's color in these schemes, so the Linux
-   app (data-gtk) keeps WebKitGTK's own scroll bars. */
+   own shape and behavior, so they still show only while scrolling. */
 :root:not([data-gtk]) {
   scrollbar-color: var(--scroll-thumb) var(--scroll-track);
+}
+/* WebKitGTK shades a thumb colored that way by itself, lighter under the pointer and darker while it is dragged, which
+   lands on the track's color in these schemes. So the Linux app (data-gtk) draws its scroll bars here: a thumb in the
+   theme's three colors, at rest, under the pointer and while it is dragged, as on Windows, and the track's color while
+   the pointer is on the bar or holds the thumb. These rules name the root as html: WebKit never applies a rule for a
+   bar under the pointer or while pressed (:hover, :active) whose selector also says :root. */
+html[data-gtk] ::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+  border-radius: 6px;
+}
+html[data-gtk] ::-webkit-scrollbar:hover,
+html[data-gtk] ::-webkit-scrollbar:active {
+  background-color: var(--scroll-track);
+}
+/* WebKit paints a bar over its scroller's rounded corners, so the track's color has to keep out of them itself. A
+   bar's round ends stay inside corners of up to 7px, as a pack list's and a menu's. A dialog's are wider, and its
+   bar follows them: their radius less the 1px border. */
+html[data-gtk] dialog::-webkit-scrollbar:vertical {
+  border-radius: 0 11px 11px 0;
+}
+html[data-gtk] dialog::-webkit-scrollbar:horizontal {
+  border-radius: 0 0 11px 11px;
+}
+html[data-gtk] ::-webkit-scrollbar-thumb {
+  min-width: 32px;
+  min-height: 32px;
+  border: 3px solid transparent;
+  border-radius: 6px;
+  background-color: var(--scroll-thumb);
+  background-clip: padding-box;
+}
+html[data-gtk] ::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scroll-thumb-hot);
+}
+html[data-gtk] ::-webkit-scrollbar-thumb:active {
+  background-color: var(--scroll-thumb-pressed);
+}
+html[data-gtk] ::-webkit-scrollbar-corner {
+  background: transparent;
+}
+/* A bar drawn here takes 12px beside what it scrolls, where WebKitGTK's own lay over it. Everything that scrolls up
+   and down keeps that strip free at all times and takes it from the space on its right, so nothing moves or wraps
+   when a bar appears and every control stays where it was. */
+:root[data-gtk] .scroll,
+:root[data-gtk] .grid,
+:root[data-gtk] dialog,
+:root[data-gtk] #packOptions {
+  overflow-y: scroll;
+}
+:root[data-gtk] .grid {
+  margin-right: -12px;
+}
+:root[data-gtk] .settings {
+  padding-right: 20px;
+}
+:root[data-gtk] dialog {
+  padding-right: 10px;
+}
+/* A pack list is as wide as its button, so the strip comes out of its padding and its rows' spacing: each name still
+   gets the width it had. */
+:root[data-gtk] #packOptions {
+  padding-right: 0;
+}
+:root[data-gtk] #packOptions [role="option"] {
+  gap: 8px;
+  padding-right: 4px;
+}
+/* A menu takes its width from its rows, so the strip widens it, by 7px in place of the padding. Only a menu long
+   enough to scroll keeps the strip. */
+:root[data-gtk] #menu:has(> :nth-child(7)) {
+  overflow-y: scroll;
+  padding-right: 0;
 }
 :root[data-dark="true"] {
   color-scheme: dark;
@@ -54,6 +127,8 @@
   --control-face: #6b7570;
   --scroll-track: #293630;
   --scroll-thumb: #6b7570;
+  --scroll-thumb-hot: #828b86;
+  --scroll-thumb-pressed: #979e9a;
 }
 /* A loading bar in the theme's colors, as on Windows: the button gray with an accent chunk, which moves across while
    the bar has no value. The system would draw it in its own accent color. */

@@ -370,6 +370,15 @@ func (l *library) currentID(id string) string {
 	}
 	return id
 }
+
+// previousIDs lists the packs a pack replaced. Each of them was published in the folder its ID names, with the file names
+// the pack has now.
+func (l *library) previousIDs(id string) []string {
+	if _, merged := l.latest.Packs[modernFlat]; merged && id == modernFlat {
+		return modernFlatVariants
+	}
+	return nil
+}
 // webpReadable reports whether the app running the helper reads WebP pack artwork: it sets BETTERICON_WEBP_READABLE to 1
 // when it does. The helper decodes nothing itself; downloads and the downloaded state follow this answer.
 func webpReadable() bool { return os.Getenv("BETTERICON_WEBP_READABLE") == "1" }
@@ -510,9 +519,7 @@ func (l *library) list() []view {
 			continue
 		}
 		v := view{ID: id, Name: p.Name, Author: p.Author, Status: "Download", Icons: map[string]string{}, FileIcons: map[string]string{}, AppFileIcons: map[string]string{}}
-		if _, merged := l.latest.Packs[modernFlat]; id == modernFlat && merged {
-			v.PreviousIDs = modernFlatVariants
-		}
+		v.PreviousIDs = l.previousIDs(id)
 		_, v.HasPreview = l.previews[id]
 		_, v.HasFilePreview = l.previews[id+fileSet]
 		// A pack is listed for apps when it draws app icons and for files when it draws file artwork.

@@ -2245,6 +2245,100 @@ import WebKit
             writing && released && reviewed && errors.isEmpty && filmBack && !clean(photo),
             "a review opened while BetterIcon puts an icon back is not lost, and icons keep coming back afterwards")
     }
+    /// The offer's downloads end while an Apply's location alert is open. Work on the main queue goes on under that alert,
+    /// as it does under the panel that chooses files for Apply file icons, so the removal of the packs' earlier downloads
+    /// could run there. It waits until the Apply is over: here its review, which follows the alert, is closed again.
+    /// (Under the review itself nothing on the main queue runs, because that alert is opened from the main queue.)
+    @MainActor static func removalWaitsForReview(resources: URL, root: URL) async throws {
+        let all = root.appendingPathComponent("Shared")
+        for folder in [root.appendingPathComponent("Applications"), all] {
+            try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        }
+        _ = try fixtureApp(all, "FilmCraft", id: "local.bettericon.removal.filmcraft", icon: resources.appendingPathComponent("BetterIcon.icns"))
+        // No saved preferences: a new installation, which offers the downloads.
+        let install = try Installation(resources: resources, fixture: root)
+        let seed = try PublishedPacks(resources: resources, state: root.appendingPathComponent("seed-cache")).list()
+        let lock = NSLock()
+        var requested = [String](), pruned = [(id: String, at: Date)]()
+        var first = true
+        // The first download waits until the Apply's alert is open. The others follow at once.
+        let entered = DispatchSemaphore(value: 0), proceed = DispatchSemaphore(value: 0)
+        let acquire: (String) throws -> [Pack] = { id in
+            lock.lock()
+            let hold = first
+            first = false
+            requested.append(id)
+            let done = Set(requested)
+            lock.unlock()
+            if hold {
+                entered.signal()
+                _ = proceed.wait(timeout: .now() + 60)
+            }
+            return seed.map { pack in
+                var copy = pack
+                if done.contains(pack.id) { copy.status = "Downloaded" }
+                return copy
+            }
+        }
+        let prune: (String?) throws -> Void = { id in
+            guard let id else { return }
+            lock.lock()
+            pruned.append((id, Date()))
+            lock.unlock()
+        }
+        func asked() -> Int {
+            lock.lock()
+            defer { lock.unlock() }
+            return requested.count
+        }
+        func removed() -> [(id: String, at: Date)] {
+            lock.lock()
+            defer { lock.unlock() }
+            return pruned
+        }
+        let host = try startHost(install, acquire: acquire, prune: prune)
+        defer { host.window.orderOut(nil) }
+        let offered = await jsUntil(host, "typeof model !== 'undefined' && !!model && model.apps.length === 1 && !el('offer').hidden && !working")
+        _ = await js(host, "el('offerDownload').click(); true")
+        let downloading = await waitUntil(20) { entered.wait(timeout: .now()) == .success }
+        // The location alert stays open until this check has looked. The review is closed as soon as it opens: this
+        // check cannot go on under it.
+        var answer = false, location = false
+        var closed: Date?
+        let driver = AlertDriver { alert in
+            if alert.text.contains("in which location?") {
+                location = true
+                return answer ? alert.buttons.first(where: { $0.hasPrefix("All users") }) : nil
+            }
+            if alert.text.contains("Review ") {
+                closed = Date()
+                return alert.buttons.first(where: { ["Cancel", "Done"].contains($0) })
+            }
+            return alert.buttons == ["OK"] ? "OK" : nil
+        }
+        defer { driver.stop() }
+        _ = try await host.web.evaluateJavaScript("send('review', {restore: false}); true")
+        let asking = await waitUntil(20) { location }
+        proceed.signal()
+        let landed = await waitUntil(60) { asked() == seed.count }
+        // Longer than the two seconds after which the app tries a removal again.
+        try await Task.sleep(nanoseconds: 2_600_000_000)
+        let kept = removed().isEmpty
+        answer = true
+        let reviewed = await waitUntil(40) { closed != nil }
+        let gone = await waitUntil(20) { removed().count >= seed.count }
+        try await Task.sleep(nanoseconds: 2_600_000_000)
+        let after = closed.map { end in removed().allSatisfy { $0.at >= end } } ?? false
+        if !(offered && downloading && asking && landed && kept && reviewed && gone && after) {
+            print("  removal during an Apply: offered \(offered), downloading \(downloading), location alert \(asking), "
+                + "landed \(landed) (\(asked()) of \(seed.count)), kept under the alert \(kept), review closed \(reviewed), "
+                + "removed \(removed().count), all after the review \(after)")
+        }
+        try check(
+            offered && downloading && asking && landed && kept && reviewed && gone && after
+                && removed().count == seed.count && Set(removed().map(\.id)) == Set(seed.map(\.id)),
+            "while an Apply's location alert is open, the earlier downloads of packs whose download has just ended stay, and they are removed, once each, when the Apply's review is closed")
+    }
     /// Right-click > Restore on an app that already shows its original icon, here because macOS refused to put its
     /// icon back after an update: the review offers to keep that icon, and the status line says the app is at it.
     @MainActor static func restoreLabel(resources: URL, root: URL) async throws {
@@ -2520,14 +2614,14 @@ import WebKit
     @MainActor static func startHost(
         _ install: Installation, hidden: Bool = true, login: LoginItem? = nil,
         acquire: ((String) throws -> [Pack])? = nil, event: @escaping () -> NSAppleEventDescriptor? = { nil },
-        presented: @escaping () -> Void = {}
+        presented: @escaping () -> Void = {}, prune: ((String?) throws -> Void)? = nil
     ) throws -> Application {
         let host = try Application(install, hidden: hidden, presentWindow: { window in
             presented()
             window.alphaValue = 0
             window.ignoresMouseEvents = true
             window.orderBack(nil)
-        }, loginItem: .some(login), acquirePack: acquire, currentEvent: event)
+        }, loginItem: .some(login), acquirePack: acquire, currentEvent: event, prunePack: prune)
         host.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
         return host
     }
@@ -2819,9 +2913,37 @@ import WebKit
             "unchecking a choice changes the download size, and Not now ends the offer for good without downloading anything")
         // Download both: every pack, one after another, past a pack that fails.
         let downloads = try emptyFixture(resources, root, "offer-download")
-        let host = try startHost(downloads, acquire: acquire)
+        // The packs whose earlier downloads the app asks the helper to remove, in order.
+        var pruneCalls = [String]()
+        // How many packs had been asked for when the app asked to remove the downloads earlier updates left behind.
+        var leftoverCalls = [Int]()
+        let pruneFixture: (String?) throws -> Void = { id in
+            lock.lock()
+            if let id { pruneCalls.append(id) } else { leftoverCalls.append(requested.count) }
+            lock.unlock()
+        }
+        func pruneAsked() -> [String] {
+            lock.lock()
+            defer { lock.unlock() }
+            return pruneCalls
+        }
+        func leftoversAsked() -> [Int] {
+            lock.lock()
+            defer { lock.unlock() }
+            return leftoverCalls
+        }
+        // The removal after start is far off in these checks (main), so this one decides when the app first tries it:
+        // during the downloads.
+        let usualDelay = Application.leftoverDelay
+        defer { Application.leftoverDelay = usualDelay }
+        let host = try startHost(downloads, acquire: acquire, prune: pruneFixture)
         _ = await jsUntil(host, "!el('offer').hidden && !working")
+        let before = asked().count
         _ = await js(host, "el('offerDownload').click(); true")
+        let started = await waitUntil(20) { asked().count > before }
+        Application.leftoverDelay = 0.2
+        host.removeLeftoverDownloads()
+        let heldBack = started && leftoversAsked().isEmpty
         var progress = Set<String>(), final = ""
         let end = Date().addingTimeInterval(60)
         while Date() < end {
@@ -2843,7 +2965,179 @@ import WebKit
                 && asked().count == seed.count && Set(asked()) == Set(seed.map(\.id)) && marked
                 && storedPrefs(downloads)?.offerPacks == nil && host.alertsShown == 0 && NSApp.modalWindow == nil,
             "Download fetches every chosen pack in turn through the helper's acquire, shows its progress and the pack that failed on the status line, and keeps going after a failure")
+        let allPruned = await waitUntil(15) { pruneAsked().count >= seed.count - 1 }
+        try check(
+            allPruned && pruneAsked().count == seed.count - 1 && Set(pruneAsked()) == Set(seed.map(\.id)).subtracting([failing]),
+            "once a downloaded pack's list is in use, the app has that pack's earlier downloads removed, once, and never those of a pack whose download failed")
+        let afterwards = await waitUntil(15) { !leftoversAsked().isEmpty }
+        try await Task.sleep(nanoseconds: 800_000_000)
+        try check(
+            heldBack && afterwards && leftoversAsked() == [seed.count],
+            "while packs download, the app does not ask to remove the downloads earlier updates left behind, and asks once when the downloads have ended")
         retire([newHost, oldHost, reopened, host])
+    }
+    /// Updates of a downloaded pack through the helper and a local pack source that holds only what an update changes:
+    /// which files an update fetches, when the download it supersedes goes, and which artwork stands in for artwork that
+    /// was recorded in it.
+    @MainActor static func supersededChecks(resources: URL, root: URL) throws {
+        let fixture = root.appendingPathComponent("Resources")
+        try fm.createDirectory(at: fixture.appendingPathComponent("Catalog"), withIntermediateDirectories: true)
+        try fm.createDirectory(at: root.appendingPathComponent("Helpers"), withIntermediateDirectories: true)
+        try fm.createSymbolicLink(
+            at: root.appendingPathComponent("Helpers/packstore"),
+            withDestinationURL: resources.deletingLastPathComponent().appendingPathComponent("Helpers/packstore"))
+        for name in ["ProjectFileTypes.json", "previews.tsv"] {
+            try fm.copyItem(at: resources.appendingPathComponent("Catalog/" + name), to: fixture.appendingPathComponent("Catalog/" + name))
+        }
+        func blob(_ data: Data) -> String {
+            Insecure.SHA1.hash(data: Data("blob \(data.count)\0".utf8) + data).map { String(format: "%02x", $0) }.joined()
+        }
+        func catalog(_ revision: String, _ files: [String: String]) -> Data {
+            let rows = files.keys.sorted().map { name -> String in
+                let data = Data((files[name] ?? "").utf8)
+                return "\(blob(data))\t\(name)\t\(name)\t\(digest(data))"
+            }
+            return Data(([String(repeating: revision, count: 40)] + rows).joined(separator: "\n").utf8)
+        }
+        let keep = "Craft-Icons-Checks/Keep", twin = "Craft-Icons-Checks/Twin"
+        let seed = String(repeating: "1", count: 40)
+        let first = [keep + "/PhotoCraft.png": "photo one", keep + "/FilmCraft.png": "film", twin + "/PhotoCraft.png": "png twin"]
+        try catalog("1", first).write(to: fixture.appendingPathComponent("Catalog/packs.tsv"))
+        let source = root.appendingPathComponent("Source")
+        try folder(source, first.mapValues { Data($0.utf8) })
+        setenv("BETTERICON_PACK_SOURCE", source.path, 1)
+        defer { unsetenv("BETTERICON_PACK_SOURCE") }
+        let state = root.appendingPathComponent("State")
+        let packs = try PublishedPacks(resources: fixture, state: state)
+        let cache = state.appendingPathComponent("pack-cache")
+        /// The signature folders that hold a download of a pack.
+        func copies(_ id: String) -> [String] {
+            let names = (try? fm.contentsOfDirectory(atPath: cache.appendingPathComponent("downloads").path)) ?? []
+            return names.filter { fm.fileExists(atPath: cache.appendingPathComponent("downloads/\($0)/\(id)").path) }.sorted()
+        }
+        func text(_ file: URL?) -> String { file.flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? "" }
+        func listed(_ list: [Pack], _ id: String) -> Pack? { list.first { $0.id == id } }
+        _ = try packs.list("acquire", id: keep)
+        _ = try packs.list("acquire", id: twin)
+        // The pack list after a refresh: Keep has one changed and one new icon, and Twin a WebP twin the Mac can't read.
+        try catalog("2", [
+            keep + "/PhotoCraft.png": "photo two", keep + "/FilmCraft.png": "film", keep + "/WordCraft.png": "word",
+            twin + "/PhotoCraft.png": "png twin", twin + "/PhotoCraft.webp": "not a WebP image",
+        ]).write(to: cache.appendingPathComponent("catalog-" + seed))
+        // The source has the changed icon and lacks the new one, as when the connection drops midway.
+        try fm.removeItem(at: source)
+        try folder(source, [keep + "/PhotoCraft.png": Data("photo two".utf8)])
+        var interrupted = false
+        do { _ = try packs.list("acquire", id: keep) } catch { interrupted = true }
+        let held = listed(try packs.list(), keep)
+        try check(
+            interrupted && held?.status == "Update available" && text(held?.icons["PhotoCraft"]) == "photo one"
+                && text(held?.icons["FilmCraft"]) == "film" && copies(keep).count == 1,
+            "an interrupted update leaves the earlier download in use")
+        // Now the new icon is there too. The icon that did not change is in no source.
+        try folder(source, [keep + "/WordCraft.png": Data("word".utf8)])
+        let updated = listed(try packs.list("acquire", id: keep), keep)
+        let beside = copies(keep)
+        try check(
+            updated?.status == "Downloaded" && text(updated?.icons["PhotoCraft"]) == "photo two"
+                && text(updated?.icons["FilmCraft"]) == "film" && text(updated?.icons["WordCraft"]) == "word",
+            "an update takes the files that did not change from the earlier download and fetches only the others")
+        try packs.prune(keep)
+        let after = listed(try packs.list(), keep)
+        try check(
+            beside.count == 2 && copies(keep).count == 1 && after?.status == "Downloaded" && text(after?.icons["PhotoCraft"]) == "photo two"
+                && copies(twin).count == 1,
+            "the earlier download stays until the app asks for its removal, which leaves one download of the pack and other packs alone")
+        // The update's WebP twin is all the source has. The Mac can't read it, so the PNG twin is needed: it comes from the
+        // earlier download.
+        try folder(source, [twin + "/PhotoCraft.webp": Data("not a WebP image".utf8)])
+        let fallback = listed(try packs.list("acquire", id: twin), twin)
+        try packs.prune(twin)
+        try check(
+            fallback?.status == "Downloaded" && fallback?.icons["PhotoCraft"]?.pathExtension == "png"
+                && text(fallback?.icons["PhotoCraft"]) == "png twin" && fallback?.leftOut.isEmpty == true && copies(twin).count == 1
+                && listed(try packs.list(), twin)?.status == "Downloaded",
+            "when an update's WebP can't be read, its PNG twin comes from the earlier download without a fetch")
+        // Both packs are updated again, as a version that removed nothing left them: the earlier download beside the new one.
+        try catalog("3", [
+            keep + "/PhotoCraft.png": "photo three", keep + "/FilmCraft.png": "film", keep + "/WordCraft.png": "word",
+            twin + "/PhotoCraft.png": "png twin three", twin + "/PhotoCraft.webp": "not a WebP image",
+        ]).write(to: cache.appendingPathComponent("catalog-" + seed))
+        try folder(source, [keep + "/PhotoCraft.png": Data("photo three".utf8), twin + "/PhotoCraft.png": Data("png twin three".utf8)])
+        _ = try packs.list("acquire", id: keep)
+        _ = try packs.list("acquire", id: twin)
+        let leftBehind = copies(keep).count == 2 && copies(twin).count == 2
+        try packs.prune()
+        let swept = try packs.list()
+        try check(
+            leftBehind && copies(keep).count == 1 && copies(twin).count == 1 && listed(swept, keep)?.status == "Downloaded"
+                && text(listed(swept, keep)?.icons["PhotoCraft"]) == "photo three" && listed(swept, twin)?.status == "Downloaded"
+                && text(listed(swept, twin)?.icons["PhotoCraft"]) == "png twin three",
+            "asked for every pack at once, the helper removes the downloads earlier updates left behind and leaves each pack's download in use")
+        // The artwork Apply recorded, by app, and the applied pack's own artwork.
+        let there = source.appendingPathComponent(keep + "/PhotoCraft.png")
+        let own = ["PhotoCraft": root.appendingPathComponent("own/PhotoCraft.png"), "FilmCraft": root.appendingPathComponent("own/FilmCraft.png")]
+        let gone = root.appendingPathComponent("removed download")
+        let recorded = [
+            "PhotoCraft": there.path, "FilmCraft": gone.appendingPathComponent("FilmCraft.png").path,
+            "WordCraft": gone.appendingPathComponent("WordCraft.png").path,
+        ]
+        var expected = recorded
+        expected["FilmCraft"] = own["FilmCraft"]?.path
+        try check(
+            Application.appliedArtwork(recorded, own: own) == expected && Application.appliedArtwork(nil, own: own) == nil,
+            "the artwork recorded at Apply stays in use while its file is there, and the applied pack's own artwork stands in for a recorded file that is gone")
+    }
+    /// After its start, in the background, the app has the helper remove a download that an update left behind before
+    /// updates removed it themselves. The fixture is a pack of the installer's own list as a download and such an update
+    /// left it, so nothing is fetched.
+    @MainActor static func leftoverChecks(resources: URL, root: URL) async throws {
+        let install = try emptyFixture(resources, root, "leftover")
+        // Saved preferences: an upgraded installation, which offers no downloads.
+        _ = try updatePreferences(install.state) { $0.size = 64 }
+        let id = "Craft-Icons-Komplett/Standard"
+        let lines = try String(contentsOf: resources.appendingPathComponent("Catalog/packs.tsv"), encoding: .utf8)
+            .split(whereSeparator: \.isNewline).map(String.init)
+        let rows = lines.dropFirst().filter { $0.components(separatedBy: "\t").dropFirst().first?.hasPrefix(id + "/") == true }
+        guard let revision = lines.first, !rows.isEmpty else { throw Problem("the installer's pack list lacks \(id)") }
+        let files = rows.map { $0.components(separatedBy: "\t") }.map { (file: $0[1], blob: $0[0]) }
+        let signature = digest(Data(files.map { $0.file + "\t" + $0.blob }.sorted().joined(separator: "\n").utf8))
+        let cache = install.state.appendingPathComponent("pack-cache")
+        var content = ["acquired/" + digest(Data(id.utf8)): Data((([revision] + rows).joined(separator: "\n") + "\n").utf8)]
+        for entry in files { content["downloads/\(signature)/\(entry.file)"] = Data("artwork".utf8) }
+        // The earlier download: the same pack under another signature, from before the receipt was written.
+        let earlier = cache.appendingPathComponent("downloads/" + String(repeating: "e", count: 64))
+        content["downloads/" + earlier.lastPathComponent + "/" + files[0].file] = Data("earlier artwork".utf8)
+        try folder(cache, content)
+        try fm.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -3600)], ofItemAtPath: earlier.path)
+        let published = try PublishedPacks(resources: resources, state: install.state)
+        let lock = NSLock()
+        var asked = [String?]()
+        let prune: (String?) throws -> Void = { pack in
+            lock.lock()
+            asked.append(pack)
+            lock.unlock()
+            try published.prune(pack)
+        }
+        func requests() -> [String?] {
+            lock.lock()
+            defer { lock.unlock() }
+            return asked
+        }
+        let usualDelay = Application.leftoverDelay
+        Application.leftoverDelay = 0.5
+        defer { Application.leftoverDelay = usualDelay }
+        let host = try startHost(install, prune: prune)
+        defer { retire([host]) }
+        let ready = await settled(host)
+        let gone = await waitUntil(30) { !fm.fileExists(atPath: earlier.path) }
+        // Several delays later it has still asked once.
+        try await Task.sleep(nanoseconds: 2_000_000_000)
+        let status = await js(host, "(model.packs.find(p => p.id === '\(id)') || {}).status") as? String
+        let kept = files.allSatisfy { fm.fileExists(atPath: cache.appendingPathComponent("downloads/\(signature)/\($0.file)").path) }
+        try check(
+            ready && gone && requests() == [nil] && kept && status == "Downloaded" && host.alertsShown == 0,
+            "after its start, in the background, the app has the download an earlier update left behind removed, once, and the pack stays downloaded")
     }
     /// The Launcher draws for each copy the artwork BetterIcon put on it, and the user's own icon where BetterIcon gave way.
     @MainActor static func gridChecks(resources: URL, root: URL) async throws {
@@ -3071,7 +3365,29 @@ import WebKit
             storedPrefs(three.install)?.appliedScopes == ["shared"] && mailed && clean(solid)
                 && record(three.store, path(solid)) == nil,
             "after an Apply made before BetterIcon recorded its locations, new apps get the pack where BetterIcon keeps icons and nowhere else")
-        retire([host, second, third])
+        // The applied pack was updated since its Apply: the artwork Apply recorded was in the download the update removed. A
+        // new app then gets the pack's own artwork. The pack is a personal one here, which the app lists without the network.
+        let five = try setup("5-updated", shared: ["FilmCraft"], personal: ["PhotoCraft"], scope: nil)
+        let fiveLibrary = try PackLibrary(five.install.state.appendingPathComponent("Packs"))
+        let fiveArt = try Data(contentsOf: magenta)
+        let fivePack = try fiveLibrary.importPack(
+            folder(root.appendingPathComponent("5-pack"), ["WordCraft.png": fiveArt, "FilmCraft.png": fiveArt]))
+        let fiveLost = root.appendingPathComponent("5-removed-download")
+        _ = try updatePreferences(five.install.state) {
+            $0.appliedPack = fivePack
+            $0.appliedArt = [
+                "WordCraft": fiveLost.appendingPathComponent("WordCraft.png").path,
+                "FilmCraft": fiveLost.appendingPathComponent("FilmCraft.png").path,
+            ]
+        }
+        let fiveWord = try arrive(five, five.all, "WordCraft")
+        let fifth = try startHost(five.install)
+        let fiveNamed = await statusUntil(fifth, "to the new app WordCraft.")
+        try check(
+            fiveNamed && !clean(fiveWord) && record(five.store, path(fiveWord))?["art"] != nil
+                && !fm.fileExists(atPath: fiveLost.path) && fifth.alertsShown == 0,
+            "when the artwork recorded at Apply is gone with an earlier download, a new app gets the applied pack's own artwork")
+        retire([host, second, third, fifth])
         // The store itself: a bundle still being copied, and an app outside the apps folders.
         let s = try scene(root, "4-store")
         _ = try fixtureApp(s.all, "FilmCraft", id: "local.bettericon.adopt.store-film", icon: icon)
@@ -5088,6 +5404,8 @@ import WebKit
     @MainActor static func startupApps(resources: URL, out: URL) async throws {
         try await part("login item") { try await loginChecks(resources: resources, root: out.appendingPathComponent("login")) }
         try await part("download offer") { try await offerChecks(resources: resources, root: out.appendingPathComponent("offer")) }
+        try await part("superseded downloads") { try supersededChecks(resources: resources, root: out.appendingPathComponent("superseded")) }
+        try await part("leftover downloads") { try await leftoverChecks(resources: resources, root: out.appendingPathComponent("leftover")) }
         try await part("launcher artwork") { try await gridChecks(resources: resources, root: out.appendingPathComponent("grid")) }
         try await part("new apps") { try await newAppChecks(resources: resources, root: out.appendingPathComponent("new-apps")) }
     }
@@ -5116,6 +5434,9 @@ import WebKit
             }
             try? await part("restore label") {
                 try await restoreLabel(resources: resources, root: out.appendingPathComponent("restore-label"))
+            }
+            try? await part("removal during an Apply") {
+                try await removalWaitsForReview(resources: resources, root: out.appendingPathComponent("removal-review"))
             }
             print("\(checks) checks passed, \(softFailures) failed.")
             exit(softFailures == 0 ? 0 : 1)
@@ -5162,6 +5483,9 @@ import WebKit
     /// processes some checks start (--set-icon, --quit-menu and --alerts) run as before.
     @MainActor static func main() async {
         _ = CheckApplication.shared
+        // BetterIcon removes the downloads that earlier updates left behind half a minute after a start. The checks of
+        // that shorten the delay themselves, so no other check has the pack cache change under it.
+        Application.leftoverDelay = 3600
         if CommandLine.arguments.count == 4, ["--set-icon", "--quit-menu", "--alerts"].contains(CommandLine.arguments[1]) {
             return await run()
         }

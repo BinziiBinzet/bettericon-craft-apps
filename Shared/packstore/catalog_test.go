@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 type serve func(*http.Request) (*http.Response, error)
@@ -199,14 +200,15 @@ func TestExplicitPackLifecycle(t *testing.T) {
 	if v, png, webp = acquireWith("1"); png+webp != 0 || v.Status != "Downloaded" {
 		t.Fatalf("a download fetched files the pack already holds: %d PNG and %d WebP requests", png, webp)
 	}
-	// Where the app can't read WebP, the WebP alone does not make a download: the pack needs its PNG twin, and only that is fetched.
+	// Where the app can't read WebP, the WebP alone does not make a download: the pack needs its PNG twin. That file did not
+	// change with the update, so it comes from the earlier download, which is still there, and nothing is fetched.
 	t.Setenv("BETTERICON_WEBP_READABLE", "0")
 	if v := load().list()[0]; v.Status != "Download" {
 		t.Fatalf("a WebP alone counts as downloaded where the app can't read WebP: %+v", v)
 	}
 	v, png, webp = acquireWith("0")
 	chosen = v.FileIcons[".pcraft"]
-	if png != 1 || webp != 0 || v.Status != "Downloaded" || filepath.Base(chosen) != "pcraft.webp" || len(v.Fallbacks[chosen]) != 1 ||
+	if png != 0 || webp != 0 || v.Status != "Downloaded" || filepath.Base(chosen) != "pcraft.webp" || len(v.Fallbacks[chosen]) != 1 ||
 		filepath.Base(v.Fallbacks[chosen][0]) != "pcraft.png" || read(v.Fallbacks[chosen][0]) != data {
 		t.Fatalf("download where the app can't read WebP, with %d PNG and %d WebP requests: %+v", png, webp, v)
 	}
@@ -286,6 +288,428 @@ func TestTwinDownloads(t *testing.T) {
 		if strings.Join(got, ",") != c.want || v.Status != "Downloaded" || len(v.Icons) != 3 || len(v.FileIcons) != 1 || len(v.Fallbacks) != 0 {
 			t.Fatalf("reading WebP %s, fetched %q: %+v", c.readable, got, v)
 		}
+	}
+}
+
+// An update takes the files an earlier download of the pack has from there, and prune then removes the downloads the new
+// one supersedes. Every file comes from the local pack source or from the computer: never a request.
+func TestSupersededDownloads(t *testing.T) {
+	res, state, source := t.TempDir(), t.TempDir(), t.TempDir()
+	write := func(file, data string) {
+		t.Helper()
+		if err := atomic(file, []byte(data)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := client.Transport
+	t.Cleanup(func() { client.Transport = old })
+	client.Transport = serve(func(r *http.Request) (*http.Response, error) {
+		t.Errorf("unexpected request %s", r.URL)
+		return nil, fmt.Errorf("offline")
+	})
+	t.Setenv("BETTERICON_PACK_SOURCE", source)
+	t.Setenv("BETTERICON_WEBP_READABLE", "0")
+	type art struct{ file, data string }
+	seed, keep, other := strings.Repeat("1", 40), "Craft-Icons-Artist/Keep", "Craft-Icons-Artist/Other"
+	rows := func(revision string, files []art) string {
+		list := []string{revision}
+		for _, f := range files {
+			list = append(list, strings.Join([]string{blob(f.data), f.file, f.file, checksum([]byte(f.data))}, "\t"))
+		}
+		return strings.Join(list, "\n")
+	}
+	// The pack list after a refresh.
+	publish := func(revision string, files ...art) {
+		t.Helper()
+		write(filepath.Join(state, "catalog-"+seed), rows(strings.Repeat(revision, 40), files))
+	}
+	// The local pack source holds exactly these files.
+	offer := func(files ...art) {
+		t.Helper()
+		entries, _ := os.ReadDir(source)
+		for _, entry := range entries {
+			if err := os.RemoveAll(filepath.Join(source, entry.Name())); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, f := range files {
+			write(filepath.Join(source, filepath.FromSlash(f.file)), f.data)
+		}
+	}
+	command := func(args ...string) (map[string]view, error) {
+		result, err := run(append([]string{res, state}, args...))
+		if err != nil {
+			return nil, err
+		}
+		packs := map[string]view{}
+		for _, v := range result.([]view) {
+			packs[v.ID] = v
+		}
+		return packs, nil
+	}
+	must := func(args ...string) map[string]view {
+		t.Helper()
+		packs, err := command(args...)
+		if err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+		return packs
+	}
+	downloads := filepath.Join(state, "downloads")
+	// The signature folders that hold a download of a pack.
+	copies := func(id string) []string {
+		var found []string
+		entries, _ := os.ReadDir(downloads)
+		for _, entry := range entries {
+			if info, err := os.Stat(filepath.Join(downloads, entry.Name(), filepath.FromSlash(id))); err == nil && info.IsDir() && hex64.MatchString(entry.Name()) {
+				found = append(found, entry.Name())
+			}
+		}
+		return found
+	}
+	read := func(file string) string {
+		b, _ := os.ReadFile(file)
+		return string(b)
+	}
+	photoOne, photoTwo := art{keep + "/PhotoCraft.png", "photo one"}, art{keep + "/PhotoCraft.png", "photo two"}
+	film, document, word := art{keep + "/FilmCraft.png", "film"}, art{keep + "/FileTypes/pcraft.png", "document"}, art{keep + "/WordCraft.png", "word"}
+	neighbour := art{other + "/PhotoCraft.png", "other"}
+	catalog := filepath.Join(res, "Catalog")
+	write(filepath.Join(catalog, "ProjectFileTypes.json"), `[{"Key":".pcraft","Application":"PhotoCraft"}]`)
+	write(filepath.Join(catalog, "packs.tsv"), rows(seed, []art{photoOne, film, document, neighbour}))
+	write(filepath.Join(catalog, "previews.tsv"), fmt.Sprintf("%s\n%s\tthumb.webp\t%s\t12\tPhotoCraft", seed, keep, checksum([]byte("RIFFxxxxWEBP"))))
+	offer(photoOne, film, document, neighbour)
+	must("acquire", keep)
+	must("acquire", other)
+
+	// The update's source has the changed icon and lacks the new one, as when the connection drops midway.
+	publish("2", photoTwo, film, document, word, neighbour)
+	offer(photoTwo)
+	if _, err := command("acquire", keep); err == nil {
+		t.Fatal("an update succeeded without one of its files")
+	}
+	v := must("list")[keep]
+	stages, _ := filepath.Glob(filepath.Join(downloads, ".loading-*"))
+	if v.Status != "Update available" || read(v.Icons["PhotoCraft"]) != "photo one" || read(v.Icons["FilmCraft"]) != "film" ||
+		read(v.FileIcons[".pcraft"]) != "document" || len(copies(keep)) != 1 || len(stages) != 0 {
+		t.Fatalf("an interrupted update left %v, stages %v: %+v", copies(keep), stages, v)
+	}
+
+	// Now the new icon is there too. The two files that did not change are in no source: they come from the earlier
+	// download, which stays until the app asks for its removal.
+	offer(photoTwo, word)
+	v = must("acquire", keep)[keep]
+	if v.Status != "Downloaded" || read(v.Icons["PhotoCraft"]) != "photo two" || read(v.Icons["FilmCraft"]) != "film" ||
+		read(v.Icons["WordCraft"]) != "word" || read(v.FileIcons[".pcraft"]) != "document" {
+		t.Fatalf("after the update: %+v", v)
+	}
+	if got := copies(keep); len(got) != 2 {
+		t.Fatalf("the update left the downloads %v before the app asked for a removal", got)
+	}
+	v = must("prune", keep)[keep]
+	if got := copies(keep); len(got) != 1 || v.Status != "Downloaded" || !strings.Contains(v.Icons["PhotoCraft"], got[0]) ||
+		read(v.Icons["PhotoCraft"]) != "photo two" || len(copies(other)) != 1 {
+		t.Fatalf("after the removal: %v, other %v, %+v", got, copies(other), v)
+	}
+
+	// WebP twins are published. Where the app can't read WebP the update needs the PNG files it has: nothing is fetched.
+	photoWebP, filmWebP := art{keep + "/PhotoCraft.webp", "photo webp"}, art{keep + "/FilmCraft.webp", "film webp"}
+	publish("3", photoTwo, photoWebP, film, filmWebP, document, word, neighbour)
+	offer()
+	if status := must("list")[keep].Status; status != "Update available" {
+		t.Fatalf("published twins: %s", status)
+	}
+	v = must("acquire", keep)[keep]
+	must("prune", keep)
+	if got := copies(keep); len(got) != 1 || v.Status != "Downloaded" || read(v.Icons["PhotoCraft"]) != "photo two" {
+		t.Fatalf("an update without changed files: %v, %+v", got, v)
+	}
+
+	// Where the app reads WebP, an update fetches the WebP twins. When one of them can't be used the app asks again
+	// without WebP: the PNG twins then come from the earlier download, which is why acquire left it in place.
+	wordWebP := art{keep + "/WordCraft.webp", "word webp"}
+	publish("4", photoTwo, photoWebP, film, filmWebP, document, word, wordWebP, neighbour)
+	offer(photoWebP, filmWebP, wordWebP)
+	t.Setenv("BETTERICON_WEBP_READABLE", "1")
+	v = must("acquire", keep)[keep]
+	if v.Status != "Downloaded" || read(v.Icons["PhotoCraft"]) != "photo webp" || len(v.Fallbacks) != 0 || len(copies(keep)) != 2 {
+		t.Fatalf("an update to WebP twins: %v, %+v", copies(keep), v)
+	}
+	offer()
+	t.Setenv("BETTERICON_WEBP_READABLE", "0")
+	must("acquire", keep)
+	t.Setenv("BETTERICON_WEBP_READABLE", "1")
+	v = must("prune", keep)[keep]
+	if got := copies(keep); len(got) != 1 || v.Status != "Downloaded" || read(v.Icons["PhotoCraft"]) != "photo webp" ||
+		len(v.Fallbacks[v.Icons["PhotoCraft"]]) != 1 || read(v.Fallbacks[v.Icons["PhotoCraft"]][0]) != "photo two" ||
+		read(v.Fallbacks[v.Icons["WordCraft"]][0]) != "word" {
+		t.Fatalf("PNG twins after a WebP that can't be used: %v, %+v", got, v)
+	}
+
+	// A file of the earlier download that no longer matches its checksum is not taken: it is fetched.
+	t.Setenv("BETTERICON_WEBP_READABLE", "0")
+	deck := art{keep + "/DeckCraft.png", "deck"}
+	publish("5", photoTwo, photoWebP, film, filmWebP, document, word, wordWebP, deck, neighbour)
+	write(filepath.Join(downloads, copies(keep)[0], filepath.FromSlash(film.file)), "changed on disk")
+	offer(deck, film)
+	v = must("acquire", keep)[keep]
+	must("prune", keep)
+	if got := copies(keep); len(got) != 1 || v.Status != "Downloaded" || read(v.Icons["FilmCraft"]) != "film" || read(v.Icons["PhotoCraft"]) != "photo two" {
+		t.Fatalf("a changed file in the earlier download: %v, %+v", got, v)
+	}
+
+	// Only folders that hold a download of this pack and nothing else, from before its receipt was written, are removed.
+	current := copies(keep)[0]
+	earlier, mixed, extra, linked := strings.Repeat("c", 64), strings.Repeat("a", 64), strings.Repeat("b", 64), strings.Repeat("d", 64)
+	newer := strings.Repeat("e", 64)
+	// As a folder that was there before the receipt was written: every folder below but the one a download just made.
+	aged := func(name string) {
+		t.Helper()
+		past := time.Now().Add(-time.Hour)
+		if err := os.Chtimes(filepath.Join(downloads, name), past, past); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(filepath.Join(downloads, earlier, filepath.FromSlash(photoOne.file)), "an earlier download")
+	write(filepath.Join(downloads, earlier, filepath.FromSlash(document.file)), "an earlier download")
+	write(filepath.Join(downloads, mixed, filepath.FromSlash(photoOne.file)), "two packs")
+	write(filepath.Join(downloads, mixed, filepath.FromSlash(neighbour.file)), "two packs")
+	write(filepath.Join(downloads, extra, filepath.FromSlash(photoOne.file)), "with a file of the user's")
+	write(filepath.Join(downloads, extra, "notes.txt"), "with a file of the user's")
+	write(filepath.Join(downloads, "not-a-signature", filepath.FromSlash(photoOne.file)), "another name")
+	write(filepath.Join(downloads, ".loading-kept", filepath.FromSlash(photoOne.file)), "a download under way")
+	// A download another BetterIcon process is finishing: its folder is there, its receipt is not written yet.
+	write(filepath.Join(downloads, newer, filepath.FromSlash(photoOne.file)), "a download about to be recorded")
+	kept := []string{mixed, extra, "not-a-signature", ".loading-kept", newer, current}
+	if err := os.MkdirAll(filepath.Join(downloads, linked, filepath.FromSlash(keep)), 0700); err != nil {
+		t.Fatal(err)
+	}
+	// Where links can be made, a folder with a link in it stays too.
+	if os.Symlink(filepath.Join(downloads, extra, "notes.txt"), filepath.Join(downloads, linked, filepath.FromSlash(photoOne.file))) == nil {
+		kept = append(kept, linked)
+	}
+	for _, name := range []string{earlier, mixed, extra, linked, "not-a-signature", ".loading-kept"} {
+		aged(name)
+	}
+	must("prune", keep)
+	for _, name := range kept {
+		if _, err := os.Lstat(filepath.Join(downloads, name)); err != nil {
+			t.Fatalf("the removal took %s: %v", name, err)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(downloads, earlier)); err == nil || read(filepath.Join(downloads, extra, "notes.txt")) != "with a file of the user's" || len(copies(other)) != 2 {
+		t.Fatalf("after the removal, the earlier download is there (%v) or another pack's is not: %v", err == nil, copies(other))
+	}
+
+	// A pack whose download in use is not complete supersedes nothing: every other download of it stays.
+	write(filepath.Join(downloads, earlier, filepath.FromSlash(photoOne.file)), "an earlier download")
+	aged(earlier)
+	if err := os.Remove(filepath.Join(downloads, current, filepath.FromSlash(film.file))); err != nil {
+		t.Fatal(err)
+	}
+	if v = must("prune", keep)[keep]; v.Status != "Download" {
+		t.Fatalf("a download with a file missing: %+v", v)
+	}
+	if _, err := os.Lstat(filepath.Join(downloads, earlier)); err != nil {
+		t.Fatalf("a removal without a complete download in use took the earlier one: %v", err)
+	}
+	if _, err := command("prune", ""); err == nil {
+		t.Fatal("a removal for a pack without a name was accepted")
+	}
+}
+
+// Once after it has started, the app asks for the downloads that updates left behind before BetterIcon removed them:
+// prune without a pack removes them for every pack whose download in use is complete, and nothing else.
+func TestLeftoverDownloads(t *testing.T) {
+	res, state, source := t.TempDir(), t.TempDir(), t.TempDir()
+	write := func(file, data string) {
+		t.Helper()
+		if err := atomic(file, []byte(data)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := client.Transport
+	t.Cleanup(func() { client.Transport = old })
+	client.Transport = serve(func(r *http.Request) (*http.Response, error) {
+		t.Errorf("unexpected request %s", r.URL)
+		return nil, fmt.Errorf("offline")
+	})
+	t.Setenv("BETTERICON_PACK_SOURCE", source)
+	t.Setenv("BETTERICON_WEBP_READABLE", "0")
+	seed := strings.Repeat("1", 40)
+	one, two, partial, never := "Craft-Icons-Artist/One", "Craft-Icons-Artist/Two", "Craft-Icons-Artist/Partial", "Craft-Icons-Artist/Never"
+	ids := []string{one, two, partial, never}
+	// The pack list in an edition: each pack has one icon, whose contents name the pack and the edition.
+	rows := func(revision, edition string) string {
+		list := []string{strings.Repeat(revision, 40)}
+		for _, id := range ids {
+			file, data := id+"/PhotoCraft.png", id+" "+edition
+			write(filepath.Join(source, filepath.FromSlash(file)), data)
+			list = append(list, strings.Join([]string{blob(data), file, file, checksum([]byte(data))}, "\t"))
+		}
+		return strings.Join(list, "\n")
+	}
+	command := func(args ...string) map[string]view {
+		t.Helper()
+		result, err := run(append([]string{res, state}, args...))
+		if err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+		packs := map[string]view{}
+		for _, v := range result.([]view) {
+			packs[v.ID] = v
+		}
+		return packs
+	}
+	downloads := filepath.Join(state, "downloads")
+	// The signature folders that hold a download of a pack.
+	copies := func(id string) []string {
+		var found []string
+		entries, _ := os.ReadDir(downloads)
+		for _, entry := range entries {
+			if info, err := os.Stat(filepath.Join(downloads, entry.Name(), filepath.FromSlash(id))); err == nil && info.IsDir() && hex64.MatchString(entry.Name()) {
+				found = append(found, entry.Name())
+			}
+		}
+		return found
+	}
+	read := func(file string) string {
+		b, _ := os.ReadFile(file)
+		return string(b)
+	}
+	catalog := filepath.Join(res, "Catalog")
+	write(filepath.Join(catalog, "ProjectFileTypes.json"), `[{"Key":".pcraft","Application":"PhotoCraft"}]`)
+	write(filepath.Join(catalog, "packs.tsv"), rows("1", "first"))
+	write(filepath.Join(catalog, "previews.tsv"), fmt.Sprintf("%s\n%s\tthumb.webp\t%s\t12\tPhotoCraft", seed, one, checksum([]byte("RIFFxxxxWEBP"))))
+	downloaded := []string{one, two, partial}
+	for _, id := range downloaded {
+		command("acquire", id)
+	}
+	// Every pack is updated, as a version that removed nothing left it: the earlier download beside the new one.
+	write(filepath.Join(state, "catalog-"+seed), rows("2", "second"))
+	for _, id := range downloaded {
+		command("acquire", id)
+		if got := copies(id); len(got) != 2 {
+			t.Fatalf("%s after its update: %v", id, got)
+		}
+	}
+	// One pack's download in use has lost its file. Another has a folder a download is about to record, and the cache
+	// holds a folder with a file of the user's that is as old as the leftovers.
+	partialNow := command("list")[partial].Icons["PhotoCraft"]
+	if err := os.Remove(partialNow); err != nil {
+		t.Fatal(err)
+	}
+	arriving, foreign := strings.Repeat("e", 64), strings.Repeat("b", 64)
+	write(filepath.Join(downloads, arriving, filepath.FromSlash(one+"/PhotoCraft.png")), "a download about to be recorded")
+	write(filepath.Join(downloads, foreign, filepath.FromSlash(two+"/PhotoCraft.png")), "with a file of the user's")
+	write(filepath.Join(downloads, foreign, "notes.txt"), "with a file of the user's")
+	past := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(filepath.Join(downloads, foreign), past, past); err != nil {
+		t.Fatal(err)
+	}
+	check := func(when string) {
+		t.Helper()
+		packs := command("list")
+		if got := copies(one); len(got) != 2 || !slices.Contains(got, arriving) || packs[one].Status != "Downloaded" || read(packs[one].Icons["PhotoCraft"]) != one+" second" {
+			t.Fatalf("%s, the first pack: %v, %+v", when, got, packs[one])
+		}
+		if got := copies(two); len(got) != 2 || !slices.Contains(got, foreign) || packs[two].Status != "Downloaded" || read(packs[two].Icons["PhotoCraft"]) != two+" second" ||
+			read(filepath.Join(downloads, foreign, "notes.txt")) != "with a file of the user's" {
+			t.Fatalf("%s, the second pack: %v, %+v", when, got, packs[two])
+		}
+		if got := copies(partial); len(got) != 2 || packs[partial].Status != "Download" || packs[never].Status != "Download" || len(copies(never)) != 0 {
+			t.Fatalf("%s, the pack without a complete download in use: %v, %+v", when, got, packs[partial])
+		}
+	}
+	command("prune")
+	check("after the removal for every pack")
+	command("prune")
+	check("after a second removal")
+}
+
+// The packs Modern Flat replaced: an update takes their files, and their downloads and receipts go once the combined pack
+// is downloaded and in use, whether the app asks for that pack or, after it has started, for every pack.
+func TestReplacedPackDownloads(t *testing.T) {
+	t.Run("asked for the pack", func(t *testing.T) { replacedPackDownloads(t, "prune", modernFlatVariants[4]) })
+	t.Run("asked for every pack", func(t *testing.T) { replacedPackDownloads(t, "prune") })
+}
+func replacedPackDownloads(t *testing.T, removal ...string) {
+	res, state, source := t.TempDir(), t.TempDir(), t.TempDir()
+	write := func(file, data string) {
+		t.Helper()
+		if err := atomic(file, []byte(data)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := client.Transport
+	t.Cleanup(func() { client.Transport = old })
+	client.Transport = serve(func(r *http.Request) (*http.Response, error) {
+		t.Errorf("unexpected request %s", r.URL)
+		return nil, fmt.Errorf("offline")
+	})
+	t.Setenv("BETTERICON_PACK_SOURCE", source)
+	t.Setenv("BETTERICON_WEBP_READABLE", "1")
+	first, combined := strings.Repeat("1", 40), strings.Repeat("2", 40)
+	unrelated := modernFlat + " - Custom"
+	row := func(file, art string) string {
+		return strings.Join([]string{blob(art), file, file, checksum([]byte(art))}, "\t")
+	}
+	catalog := filepath.Join(res, "Catalog")
+	write(filepath.Join(catalog, "ProjectFileTypes.json"), `[{"Key":".pcraft","Application":"PhotoCraft"}]`)
+	write(filepath.Join(catalog, "packs.tsv"), strings.Join([]string{combined, row(modernFlat+"/PhotoCraft.png", "latest"), row(modernFlat+"/FilmCraft.png", "film")}, "\n"))
+	write(filepath.Join(catalog, "previews.tsv"), fmt.Sprintf("%s\n%s\tflat.webp\t%s\t12\tPhotoCraft", combined, modernFlat, checksum([]byte("RIFFxxxxWEBP"))))
+	l, err := openLibrary(res, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache := func(id, art string) {
+		t.Helper()
+		snapshot := first + "\n" + row(id+"/PhotoCraft.png", art)
+		s, err := l.readSnapshot([]byte(snapshot))
+		if err != nil {
+			t.Fatal(err)
+		}
+		p := s.Packs[id]
+		write(filepath.Join(state, "downloads", p.signature(), p.Assets[0].File), art)
+		write(filepath.Join(state, "acquired", checksum([]byte(id))), snapshot)
+	}
+	cache(modernFlat+" - Spark - Sliders", "old")
+	cache(modernFlat+" - Wand - Knob", "latest")
+	cache(unrelated, "personal style")
+	// The source has the new icon alone. The other is the one an earlier pack's download has.
+	write(filepath.Join(source, filepath.FromSlash(modernFlat+"/FilmCraft.png")), "film")
+	count := func(folder string) int {
+		entries, _ := os.ReadDir(filepath.Join(state, folder))
+		return len(entries)
+	}
+	listed := func(args ...string) map[string]view {
+		t.Helper()
+		result, err := run(append([]string{res, state}, args...))
+		if err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+		packs := map[string]view{}
+		for _, v := range result.([]view) {
+			packs[v.ID] = v
+		}
+		return packs
+	}
+	read := func(file string) string {
+		b, _ := os.ReadFile(file)
+		return string(b)
+	}
+	if v := listed("list")[modernFlat]; v.Status != "Update available" {
+		t.Fatalf("before the update: %+v", v)
+	}
+	v := listed("acquire", modernFlatVariants[4])[modernFlat]
+	if v.Status != "Downloaded" || read(v.Icons["PhotoCraft"]) != "latest" || read(v.Icons["FilmCraft"]) != "film" || count("downloads") != 4 || count("acquired") != 4 {
+		t.Fatalf("after the update, %d downloads and %d receipts: %+v", count("downloads"), count("acquired"), v)
+	}
+	packs := listed(removal...)
+	v = packs[modernFlat]
+	if v.Status != "Downloaded" || read(v.Icons["PhotoCraft"]) != "latest" || packs[unrelated].Status != "Downloaded" ||
+		read(packs[unrelated].Icons["PhotoCraft"]) != "personal style" || count("downloads") != 2 || count("acquired") != 2 {
+		t.Fatalf("after the removal, %d downloads and %d receipts: %+v", count("downloads"), count("acquired"), packs)
 	}
 }
 

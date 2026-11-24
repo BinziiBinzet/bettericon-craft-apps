@@ -160,7 +160,7 @@ static partial class PackEditionTests
             CheckRefresh(args[0], state, fixture); return;
         }
         CheckCurrentPackUpdate();
-        if (lean) { CheckChosenPacksKept(args[0], args[1]); CheckChosenPackNotApplied(args[0], args[1]); CheckGainedFileArtwork(args[0], args[1]); }
+        if (lean) { CheckChosenPacksKept(args[0], args[1]); CheckChosenPackNotApplied(args[0], args[1]); CheckGainedFileArtwork(args[0], args[1]); CheckLeftoverCopies(args[0], args[1]); }
         if (!lean) Offline();
         // second draws documents only. mixed carries app icons and file type artwork.
         const string first = "Craft-Icons-circleb/Root", second = "Craft-Icons-Komplett/Standard", third = "Craft-Icons-Zach/Ink", mixed = "Craft-Icons-Mike22/CraftApps AIO November - Dark";
@@ -347,8 +347,78 @@ static partial class PackEditionTests
                 Check(local.HasFileIcons && !local.UpdateAvailable && saved.FileTheme == pack && fileCombo.SelectedItem == Find(fileCombo, pack) &&
                       Find(combo, pack).ToString().EndsWith(" (Downloaded)"),
                       "Choosing it there downloads the update and selects its file artwork");
+                // The update removes the copy it replaces. The app pack grid was drawn from that copy before the update,
+                // which came through the file type list: it must draw from the new copy now, as a larger icon size reads
+                // the files again.
+                string[] copies = Directory.GetDirectories(Path.Combine(state, "downloads"));
+                string[] drawn = ((System.Collections.IEnumerable)typeof(LauncherForm).GetField("packSources", Fields).GetValue(form)).Cast<object>()
+                    .Select(source => (string)source.GetType().GetField("Path").GetValue(source)).ToArray();
+                Check(copies.Length == 1 && Cached(Path.Combine(state, "downloads")) == 1 && drawn.Length > 0 && drawn.All(File.Exists) &&
+                      drawn.All(file => file.StartsWith(copies[0] + "\\", StringComparison.OrdinalIgnoreCase)),
+                      "The update leaves one copy of the pack on disk, and the app pack grid draws from it");
                 typeof(LauncherForm).GetMethod("ExitLauncher", Fields).Invoke(form, null);
             }
+        }
+    }
+    // After start, in the background, BetterIcon removes the copy of a downloaded pack that an update left on disk before
+    // updates removed it themselves. It runs on the state CheckGainedFileArtwork left: one pack, downloaded and up to date.
+    static void CheckLeftoverCopies(string windows, string root)
+    {
+        const string pack = "Craft-Icons-Mike22/CraftApps AIO November - Dark";
+        string state = Path.Combine(root, "gained-state"), downloads = Path.Combine(state, "downloads");
+        string current = Directory.GetDirectories(downloads).Single();
+        // As the earlier update left it: the same pack under another signature, with its lock file.
+        string leftover = Path.Combine(downloads, new string('a', 64)), copy = Path.Combine(leftover, pack.Replace('/', '\\'));
+        foreach (string source in Directory.GetFiles(Path.Combine(current, pack.Replace('/', '\\')), "*", SearchOption.AllDirectories)) {
+            string target = Path.Combine(leftover, source.Substring(current.Length + 1));
+            Directory.CreateDirectory(Path.GetDirectoryName(target)); File.Copy(source, target);
+        }
+        File.WriteAllText(copy + ".lock", "");
+        // The timer is far off, so this check decides when BetterIcon asks.
+        var fixture = new FixtureConfig { StateDirectory = state, ShortcutDirectory = new[] { root }, KeepOpenForAutomation = true, PackSweepDelay = 3600000 };
+        using (var show = new EventWaitHandle(false, EventResetMode.AutoReset))
+        using (var stop = new EventWaitHandle(false, EventResetMode.AutoReset))
+        using (var form = new LauncherForm(windows, fixture, true, show, stop)) {
+            form.Start(); form.ShowManager();
+            WaitStarted(form);
+            var timer = Field<System.Windows.Forms.Timer>(form, "packSweepTimer");
+            Func<System.Threading.Tasks.Task> ask = () => (System.Threading.Tasks.Task)typeof(LauncherForm).GetMethod("SweepPacks", Fields).Invoke(form, null);
+            FieldInfo busy = typeof(LauncherForm).GetField("busy", Fields);
+            // While BetterIcon is busy, as during an Apply or a download, nothing is asked: the timer comes back to it.
+            busy.SetValue(form, true);
+            System.Threading.Tasks.Task held = ask();
+            Wait(() => held.IsCompleted);
+            busy.SetValue(form, false);
+            Check(timer != null && timer.Enabled && timer.Interval == 3600000 && Field<int>(form, "packSweeps") == 0 && Directory.Exists(copy) &&
+                  Field<System.Windows.Forms.Timer>(form, "packSweepTimer") == timer,
+                  "After start a timer waits to remove leftover copies of downloaded packs, and while BetterIcon is busy it asks for nothing");
+            System.Threading.Tasks.Task asked = ask();
+            // The worker runs in its own process: the window answers while it does.
+            bool background = !asked.IsCompleted;
+            Wait(() => asked.IsCompleted);
+            System.Threading.Tasks.Task again = ask();
+            Wait(() => again.IsCompleted);
+            ThemeEntry local = Find(Field<ComboBox>(form, "themes"), pack);
+            Check(background && !Directory.Exists(leftover) && Directory.GetDirectories(downloads).Single() == current && Cached(downloads) == 1 &&
+                  local.Downloaded && !local.NeedsDownload && !local.UpdateAvailable && local.Icons.Length > 0 && local.Icons.All(icon => File.Exists(icon.Path)) &&
+                  Field<int>(form, "packSweeps") == 1 && Field<System.Windows.Forms.Timer>(form, "packSweepTimer") == null,
+                  "Asked once, in the background, the worker removes the leftover copy, and the pack and its artwork stay as they are");
+            // A download waits for that worker. Here its request stays unanswered for longer than a download takes.
+            FieldInfo sweep = typeof(LauncherForm).GetField("packSweep", Fields);
+            bool waited = false, went = false;
+            if (sweep != null) {
+                var pending = new System.Threading.Tasks.TaskCompletionSource<WorkerReply>();
+                sweep.SetValue(form, pending.Task);
+                var download = (System.Threading.Tasks.Task)typeof(LauncherForm).GetMethod("DownloadTheme", Fields).Invoke(form, new object[] { local, null });
+                var unanswered = Stopwatch.StartNew();
+                while (unanswered.Elapsed.TotalSeconds < 15 && !download.IsCompleted) { Application.DoEvents(); Thread.Sleep(8); }
+                waited = !download.IsCompleted;
+                sweep.SetValue(form, null); pending.SetResult(new WorkerReply());
+                Wait(() => download.IsCompleted);
+                went = download.Status == System.Threading.Tasks.TaskStatus.RanToCompletion && local.Downloaded && local.Icons.Length > 0 && local.Icons.All(icon => File.Exists(icon.Path));
+            }
+            Check(waited && went, "A download asks its worker only once the worker that removes leftover copies has ended");
+            typeof(LauncherForm).GetMethod("ExitLauncher", Fields).Invoke(form, null);
         }
     }
     static void CheckCurrentPackUpdate()
