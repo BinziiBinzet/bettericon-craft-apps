@@ -4,7 +4,7 @@ Launch your installed ArtCraft apps from the Windows or Linux system tray or the
 
 **[Download BetterIcon for Windows, macOS, or Linux](https://github.com/BinziiBinzet/bettericon-craft-apps/releases/latest)**
 
-The screenshots and features below are from **BetterIcon 1.28.0**. To make your own icons, read the [Community Guide (PDF)](docs/community/making-icons-for-artcraft.pdf) and try the [Daybreak starter pack](docs/community/daybreak-starter-pack.zip?raw=true).
+The screenshots and features below are from **BetterIcon 1.29.1**. To make your own icons, read the [Community Guide (PDF)](docs/community/making-icons-for-artcraft.pdf) and try the [Daybreak starter pack](docs/community/daybreak-starter-pack.zip?raw=true).
 
 ## BetterIcon in action
 
@@ -12,7 +12,7 @@ The screenshots and features below are from **BetterIcon 1.28.0**. To make your 
 
 Open **Manage Icons** and choose an **App icon pack** and a **File type icon pack**. The two previews sit side by side. Choose **Apply icons…** or **Apply file icons…** to review and apply the artwork. Use **Restore app defaults…** and **Restore file icons…** to undo either change independently.
 
-<img src="docs/screenshots/1.28.0/manage-icons-windows.png" width="900" alt="BetterIcon on Windows showing OmegaDarling’s colorful Irridiant app icons next to Komplett’s translucent document icons.">
+<img src="docs/screenshots/1.29.1/manage-icons-windows.png" width="900" alt="BetterIcon on Windows showing OmegaDarling’s colorful Irridiant app icons next to Komplett’s translucent document icons.">
 
 *Windows Manage Icons with Irridiant by OmegaDarling and Transparent-hell by Komplett.*
 
@@ -26,7 +26,7 @@ BetterIcon recognizes **37 file icon designs covering 96 extensions**, from nati
 
 On Windows and Linux, listed common formats such as PDF generally qualify when an ArtCraft app is the default opener. Review the affected types before applying.
 
-<img src="docs/screenshots/1.28.0/file-type-picker-linux.png" width="800" alt="BetterIcon on Linux with the file type picker open and a hover preview showing DXF, PPT, and DCraft file icons from Mike22 Light.">
+<img src="docs/screenshots/1.29.1/file-type-picker-linux.png" width="800" alt="BetterIcon on Linux with the file type picker open and a hover preview showing DXF, PPT, and DCraft file icons from Mike22 Light.">
 
 *Linux preview of the Light edition of Mike22’s CraftApps AIO November file type pack.*
 
@@ -38,9 +38,9 @@ Hover over a name in either picker to see up to three sample icons. **Download**
 
 Open **Launcher** from the tray or menu bar, or use the configurable keyboard shortcut. Click an app to open it, or type part of its name and press **Enter** or **Return**. The icon brightens when you hover over it or select it with the keyboard. Launcher shows the last applied app pack, with ArtCraft Launcher first when installed. The two tabs remember their window sizes separately. You can also change icon size, show or hide app names, and choose BetterIcon’s own icon and light or dark appearance.
 
-<img src="docs/screenshots/1.28.0/launcher-macos.png" width="800" alt="BetterIcon’s macOS Launcher showing nine installed apps with OmegaDarling’s Foldmark artwork.">
+<img src="docs/screenshots/1.29.1/launcher-macos.png" width="600" alt="BetterIcon’s macOS Launcher in light appearance showing 19 installed apps with OmegaDarling’s Cardboard artwork.">
 
-*macOS Launcher with Foldmark by OmegaDarling.*
+*macOS Launcher with Cardboard by OmegaDarling.*
 
 ### Keep your app icons after updates
 
@@ -63,9 +63,9 @@ Windows Setup’s **Optional downloads** page lets you request all app icon pack
 - BetterIcon fixes shared shortcuts automatically after updates when Windows grants administrator access without a prompt. Otherwise, choose **Apply your icons to shared shortcuts…** in **Manage Icons** or the tray menu to approve the repair once.
 - The installed app starts hidden in the tray at login by default. Turn it off with **Open at login** in the tray menu or in **Settings > Apps > Startup**. The command-line installers remain available as `Windows/Install-Windows.cmd` and `Windows/Restore-Windows.cmd`. [Windows guide](Windows/WINDOWS.md)
 
-<img src="docs/screenshots/1.28.0/optional-downloads-windows.png" width="800" alt="Windows Setup showing optional downloads with separate unchecked choices for 14 app icon packs and 8 file type icon packs.">
+<img src="docs/screenshots/1.29.1/optional-downloads-windows.png" width="800" alt="Windows Setup showing optional downloads with separate unchecked choices for 10 app icon packs and 8 file type icon packs.">
 
-*This PC was missing 14 app packs and 8 file type packs. Setup counts the packs still to download.*
+*This PC was missing 10 app packs and 8 file type packs. Setup counts the packs still to download.*
 
 ### macOS
 
