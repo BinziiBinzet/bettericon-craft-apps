@@ -1,5 +1,10 @@
 # Windows installer changelog
 
+## 1.30.0
+
+- BetterIcon recognizes artwork for all 96 listed file extensions. All nine OmegaDarling file type packs now include 96 designs, including separate GLB, glTF, and OBJ art. Older packs still cover the extensions of their original file groups.
+- Windows Explorer uses one icon per file class. BetterIcon uses the matching extension's artwork when a class opens just that extension.
+
 ## 1.29.1 - 2026-11-24
 
 - Updating a pack fetches only the files that changed. Every file the earlier download already holds, and that still matches its published checksum, is taken from this PC; a damaged file is fetched again. Where this PC can't read WebP, an update of a pack whose PNG files are unchanged fetches nothing.

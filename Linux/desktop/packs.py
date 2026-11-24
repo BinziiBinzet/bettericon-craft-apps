@@ -408,8 +408,9 @@ class Packs:
         return str(path)
 
     def file_art(self, pack):
-        """The artwork for every format a pack draws: its own design, or the one for all its app's files."""
-        art = {key: pack.documents.get(key) or pack.app_files.get(f["Application"]) for key, f in self.formats.items()}
+        """The designs shown in the picker and copied for editing."""
+        art = {key: pack.documents.get(key) or (pack.app_files.get(f["Application"]) if not f.get("Fallback") else None)
+               for key, f in self.formats.items()}
         return {key: path for key, path in art.items() if path}
 
     def file_summary(self, pack):
@@ -432,7 +433,8 @@ class Packs:
         for app in sorted(set(pack.app_files) | set(pack.unlisted) | {f["Application"] for f in drawn}, key=str.casefold):
             if app in pack.app_files or app in pack.unlisted:
                 covered = [format_label(f) for key, f in self.formats.items()
-                           if f["Application"] == app and key not in pack.documents] if app in pack.app_files else []
+                           if f["Application"] == app and key not in pack.documents
+                           and f.get("Fallback") not in pack.documents] if app in pack.app_files else []
                 other = ["Other file types " + app_name(app) + " opens by default"] if app in pack.unlisted else []
                 tiles.append(dict(name=app, hint="\n".join([app + " files"] + covered + other),
                                   path=pack.app_files.get(app) or pack.unlisted[app]))
@@ -565,7 +567,7 @@ class Packs:
                     files[craft] = data
             # A personal pack stores one image per format, so each can later be replaced on its own.
             for key, fmt in self.formats.items():
-                if key not in files and fmt["Application"] in shared:
+                if not fmt.get("Fallback") and key not in files and fmt["Application"] in shared:
                     files[key] = shared[fmt["Application"]]
             return self.save(metadata.get("Name", source.stem), metadata.get("Author", ""), files, unlisted=unlisted,
                              reload=reload)

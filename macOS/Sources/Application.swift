@@ -1392,7 +1392,7 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
     }
     private func reviewFiles(restore: Bool) {
         let pack = fileSelection
-        let artwork = published.fileArt(pack)
+        let artwork = published.fileArt(pack, includeFallbacks: true)
         let formats = published.formats.filter { restore || artwork[$0.Key] != nil }
         // The pack's art for the files of types outside the list, by the ArtCraft app that opens them by default.
         let others = restore ? [:] : pack.unlisted
@@ -1605,7 +1605,7 @@ final class Application: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
             else { return }
             // A pack without art for the listed formats still gets passes: they take BetterIcon's icons off files of
             // other types whose opener no longer gets art.
-            wanted[realFolderPath(path)] = (published.fileArt(pack), pack.unlisted)
+            wanted[realFolderPath(path)] = (published.fileArt(pack, includeFallbacks: true), pack.unlisted)
         }
         for (path, id) in prefs.fileFolders ?? [:] { want(path, id) }
         for (path, id) in applyingFolders { want(path, id) }
