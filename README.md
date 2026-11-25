@@ -4,41 +4,41 @@ Launch your installed ArtCraft apps from the Windows or Linux system tray or the
 
 **[Download BetterIcon for Windows, macOS, or Linux](https://github.com/BinziiBinzet/bettericon-craft-apps/releases/latest)**
 
-The screenshots and features below are from **BetterIcon 1.29.1**. To make your own icons, read the [Community Guide (PDF)](docs/community/making-icons-for-artcraft.pdf) and try the [Daybreak starter pack](docs/community/daybreak-starter-pack.zip?raw=true).
+The screenshots and features below are from **BetterIcon 1.30.0**. To make your own icons, read the [Community Guide (PDF)](docs/community/making-icons-for-artcraft.pdf) and try the [Daybreak starter pack](docs/community/daybreak-starter-pack.zip?raw=true).
 
 ## BetterIcon in action
 
 ### Pick separate app and file type icons
 
-Open **Manage Icons** and choose an **App icon pack** and a **File type icon pack**. The two previews sit side by side. Choose **Apply icons…** or **Apply file icons…** to review and apply the artwork. Use **Restore app defaults…** and **Restore file icons…** to undo either change independently.
+Open **Manage Icons** and choose an **App icon pack** and a **File type icon pack**. The two previews sit side by side. Choose **Apply icons…** or **Apply file icons…** to review and apply the artwork. Use **Restore app defaults…** and **Restore file icons…** to undo either change independently. Rest the pointer on any button, list, or menu item to see what it does.
 
-<img src="docs/screenshots/1.29.1/manage-icons-windows.png" width="900" alt="BetterIcon on Windows showing OmegaDarling’s colorful Irridiant app icons next to Komplett’s translucent document icons.">
+<img src="docs/screenshots/1.30.0/manage-icons-windows.png" width="900" alt="BetterIcon on Windows showing OmegaDarling’s colorful Irridiant app icons next to Komplett’s translucent document icons.">
 
 *Windows Manage Icons with Irridiant by OmegaDarling and Transparent-hell by Komplett.*
 
 ### Customize the icons for your files
 
-BetterIcon recognizes **37 file icon designs covering 96 extensions**, from native ArtCraft projects to groups of related formats. A pack can give PhotoCraft projects (`.pcraft`) their own icon and use one design for Photoshop documents (`.psd` and `.psb`). Pack authors can also provide artwork for unlisted types that open by default in an ArtCraft app. Applying icons keeps your default apps in place.
+BetterIcon recognizes **96 file extensions, each with its own optional design**, from native ArtCraft projects to common formats. A pack can give GLB, glTF, and OBJ models separate icons, or use one design for a group of related formats, as packs made for earlier versions do. Pack authors can also provide artwork for unlisted types that open by default in an ArtCraft app. Applying icons keeps your default apps in place.
 
-- **Windows** applies one icon per file class in File Explorer. An ArtCraft app’s class qualifies for catch-all artwork when it is the default for at least one unlisted extension and no listed extension. If the class also opens a listed type by default, that type’s icon rules apply to the whole class.
+- **Windows** applies one icon per file class in File Explorer. Formats that an app registers together, such as the images PhotoCraft opens, change as a group. A class that opens just one listed extension uses that extension’s design. An ArtCraft app’s class qualifies for catch-all artwork when it is the default for at least one unlisted extension and no listed extension. If the class also opens a listed type by default, that type’s icon rules apply to the whole class.
 - **Linux** applies icons per MIME type for your account. Artwork for other file types applies to eligible MIME types that no listed extension uses. BetterIcon removes the icon when the default opener moves away from the ArtCraft app and brings it back if the app becomes the default again. Press **F5** to refresh an open GNOME Files window. File managers may still show content thumbnails.
 - **macOS** applies custom Finder icons to the files you select or to matching files in folders you choose to keep up to date. BetterIcon checks new and changed files while it runs and catches up at the next launch. For unlisted types, BetterIcon uses each file’s opener, including its **Open with** setting in Get Info. Listed types can use their pack artwork with any opener. **Restore file icons…** covers these icons too. Restoring a folder also stops watching it.
 
 On Windows and Linux, listed common formats such as PDF generally qualify when an ArtCraft app is the default opener. Review the affected types before applying.
 
-<img src="docs/screenshots/1.29.1/file-type-picker-linux.png" width="800" alt="BetterIcon on Linux with the file type picker open and a hover preview showing DXF, PPT, and DCraft file icons from Mike22 Light.">
+<img src="docs/screenshots/1.30.0/file-type-picker-linux.png" width="800" alt="BetterIcon on Linux with the file type picker open and a hover preview showing DXF, PPT, and DCraft file icons from Mike22 Light.">
 
 *Linux preview of the Light edition of Mike22’s CraftApps AIO November file type pack.*
 
 ### Preview packs before downloading
 
-Hover over a name in either picker to see up to three sample icons. **Download**, **Downloaded**, and **Update available** show the status of each pack. Select a pack to download or update its artwork. Click the refresh button beside the pickers to check for catalog changes. The installer includes the catalog and its hover previews.
+Hover over a name in either picker to see up to three sample icons. **Download**, **Downloaded**, and **Update available** show the status of each pack. Select a pack to download or update its artwork. Click the refresh button beside the pickers to check for catalog changes. The installer includes the catalog and its hover previews. **Remove app pack** and **Remove file pack** ask whether to clear a downloaded pack’s files, keeping it in the list to download again, or to remove the pack from the list.
 
 ### Launch apps with one click
 
-Open **Launcher** from the tray or menu bar, or use the configurable keyboard shortcut. Click an app to open it, or type part of its name and press **Enter** or **Return**. The icon brightens when you hover over it or select it with the keyboard. Launcher shows the last applied app pack, with ArtCraft Launcher first when installed. The two tabs remember their window sizes separately. You can also change icon size, show or hide app names, and choose BetterIcon’s own icon and light or dark appearance.
+Open **Launcher** from the tray or menu bar, or use the configurable keyboard shortcut. Click an app to open it, or type part of its name and press **Enter** or **Return**. Each app appears once, even when its installer adds a copy of its shortcut to the desktop. The icon brightens when you hover over it or select it with the keyboard. Launcher shows the last applied app pack, with ArtCraft Launcher first when installed. The two tabs remember their window sizes separately. You can also change icon size, show or hide app names, and choose BetterIcon’s own icon and light or dark appearance.
 
-<img src="docs/screenshots/1.29.1/launcher-macos.png" width="600" alt="BetterIcon’s macOS Launcher in light appearance showing 19 installed apps with OmegaDarling’s Cardboard artwork.">
+<img src="docs/screenshots/1.30.0/launcher-macos.png" width="600" alt="BetterIcon’s macOS Launcher in light appearance showing 19 installed apps with OmegaDarling’s Cardboard artwork.">
 
 *macOS Launcher with Cardboard by OmegaDarling.*
 
@@ -63,7 +63,7 @@ Windows Setup’s **Optional downloads** page lets you request all app icon pack
 - BetterIcon fixes shared shortcuts automatically after updates when Windows grants administrator access without a prompt. Otherwise, choose **Apply your icons to shared shortcuts…** in **Manage Icons** or the tray menu to approve the repair once.
 - The installed app starts hidden in the tray at login by default. Turn it off with **Open at login** in the tray menu or in **Settings > Apps > Startup**. The command-line installers remain available as `Windows/Install-Windows.cmd` and `Windows/Restore-Windows.cmd`. [Windows guide](Windows/WINDOWS.md)
 
-<img src="docs/screenshots/1.29.1/optional-downloads-windows.png" width="800" alt="Windows Setup showing optional downloads with separate unchecked choices for 10 app icon packs and 8 file type icon packs.">
+<img src="docs/screenshots/1.30.0/optional-downloads-windows.png" width="800" alt="Windows Setup showing optional downloads with separate unchecked choices for 10 app icon packs and 8 file type icon packs.">
 
 *This PC was missing 10 app packs and 8 file type packs. Setup counts the packs still to download.*
 
@@ -74,15 +74,15 @@ Windows Setup’s **Optional downloads** page lets you request all app icon pack
 
 ## Make an icon pack
 
-The **BetterIcon Community Guide** covers small-icon design, artwork names, WebP, app-level file artwork, ZIP packaging, and testing. It maps the 96 listed extensions to their 37 artwork keys. [Read the Community Guide PDF](docs/community/making-icons-for-artcraft.pdf)
+The **BetterIcon Community Guide** covers small-icon design, artwork names, WebP, app-level file artwork, ZIP packaging, and testing. It maps the 96 listed extensions to the 37 group designs that packs made for earlier versions use. [Read the Community Guide PDF](docs/community/making-icons-for-artcraft.pdf)
 
 Try a working example with a PhotoCraft app icon and a matching project-file icon. In **Manage Icons**, choose **Import…** and pick the ZIP. [Download the Daybreak starter pack](docs/community/daybreak-starter-pack.zip?raw=true)
 
 ### Name your artwork
 
-Put app icons at the top level, such as `PhotoCraft.png`, and document icons in `FileTypes/`, such as `FileTypes/pcraft.png`. For a group, use its listed artwork key. For example, `FileTypes/obj.png` covers `.obj`, `.fbx`, `.gltf`, and the other extensions in the OBJ group. An “OBJ” badge drawn into that image appears on FBX files too. A mesh or 3D model symbol works across the group.
+Put app icons at the top level, such as `PhotoCraft.png`, and document icons in `FileTypes/`, named for their extension, such as `FileTypes/pcraft.png` or `FileTypes/glb.png`. A group’s artwork key still covers the whole group. For example, `FileTypes/obj.png` covers `.fbx`, `.gltf`, and the OBJ group’s other extensions that have no design of their own, so an “OBJ” badge drawn into it appears on FBX files too. A mesh or 3D model symbol works across the group. On Windows, a file class that opens several listed extensions shows one design for all of them.
 
-To supply a catch-all, add `FileTypes/TextureCraft-files.png`. It fills in TextureCraft’s listed groups that lack their own design and covers eligible unlisted types that open in TextureCraft by default. The same rule works for other apps. On a Mac where VectorCraft opens `.afdesign`, a selected `.afdesign` file can use `FileTypes/VectorCraft-files.png`.
+To supply a catch-all, add `FileTypes/TextureCraft-files.png`. It fills in TextureCraft’s listed formats that have no design of their own or from their group, and covers eligible unlisted types that open in TextureCraft by default. The same rule works for other apps. On a Mac where VectorCraft opens `.afdesign`, a selected `.afdesign` file can use `FileTypes/VectorCraft-files.png`.
 
 Use the original `<App>-files` name for every artwork format you supply. BetterIcon accepts one ASCII space, underscore, period, or hyphen before `files`. Capitalization is flexible. A legacy filename such as `FileTypes/PhotoCraft-PSD.png` supplies artwork only under the listed-format rules. Exporting and reimporting a personal pack preserves its catch-all.
 
@@ -96,7 +96,7 @@ Export personal packs as ZIPs to share them, or submit your artwork in a pull re
 
 ## Community icon packs
 
-The catalog has 41 community packs. The nine OmegaDarling styles each include 20 app icons and a matching pack of 37 file icon designs with hover previews. Most icons also come as a lighter WebP copy, at most 1,024 pixels per side. BetterIcon 1.29.0 and later download one file per icon, the WebP where the computer can read it and the PNG otherwise. With WebP, all the packs together are about 44 MB in place of 433 MB. The published packs have yet to opt in to unlisted file types. [Browse OmegaDarling’s artwork](Craft-Icons-OmegaDarling/)
+The catalog has 41 community packs. The nine OmegaDarling styles each include 20 app icons and a matching pack of 96 file icon designs, one for each listed extension, with hover previews. Most icons also come as a lighter WebP copy, at most 1,024 pixels per side. BetterIcon 1.29.0 and later download one file per icon, the WebP where the computer can read it and the PNG otherwise. With WebP, all the packs together are about 61 MB in place of 551 MB. The published packs have yet to opt in to unlisted file types. [Browse OmegaDarling’s artwork](Craft-Icons-OmegaDarling/)
 
 Existing `Craft-Icons-Zach` theme IDs remain compatible.
 
